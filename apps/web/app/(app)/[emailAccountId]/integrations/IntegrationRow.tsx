@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAction } from "next-safe-action/hooks";
 import type { GetIntegrationsResponse } from "@/app/api/mcp/integrations/route";
 import { Toggle } from "@/components/Toggle";
 import { MutedText, TypographyP } from "@/components/Typography";
@@ -25,11 +26,14 @@ import {
   toggleMcpToolAction,
 } from "@/utils/actions/mcp";
 import { useAccount } from "@/providers/EmailAccountProvider";
+import { NativeTokenPasteDialog } from "./NativeTokenPasteDialog";
 import { RequestAccessDialog } from "./RequestAccessDialog";
 import { startMcpOAuth } from "./startMcpOAuth";
 import { truncate } from "@/utils/string";
 import { useProductAnalytics } from "@/hooks/useProductAnalytics";
 import { getActionErrorMessage } from "@/utils/error";
+import { startIntegrationTokenRedirectAction } from "@/utils/actions/integrations";
+import { redirectToSafeUrl } from "@/utils/redirect";
 
 interface IntegrationRowProps {
   integration: GetIntegrationsResponse["integrations"][number];
@@ -47,7 +51,29 @@ export function IntegrationRow({
   const [testing, setTesting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [expandedTools, setExpandedTools] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
 
+  const { execute: startTokenRedirect } = useAction(
+    startIntegrationTokenRedirectAction.bind(null, emailAccountId),
+    {
+      onSuccess: ({ data }) => {
+        if (data) redirectToSafeUrl(data.url, { allowExternal: true });
+      },
+      onError: (error) => {
+        analytics.captureAction("integration_connect_failed", {
+          integration: integration.name,
+          reason: "auth_url_error",
+        });
+        toastError({
+          title: `Error connecting to ${integration.displayName}`,
+          description: getActionErrorMessage(error.error),
+        });
+        setConnecting(false);
+      },
+    },
+  );
+
+  const isNative = integration.execution === "native";
   const isCustom = integration.isCustom;
   const conn = integration.connection;
 
@@ -63,6 +89,16 @@ export function IntegrationRow({
       integration: integration.name,
       auth_type: integration.authType,
     });
+
+    if (isNative) {
+      if (integration.connectKind === "token-redirect") {
+        setConnecting(true);
+        startTokenRedirect({ integrationName: integration.name });
+      } else {
+        setPasteOpen(true);
+      }
+      return;
+    }
 
     if (integration.authType === "api-token") {
       analytics.captureAction("integration_connect_failed", {
@@ -191,7 +227,9 @@ export function IntegrationRow({
       if (result?.data) {
         const { toolsCount } = result.data;
         toastSuccess({
-          description: `Connected. ${toolsCount} ${toolsCount === 1 ? "tool" : "tools"} available.`,
+          description: isNative
+            ? "Connected."
+            : `Connected. ${toolsCount} ${toolsCount === 1 ? "tool" : "tools"} available.`,
         });
       } else {
         toastError({
@@ -290,7 +328,21 @@ export function IntegrationRow({
                 isActive ? (
                   <span className="text-green-600 text-sm">✓ Connected</span>
                 ) : (
-                  <span className="text-muted-foreground text-sm">Paused</span>
+                  <>
+                    <span className="text-muted-foreground text-sm">
+                      Paused
+                    </span>
+                    {isNative && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleConnect}
+                        disabled={connecting}
+                      >
+                        {connecting ? "Reconnecting..." : "Reconnect"}
+                      </Button>
+                    )}
+                  </>
                 )
               ) : (
                 <Button
@@ -301,7 +353,8 @@ export function IntegrationRow({
                 >
                   {connecting
                     ? "Connecting..."
-                    : integration.authType === "api-token"
+                    : integration.authType === "api-token" &&
+                        integration.connectKind !== "token-redirect"
                       ? "Connect with API Key"
                       : "Connect"}
                 </Button>
@@ -328,7 +381,7 @@ export function IntegrationRow({
               <DropdownMenuContent align="end">
                 {connected && (
                   <>
-                    {tools.length > 0 && (
+                    {!isNative && tools.length > 0 && (
                       <DropdownMenuItem onClick={handleToggleToolsExpanded}>
                         {expandedTools
                           ? "Hide tools"
@@ -349,7 +402,7 @@ export function IntegrationRow({
                     <DropdownMenuItem onClick={handleTogglePause}>
                       {isActive ? "Pause" : "Resume"}
                     </DropdownMenuItem>
-                    {integration.authType === "oauth" && (
+                    {(integration.authType === "oauth" || isNative) && (
                       <DropdownMenuItem
                         onClick={handleConnect}
                         disabled={connecting}
@@ -372,8 +425,17 @@ export function IntegrationRow({
         </TableCell>
       </TableRow>
 
-      {expandedTools && tools.length > 0 && (
+      {expandedTools && !isNative && tools.length > 0 && (
         <ToolsList tools={tools} onToggleTool={handleToggleTool} />
+      )}
+
+      {isNative && integration.connectKind === "api-token-paste" && (
+        <NativeTokenPasteDialog
+          integrationName={integration.name}
+          displayName={integration.displayName}
+          open={pasteOpen}
+          onOpenChange={setPasteOpen}
+        />
       )}
     </>
   );

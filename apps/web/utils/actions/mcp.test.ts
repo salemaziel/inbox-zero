@@ -3,12 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
 import {
   createCustomMcpServerAction,
+  disconnectMcpConnectionAction,
   testMcpConnectionAction,
 } from "@/utils/actions/mcp";
 import { createCustomMcpServerBody } from "@/utils/actions/mcp.validation";
+import {
+  createFixtureExecutor,
+  FIXTURE_NATIVE,
+} from "@/__tests__/fixtures/integrations/fixture-integration";
+import { IntegrationError } from "@/utils/integrations/types";
 
-const { mockSyncMcpTools } = vi.hoisted(() => ({
+const { mockSyncMcpTools, mockGetNativeExecutor } = vi.hoisted(() => ({
   mockSyncMcpTools: vi.fn(),
+  mockGetNativeExecutor: vi.fn(),
 }));
 
 vi.mock("@/utils/prisma");
@@ -21,6 +28,24 @@ vi.mock("@/utils/auth", () => ({
 vi.mock("@/utils/mcp/sync-tools", () => ({
   syncMcpTools: mockSyncMcpTools,
 }));
+
+vi.mock("@/utils/integrations/executors.server", () => ({
+  getNativeExecutor: mockGetNativeExecutor,
+}));
+vi.mock("@/utils/mcp/integrations", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/utils/mcp/integrations")>();
+  const { FIXTURE_NATIVE } = await import(
+    "@/__tests__/fixtures/integrations/fixture-integration"
+  );
+  return {
+    ...original,
+    findIntegration: (name: string) =>
+      name === FIXTURE_NATIVE.name
+        ? FIXTURE_NATIVE
+        : original.findIntegration(name),
+  };
+});
 
 describe("createCustomMcpServerBody", () => {
   it("requires an API key when the server uses one", () => {
@@ -191,5 +216,164 @@ describe("testMcpConnectionAction", () => {
     expect(result?.serverError).toBe(
       "Could not reach the server. Check that it is online and try again.",
     );
+  });
+});
+
+describe("native integrations", () => {
+  let fixture: ReturnType<typeof createFixtureExecutor>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fixture = createFixtureExecutor();
+    mockGetNativeExecutor.mockImplementation((name: string) =>
+      name === FIXTURE_NATIVE.name ? fixture.executor : undefined,
+    );
+    prisma.emailAccount.findUnique.mockResolvedValue({
+      email: "owner@example.com",
+      account: { userId: "user-1", provider: "google" },
+    } as never);
+    prisma.mcpConnection.findUnique.mockResolvedValue({
+      isActive: true,
+      accessToken: "token-1",
+      integration: { name: FIXTURE_NATIVE.name },
+    } as never);
+  });
+
+  describe("testMcpConnectionAction", () => {
+    it("tests the token with the app's executor and never syncs MCP tools", async () => {
+      const result = await testMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(result?.data).toEqual({ toolsCount: 0 });
+      expect(fixture.calls).toHaveLength(1);
+      expect(fixture.calls[0]).toMatchObject({
+        method: "testConnection",
+        conn: { accessToken: "token-1" },
+      });
+      expect(mockSyncMcpTools).not.toHaveBeenCalled();
+    });
+
+    it("fails when no executor is registered for the app", async () => {
+      mockGetNativeExecutor.mockReturnValue(undefined);
+
+      const result = await testMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(result?.serverError).toBe("This integration is not available.");
+      expect(mockSyncMcpTools).not.toHaveBeenCalled();
+    });
+
+    it("deactivates the connection when the app rejects the token", async () => {
+      fixture.enqueue("testConnection", new IntegrationError({ kind: "auth" }));
+
+      const result = await testMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(result?.serverError).toBe(
+        "Authorization expired or was revoked. Reconnect and try again.",
+      );
+      expect(prisma.mcpConnection.updateMany).toHaveBeenCalledWith({
+        where: {
+          emailAccountId: "account-1",
+          integration: { name: FIXTURE_NATIVE.name },
+        },
+        data: { isActive: false },
+      });
+    });
+
+    it("keeps the connection active when the app is unreachable", async () => {
+      fixture.enqueue(
+        "testConnection",
+        new IntegrationError({ kind: "permanent" }),
+      );
+
+      const result = await testMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(result?.serverError).toBe(
+        "Could not reach the server. Check that it is online and try again.",
+      );
+      expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("gives up on an app that never answers", async () => {
+      vi.useFakeTimers();
+      try {
+        fixture.setNeverSettle(true);
+
+        const pending = testMcpConnectionAction("account-1", {
+          connectionId: "connection-1",
+        });
+        await vi.advanceTimersByTimeAsync(15_000);
+        const result = await pending;
+
+        expect(result?.serverError).toBe(
+          "Could not reach the server. Check that it is online and try again.",
+        );
+        expect(fixture.calls[0].signal.aborted).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("disconnectMcpConnectionAction", () => {
+    it("revokes at the app, then deletes the connection", async () => {
+      const order: string[] = [];
+      fixture.enqueue("revoke", undefined);
+      prisma.mcpConnection.delete.mockImplementation((async () => {
+        order.push(`delete after ${fixture.calls.length} revoke call(s)`);
+      }) as never);
+
+      await disconnectMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(fixture.calls[0]).toMatchObject({
+        method: "revoke",
+        conn: {
+          id: "connection-1",
+          emailAccountId: "account-1",
+          accessToken: "token-1",
+        },
+      });
+      expect(order).toEqual(["delete after 1 revoke call(s)"]);
+      expect(prisma.mcpConnection.delete).toHaveBeenCalledWith({
+        where: { id: "connection-1", emailAccountId: "account-1" },
+      });
+    });
+
+    it("still deletes the connection when the revoke fails", async () => {
+      fixture.enqueue("revoke", new IntegrationError({ kind: "permanent" }));
+
+      const result = await disconnectMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(result?.serverError).toBeUndefined();
+      expect(prisma.mcpConnection.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it("still deletes the connection when the revoke hangs", async () => {
+      vi.useFakeTimers();
+      try {
+        fixture.setNeverSettle(true);
+
+        const pending = disconnectMcpConnectionAction("account-1", {
+          connectionId: "connection-1",
+        });
+        await vi.advanceTimersByTimeAsync(15_000);
+        const result = await pending;
+
+        expect(result?.serverError).toBeUndefined();
+        expect(prisma.mcpConnection.delete).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

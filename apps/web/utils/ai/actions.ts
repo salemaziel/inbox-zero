@@ -22,11 +22,11 @@ import {
   isSameOrganization,
   splitRecipientList,
 } from "@/utils/email";
-import { captureException, getErrorMessage } from "@/utils/error";
+import { captureException } from "@/utils/error";
 import { env } from "@/env";
 import { ensureEmailSendingEnabled } from "@/utils/mail";
 import { isDeleteEmailActionEnabled } from "@/utils/delete-email-action";
-import { callMcpTool } from "@/utils/mcp/call-tool";
+import { runIntegrationAction } from "@/utils/integrations/run-integration-action.server";
 import { findIntegration } from "@/utils/mcp/integrations";
 import { getIntegrationToolSpec } from "@/utils/mcp/tool-specs";
 import { resolveActionAttachments } from "@/utils/ai/action-attachments";
@@ -606,7 +606,7 @@ const integration: ActionFunction<{
   integrationName?: string | null;
   integrationToolName?: string | null;
   integrationArgs?: ActionItem["integrationArgs"];
-}> = async ({ args, emailAccount, logger }) => {
+}> = async ({ args, email, emailAccount, executedRule, logger }) => {
   if (!(await isIntegrationActionEnabledForUserId(emailAccount.userId))) {
     logger.info(
       "Skipping integration action because integration actions are disabled",
@@ -673,29 +673,17 @@ const integration: ActionFunction<{
     };
   }
 
-  const toolArgs = spec.buildPayload(resolvedArgs);
-
-  try {
-    await callMcpTool({
-      emailAccountId: emailAccount.id,
-      integration: integrationName,
-      toolName: integrationToolName,
-      args: toolArgs,
-    });
-    return { success: true };
-  } catch (error) {
-    logger.error("Integration action failed", {
-      error,
-      integration: integrationName,
-      toolName: integrationToolName,
-    });
-    return {
-      success: false,
-      errorCode: "INTEGRATION_CALL_FAILED",
-      errorMessage:
-        getErrorMessage(error) ?? "The integration tool call failed",
-    };
-  }
+  return runIntegrationAction({
+    integrationName,
+    toolName: integrationToolName,
+    integrationConfig,
+    payload: spec.buildPayload(resolvedArgs),
+    emailAccountId: emailAccount.id,
+    messageId: email.id,
+    ruleId: executedRule.ruleId,
+    executedRuleId: executedRule.id,
+    logger,
+  });
 };
 
 const notify_sender: ActionFunction<Record<string, unknown>> = async ({

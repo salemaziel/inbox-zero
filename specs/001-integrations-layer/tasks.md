@@ -222,7 +222,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
 
 **Independent test**: `pnpm test utils/integrations/run-integration-action.server.test.ts utils/ai/actions.test.ts utils/ai/choose-rule/execute.test.ts`
 
-- [ ] T009 [US1] Execution core
+- [x] T009 [US1] Execution core
   - **Files**: NEW `apps/web/utils/integrations/run-integration-action.server.ts`, NEW `run-integration-action.server.test.ts`.
   - **Does**: `runIntegrationAction` per Interfaces (success and failure variants; T017 adds skip). Everything is inside one try/catch, so it never throws.
     - **Native**: `getActiveNativeConnection` (null → `INTEGRATION_NOT_CONNECTED`), then `getNativeExecutor` (undefined → `UNSUPPORTED_INTEGRATION_TOOL`), then `runWithCallPolicy(s => executor.run(conn, payload, { signal: s }), { mode: "write" })`, then `executor.parseResult`.
@@ -256,7 +256,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm test utils/ai/choose-rule/execute.test.ts`
   - **After**: T002, T004
 
-- [ ] T011 [US1] Delegate the `integration()` action to the execution core
+- [x] T011 [US1] Delegate the `integration()` action to the execution core
   - **Files**: seam `apps/web/utils/ai/actions.ts`; `apps/web/utils/ai/actions.test.ts`.
   - **Does**: Inside `integration` only, keep every existing pre-check and code in order. Replace the `try { await callMcpTool… }` block with `return runIntegrationAction({ …, messageId: email.id, ruleId: executedRule.ruleId, executedRuleId: executedRule.id })`.
   - **Tests**:
@@ -374,7 +374,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
 
 **Independent test**: `pnpm test utils/integrations/connection.server.test.ts utils/actions/mcp.test.ts app/api/mcp/integrations/route.test.ts`
 
-- [ ] T018 [US5] Paste and redirect connect flows
+- [x] T018 [US5] Paste and redirect connect flows
   - **Files**: seam `apps/web/utils/integrations/connection.server.ts` (add `connectWithToken`, `createTokenRedirect`, `completeTokenRedirect` per Interfaces); NEW `apps/web/utils/integrations/connection.server.test.ts`.
   - **Does**: Per research R7 and contracts/endpoints-and-actions.md.
     - Order: trim the token → tier check (`assertIntegrationsTierAccess`) → registry kind check → `testConnection` through the read policy → `mcpIntegration.upsert({ where: { name } })` → `mcpConnection.upsert` (`emailAccountId_integrationId`) with `accessToken`, `isActive: true`, `name: displayName`.
@@ -390,7 +390,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
   - **Check**: `pnpm test utils/integrations/connection.server.test.ts`
   - **After**: T005, T007, T008
 
-- [ ] T019 [US5] Server actions for connecting
+- [x] T019 [US5] Server actions for connecting
   - **Files**: NEW `apps/web/utils/actions/integrations.ts`, NEW `apps/web/utils/actions/integrations.validation.ts`.
   - **Does**: `connectIntegrationWithTokenAction`, `startIntegrationTokenRedirectAction` and `completeIntegrationTokenRedirectAction`, built on `actionClient` from `@/utils/actions/safe-action`, with inputs per contracts/endpoints-and-actions.md.
     - They read and write the state cookie with `cookies()` from `next/headers` (`oauthStateCookieOptions`; cleared on completion) and delegate to T018.
@@ -398,7 +398,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
   - **Check**: `pnpm konsistent && pnpm --filter inbox-zero-ai check-server-actions && pnpm exec biome check apps/web/utils/actions/integrations.ts apps/web/utils/actions/integrations.validation.ts`
   - **After**: T018
 
-- [ ] T020 [P] [US5] Branch test, disconnect and listing on execution kind
+- [x] T020 [P] [US5] Branch test, disconnect and listing on execution kind
   - **Files**: seam `apps/web/utils/actions/mcp.ts`; `apps/web/utils/actions/mcp.test.ts`; seam `apps/web/app/api/mcp/integrations/route.ts`; NEW `apps/web/app/api/mcp/integrations/route.test.ts`.
   - **Does**:
     - `testMcpConnectionAction`, native path: executor missing → `SafeError`. Otherwise `runWithCallPolicy(s => executor.testConnection({ accessToken }, { signal: s }), { mode: "read" })` → `{ toolsCount: 0 }`. `auth` → deactivate plus the existing "Authorization expired…" message.
@@ -412,7 +412,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
   - **Check**: `pnpm test utils/actions/mcp.test.ts app/api/mcp/integrations/route.test.ts && pnpm --filter inbox-zero-ai check-server-actions`
   - **After**: T005, T007, T008
 
-- [ ] T021 [US5] Connect UI for native apps
+- [x] T021 [US5] Connect UI for native apps
   - **Files**:
     - seam `apps/web/app/(app)/[emailAccountId]/integrations/IntegrationRow.tsx`. Before the `api-token` "not supported" branch: native + paste → open the dialog; native + redirect → start action, then `window.location.assign(url)`. For native rows, hide the tool count and "Manage tools", and show "Reconnect" when the connection is inactive.
     - NEW `apps/web/app/(app)/[emailAccountId]/integrations/NativeTokenPasteDialog.tsx`.
@@ -428,7 +428,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
 
 **Independent test**: `pnpm test utils/integrations/editor.test.ts utils/integrations/arg-options.server.test.ts utils/mcp/tool-specs.test.ts`
 
-- [ ] T022 [P] [US6] Dependent remote-select options service, route and hook
+- [x] T022 [P] [US6] Dependent remote-select options service, route and hook
   - **Files**:
     - NEW `apps/web/utils/integrations/arg-options.server.ts`, NEW `arg-options.server.test.ts`.
     - seam `apps/web/app/api/mcp/[integration]/arg-options/route.ts`: parse the optional `parents` JSON query param and delegate.
@@ -456,7 +456,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
   - **Check**: `pnpm test utils/integrations/editor.test.ts`
   - **After**: T003, T007
 
-- [ ] T024 [US6] Rule editor: tool picker, dependent selects, marker hint
+- [x] T024 [US6] Rule editor: tool picker, dependent selects, marker hint
   - **Files**:
     - NEW `apps/web/app/(app)/[emailAccountId]/assistant/IntegrationToolPicker.tsx`, exporting the picker and a small `IntegrationPlaceholderHint`. All new JSX lives here.
     - seam `apps/web/app/(app)/[emailAccountId]/assistant/ActionSteps.tsx`, wiring only:
