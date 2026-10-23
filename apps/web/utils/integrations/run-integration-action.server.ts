@@ -8,6 +8,7 @@ import {
   getMcpResultParser,
   getNativeExecutor,
 } from "@/utils/integrations/executors.server";
+import { findPriorIntegrationResult } from "@/utils/integrations/idempotency.server";
 import {
   type IntegrationCallResult,
   parseIntegrationCallResult,
@@ -35,6 +36,11 @@ const ERROR_CODES: Record<IntegrationErrorKind, string> = {
 
 type IntegrationActionResult =
   | { success: true; integrationResult: IntegrationCallResult | null }
+  | {
+      skipped: true;
+      reason: "INTEGRATION_ALREADY_CREATED";
+      integrationResult: IntegrationCallResult;
+    }
   | { success: false; errorCode: string; errorMessage: string };
 
 // Never throws: a failure here must fail only this action, not the whole rule run.
@@ -44,6 +50,9 @@ export async function runIntegrationAction({
   integrationConfig,
   payload,
   emailAccountId,
+  messageId,
+  ruleId,
+  executedRuleId,
   logger,
 }: {
   integrationName: string;
@@ -57,6 +66,37 @@ export async function runIntegrationAction({
   logger: Logger;
 }): Promise<IntegrationActionResult> {
   const { displayName } = integrationConfig;
+
+  try {
+    const prior = await findPriorIntegrationResult({
+      emailAccountId,
+      messageId,
+      ruleId,
+      integrationName,
+      integrationToolName: toolName,
+      currentExecutedRuleId: executedRuleId,
+    });
+    if (prior) {
+      return {
+        skipped: true,
+        reason: "INTEGRATION_ALREADY_CREATED",
+        integrationResult: prior,
+      };
+    }
+  } catch (error) {
+    logger.error("Failed to check for a prior integration result", {
+      integration: integrationName,
+      toolName,
+    });
+    logger.trace("Prior integration result lookup failure details", () => ({
+      error,
+    }));
+    return {
+      success: false,
+      errorCode: "INTEGRATION_CALL_FAILED",
+      errorMessage: `Couldn't check whether ${displayName} already has this item, so nothing was created. Try again later.`,
+    };
+  }
 
   try {
     if (integrationConfig.execution === "native") {

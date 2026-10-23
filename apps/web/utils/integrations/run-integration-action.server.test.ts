@@ -20,12 +20,16 @@ const mocks = vi.hoisted(() => ({
   callMcpTool: vi.fn(),
   getNativeExecutor: vi.fn(),
   getMcpResultParser: vi.fn(),
+  findPriorIntegrationResult: vi.fn(),
 }));
 
 vi.mock("@/utils/mcp/call-tool", () => ({ callMcpTool: mocks.callMcpTool }));
 vi.mock("@/utils/integrations/executors.server", () => ({
   getNativeExecutor: mocks.getNativeExecutor,
   getMcpResultParser: mocks.getMcpResultParser,
+}));
+vi.mock("@/utils/integrations/idempotency.server", () => ({
+  findPriorIntegrationResult: mocks.findPriorIntegrationResult,
 }));
 
 const PROVIDER_TEXT = "Board 42 is archived for workspace acme";
@@ -50,6 +54,7 @@ describe("runIntegrationAction", () => {
     fixture = createFixtureExecutor();
     mocks.getNativeExecutor.mockReturnValue(fixture.executor);
     mocks.getMcpResultParser.mockReturnValue(undefined);
+    mocks.findPriorIntegrationResult.mockResolvedValue(null);
     prisma.mcpConnection.findFirst.mockResolvedValue({
       id: "conn-1",
       emailAccountId: "account-1",
@@ -192,6 +197,100 @@ describe("runIntegrationAction", () => {
 
       expect(prisma.mcpConnection.findFirst).not.toHaveBeenCalled();
       expect(mocks.getNativeExecutor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("rerun idempotency", () => {
+    const prior = {
+      externalId: "item-prior",
+      url: "https://fixture.invalid/items/prior",
+    };
+
+    it("skips without calling the app when this rule already created the item", async () => {
+      mocks.findPriorIntegrationResult.mockResolvedValue(prior);
+
+      const result = await runIntegrationAction(nativeOptions());
+
+      expect(result).toEqual({
+        skipped: true,
+        reason: "INTEGRATION_ALREADY_CREATED",
+        integrationResult: prior,
+      });
+      expect(fixture.calls).toHaveLength(0);
+      expect(prisma.mcpConnection.findFirst).not.toHaveBeenCalled();
+      expect(mocks.findPriorIntegrationResult).toHaveBeenCalledWith({
+        emailAccountId: "account-1",
+        messageId: "message-1",
+        ruleId: "rule-1",
+        integrationName: "fixture",
+        integrationToolName: "create-item",
+        currentExecutedRuleId: "executed-rule-1",
+      });
+    });
+
+    it("skips an MCP tool call when this rule already created the item", async () => {
+      mocks.findPriorIntegrationResult.mockResolvedValue(prior);
+
+      const result = await runIntegrationAction(mcpOptions());
+
+      expect(result).toMatchObject({ skipped: true, integrationResult: prior });
+      expect(mocks.callMcpTool).not.toHaveBeenCalled();
+    });
+
+    it("runs the app normally when there is no prior result", async () => {
+      const result = await runIntegrationAction(nativeOptions());
+
+      expect(mocks.findPriorIntegrationResult).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        success: true,
+        integrationResult: {
+          externalId: "fixture-item-1",
+          url: "https://fixture.invalid/items/1",
+        },
+      });
+      expect(fixture.calls).toHaveLength(1);
+    });
+
+    it("runs two identical actions in the same executed rule", async () => {
+      // A prior row exists only inside the current ExecutedRule, which the lookup excludes.
+      mocks.findPriorIntegrationResult.mockImplementation(
+        async ({ currentExecutedRuleId }: { currentExecutedRuleId: string }) =>
+          currentExecutedRuleId === "executed-rule-1" ? null : prior,
+      );
+
+      const first = await runIntegrationAction(nativeOptions());
+      const second = await runIntegrationAction(nativeOptions());
+
+      expect(first).toMatchObject({ success: true });
+      expect(second).toMatchObject({ success: true });
+      expect(fixture.calls).toHaveLength(2);
+      expect(mocks.findPriorIntegrationResult).toHaveBeenCalledTimes(2);
+      for (const [options] of mocks.findPriorIntegrationResult.mock.calls) {
+        expect(options).toMatchObject({
+          currentExecutedRuleId: "executed-rule-1",
+        });
+      }
+    });
+
+    it("fails without calling the app or throwing when the lookup throws", async () => {
+      const errorSpy = vi.spyOn(logger, "error");
+      mocks.findPriorIntegrationResult.mockRejectedValue(
+        new Error("database unavailable for message-1"),
+      );
+
+      const result = await runIntegrationAction(nativeOptions());
+
+      expect(result).toMatchObject({
+        success: false,
+        errorCode: "INTEGRATION_CALL_FAILED",
+      });
+      expect(getErrorMessage(result)).not.toContain("database unavailable");
+      expect(fixture.calls).toHaveLength(0);
+      expect(prisma.mcpConnection.findFirst).not.toHaveBeenCalled();
+      expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(
+        "database unavailable",
+      );
     });
   });
 

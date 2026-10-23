@@ -357,7 +357,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
   - **Check**: `pnpm test utils/integrations/idempotency.server.test.ts`
   - **After**: T002, T004
 
-- [ ] T017 [US4] Skip already-created items on rerun
+- [x] T017 [US4] Skip already-created items on rerun
   - **Files**: seam `apps/web/utils/integrations/run-integration-action.server.ts` and its test; seam `apps/web/utils/ai/actions.ts` (only if T011 did not already pass `executedRuleId`).
   - **Does**: Before executing, call `findPriorIntegrationResult`. If it finds a result, return the skip variant from Interfaces. If the lookup throws, return `INTEGRATION_CALL_FAILED` without calling the app.
   - **Tests**:
