@@ -259,6 +259,11 @@ async function testNativeConnection({
       });
       throw new SafeError(AUTH_EXPIRED_MESSAGE);
     }
+    if (error instanceof IntegrationError && error.kind === "rate_limit") {
+      throw new SafeError(
+        "The app is limiting requests right now. Try again in a minute.",
+      );
+    }
     throw new SafeError(
       "Could not reach the server. Check that it is online and try again.",
     );

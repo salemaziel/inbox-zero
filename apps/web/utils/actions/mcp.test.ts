@@ -300,6 +300,22 @@ describe("native integrations", () => {
       expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
     });
 
+    it("says the app is limiting requests on a rate limit", async () => {
+      fixture.enqueue(
+        "testConnection",
+        new IntegrationError({ kind: "rate_limit" }),
+      );
+
+      const result = await testMcpConnectionAction("account-1", {
+        connectionId: "connection-1",
+      });
+
+      expect(result?.serverError).toBe(
+        "The app is limiting requests right now. Try again in a minute.",
+      );
+      expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
+    });
+
     it("gives up on an app that never answers", async () => {
       vi.useFakeTimers();
       try {
