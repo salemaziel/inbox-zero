@@ -134,7 +134,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm --filter inbox-zero-ai exec prisma generate && DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pnpm --filter inbox-zero-ai exec prisma validate` (placeholder URL; validate does not connect).
   - **After**: T001
 
-- [ ] T003 [P] Contract types, registry fields and remote-select shape
+- [x] T003 [P] Contract types, registry fields and remote-select shape
   - **Files**:
     - NEW `apps/web/utils/integrations/types.ts`.
     - seam `apps/web/utils/mcp/integrations.ts`: `McpIntegrationConfig` gains a discriminated union, `{ execution?: "mcp" } | { execution: "native"; connectKind: "api-token-paste" | "token-redirect" }` (spec FR-002). Nothing else.
@@ -152,7 +152,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm test utils/integrations/result.test.ts`
   - **After**: T001
 
-- [ ] T005 Shared call policy and classified HTTP helper
+- [x] T005 Shared call policy and classified HTTP helper
   - **Files**: NEW `apps/web/utils/integrations/call-policy.ts`, `call-policy.test.ts`, `http.ts`, `http.test.ts` (all under `apps/web/utils/integrations/`).
   - **Does**:
     - `runWithCallPolicy` per Global Constraints. Each attempt races its own timer: on timeout it aborts the signal and abandons the attempt even if the attempt never settles.
@@ -176,7 +176,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm test utils/integrations/call-policy.test.ts utils/integrations/http.test.ts`
   - **After**: T003
 
-- [ ] T006 [P] Classified errors and abort signal for MCP calls
+- [x] T006 [P] Classified errors and abort signal for MCP calls
   - **Files**: seam `apps/web/utils/mcp/call-tool.ts`; `apps/web/utils/mcp/call-tool.test.ts`.
   - **Does**:
     - Add optional `signal?: AbortSignal` and pass it to `client.connect` and `client.callTool` (per T001 note).
@@ -193,7 +193,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm test utils/mcp/call-tool.test.ts`
   - **After**: T003
 
-- [ ] T007 Test-only fixture integration
+- [x] T007 Test-only fixture integration
   - **Files**: NEW `apps/web/__tests__/fixtures/integrations/fixture-integration.ts`.
   - **Does**: Never imported by product code. Exports:
     - Registry entries:
@@ -208,7 +208,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm exec biome check apps/web/__tests__/fixtures/integrations` (exercised by T009, T017, T018, T020, T022, T023).
   - **After**: T003, T004
 
-- [ ] T008 Server-only executor table and native connection primitives
+- [x] T008 Server-only executor table and native connection primitives
   - **Files**: NEW `apps/web/utils/integrations/executors.server.ts`, NEW `apps/web/utils/integrations/connection.server.ts`.
   - **Does**:
     - `executors.server.ts` (`import "server-only"`): `NATIVE_EXECUTORS = {}` and `MCP_RESULT_PARSERS = {}` (both empty in this phase), plus the lookups from Interfaces, using `Object.hasOwn`.
@@ -266,7 +266,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm test utils/ai/actions.test.ts`
   - **After**: T009, T010
 
-- [ ] T012 [P] [US1] History: link, failure copy and the app's message
+- [x] T012 [P] [US1] History: link, failure copy and the app's message
   - **Files**: seam `apps/web/app/(app)/[emailAccountId]/assistant/ResultDisplay.tsx`.
   - **Does**: For INTEGRATION `actionItems`:
     - If `getSafeIntegrationResultUrl(action.integrationResult)` returns a URL, render an "Open in <displayName>" link (`target="_blank"`, `rel="noopener noreferrer"`).
@@ -302,7 +302,7 @@ persistExecutedActionOutcome({ …existing, integrationResult?: IntegrationCallR
   - **Check**: `pnpm test utils/integrations/placeholders.test.ts`
   - **After**: T001
 
-- [ ] T014 [US2] Resolve placeholders once, from the original templates
+- [x] T014 [US2] Resolve placeholders once, from the original templates
   - **Files**: seam `apps/web/utils/ai/choose-rule/choose-args.ts`; `apps/web/utils/ai/choose-rule/choose-args.test.ts`; `apps/web/utils/ai/choose-rule/choose-args.security.test.ts`.
   - **Does**: Add one helper at the bottom of `choose-args.ts`: `applyIntegrationPlaceholders({ original: selectedRule.actions, actions, aiArgs, values })`. Call it on all three exits of `getActionItemsWithAiArgs`: the no-AI early return, the draft-only path where `aiArgs` is undefined, and the AI path. `combineActionsWithAiArgs` is not changed.
     - For each INTEGRATION action, decide per text arg from the **original** value.
@@ -445,7 +445,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
   - **Check**: `pnpm test utils/integrations/arg-options.server.test.ts`
   - **After**: T005, T006, T007, T008
 
-- [ ] T023 [P] [US6] Editor helpers: tool choices and dependent clearing
+- [x] T023 [P] [US6] Editor helpers: tool choices and dependent clearing
   - **Files**: NEW `apps/web/utils/integrations/editor.ts`, NEW `editor.test.ts`.
   - **Does**: Per Interfaces. Browser-safe. `getArgsToClear` returns the transitive dependents of the changed arg, including their `displayValueKey`s.
   - **Tests** (fixture specs plus Todoist):

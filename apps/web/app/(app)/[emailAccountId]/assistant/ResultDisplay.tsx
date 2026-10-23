@@ -10,7 +10,7 @@ import {
   ExecutedRuleStatus,
   LogicalOperator,
 } from "@/generated/prisma/enums";
-import type { Rule } from "@/generated/prisma/client";
+import type { ExecutedAction, Rule } from "@/generated/prisma/client";
 import { Button } from "@/components/ui/button";
 import { MessageText, MutedText } from "@/components/Typography";
 import { EyeIcon } from "lucide-react";
@@ -20,12 +20,30 @@ import { LearnedPatternExclusionHint } from "@/app/(app)/[emailAccountId]/assist
 import type { RunRulesResult } from "@/utils/ai/choose-rule/run-rules";
 import { RuleActions } from "@/components/RuleActions";
 import { useAccount } from "@/providers/EmailAccountProvider";
+import type { ActionItem } from "@/utils/ai/types";
+import {
+  getSafeIntegrationResultUrl,
+  parseIntegrationCallResult,
+} from "@/utils/integrations/result";
+import { findIntegration } from "@/utils/mcp/integrations";
+
+const MAX_INTEGRATION_MESSAGE_LENGTH = 500;
+
+// History rows carry every ExecutedAction column at runtime; RunRulesResult only
+// types the ones the rule engine produces.
+type HistoryResult = Omit<RunRulesResult, "actionItems"> & {
+  actionItems?: (ActionItem & {
+    executionStatus?: ExecutedAction["executionStatus"];
+    executionError?: unknown;
+    integrationResult?: unknown;
+  })[];
+};
 
 export function ResultsDisplay({
   results,
   showFullContent = false,
 }: {
-  results: RunRulesResult[];
+  results: HistoryResult[];
   showFullContent?: boolean;
 }) {
   const groupedResults = groupBy(results, (result) =>
@@ -72,7 +90,7 @@ function ResultDisplay({
   result,
   showFullContent = false,
 }: {
-  result: RunRulesResult;
+  result: HistoryResult;
   showFullContent?: boolean;
 }) {
   const { rule, status } = result;
@@ -105,13 +123,18 @@ function ResultDisplay({
   );
 }
 
-export function ResultDisplayContent({ result }: { result: RunRulesResult }) {
+export function ResultDisplayContent({ result }: { result: HistoryResult }) {
   const { rule, status, reason } = result;
   const reasonDisplay = getRuleResultReasonDisplay(reason ?? "");
   const skippedThreadRuleNames =
     result.selectionMetadata?.skippedThreadRuleNames ?? [];
   const learnedPatternExcludedRules =
     result.selectionMetadata?.learnedPatternExcludedRules ?? [];
+
+  const integrationActions =
+    result.actionItems?.filter(
+      (action) => action.type === ActionType.INTEGRATION,
+    ) ?? [];
 
   const { ruleDialog, RuleDialogComponent } = useRuleDialog();
   const { provider } = useAccount();
@@ -166,6 +189,9 @@ export function ResultDisplayContent({ result }: { result: RunRulesResult }) {
               provider={provider}
               labels={[]}
             />
+            {integrationActions.map((action) => (
+              <IntegrationActionOutcome key={action.id} action={action} />
+            ))}
           </>
         ) : (
           <div className="text-muted-foreground text-sm">No actions taken</div>
@@ -215,6 +241,50 @@ export function ResultDisplayContent({ result }: { result: RunRulesResult }) {
       <RuleDialogComponent />
     </div>
   );
+}
+
+function IntegrationActionOutcome({
+  action,
+}: {
+  action: NonNullable<HistoryResult["actionItems"]>[number];
+}) {
+  const displayName =
+    (action.integrationName &&
+      findIntegration(action.integrationName)?.displayName) ||
+    "the app";
+  const url = getSafeIntegrationResultUrl(
+    parseIntegrationCallResult(action.integrationResult)?.url,
+  );
+  const message =
+    action.executionStatus === "FAILED"
+      ? getIntegrationErrorMessage(action.executionError)
+      : null;
+
+  if (!url && !message) return null;
+
+  return (
+    <div className="mt-1 space-y-1 text-sm">
+      {url && (
+        <Button asChild variant="link" size="sm" className="h-auto p-0">
+          <a href={url} target="_blank" rel="noopener noreferrer">
+            Open in {displayName}
+          </a>
+        </Button>
+      )}
+      {message && (
+        <MutedText className="whitespace-pre-wrap break-words">
+          {message}
+        </MutedText>
+      )}
+    </div>
+  );
+}
+
+function getIntegrationErrorMessage(executionError: unknown) {
+  if (!executionError || typeof executionError !== "object") return null;
+  const { message } = executionError as { message?: unknown };
+  if (typeof message !== "string" || !message.trim()) return null;
+  return message.slice(0, MAX_INTEGRATION_MESSAGE_LENGTH);
 }
 
 function PrettyConditions({
@@ -415,6 +485,14 @@ const ACTION_FAILURE_MESSAGES: Partial<
       MISSING_INTEGRATION_ARGS:
         "The integration action could not run because a required field was empty.",
       INTEGRATION_CALL_FAILED: "The integration action could not be completed.",
+      INTEGRATION_AUTH_FAILED:
+        "The integration rejected the connection. Reconnect it on the Integrations page.",
+      INTEGRATION_RATE_LIMITED:
+        "The integration is limiting requests right now, so nothing was created. Try again later.",
+      INTEGRATION_NOT_SENT:
+        "The request never reached the integration, so nothing was created.",
+      INTEGRATION_MAYBE_SENT:
+        "The integration didn't confirm the request, so the item may have been created; check the app before re-running.",
     },
   },
 };

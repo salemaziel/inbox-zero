@@ -29,6 +29,11 @@ import {
 } from "@/utils/mcp/tool-specs";
 import type { SelectedAttachment } from "@/utils/attachments/source-schema";
 import { escapeHtml } from "@/utils/string";
+import {
+  buildPlaceholderValues,
+  type PlaceholderValues,
+  renderIntegrationTextArg,
+} from "@/utils/integrations/placeholders";
 
 const MODULE = "choose-args";
 
@@ -126,10 +131,21 @@ export async function getActionItemsWithAiArgs({
     }
   }
 
+  const placeholderValues = buildPlaceholderValues({
+    message,
+    emailAccount,
+    ruleName: selectedRule.name,
+  });
+
   const parameters = extractActionsNeedingAiGeneration(selectedRule.actions);
 
   if (parameters.length === 0 && !draft) {
-    return filterIncompleteDraftActions(selectedRule.actions);
+    return applyIntegrationPlaceholders({
+      original: selectedRule.actions,
+      actions: filterIncompleteDraftActions(selectedRule.actions),
+      aiArgs: undefined,
+      values: placeholderValues,
+    });
   }
 
   const { args, attribution: aiArgsAttribution } = await aiGenerateArgs({
@@ -160,7 +176,12 @@ export async function getActionItemsWithAiArgs({
     });
   }
 
-  return filteredActions;
+  return applyIntegrationPlaceholders({
+    original: selectedRule.actions,
+    actions: filteredActions,
+    aiArgs: args,
+    values: placeholderValues,
+  });
 }
 export function combineActionsWithAiArgs(
   actions: Action[],
@@ -524,4 +545,56 @@ function escapeTemplateVars(vars: Record<`var${number}`, string>) {
   return Object.fromEntries(
     Object.entries(vars).map(([key, value]) => [key, escapeHtml(value)]),
   ) as Record<`var${number}`, string>;
+}
+
+// Every text arg is rendered once from the author's original template, so
+// email field values and AI output inserted into it are never re-scanned.
+function applyIntegrationPlaceholders<T extends Action>({
+  original,
+  actions,
+  aiArgs,
+  values,
+}: {
+  original: Action[];
+  actions: T[];
+  aiArgs: ActionArgResponse | undefined;
+  values: PlaceholderValues;
+}): T[] {
+  return actions.map((action) => {
+    if (action.type !== ActionType.INTEGRATION) return action;
+
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    const originalAction = original.find((item) => item.id === action.id);
+    if (!spec || !originalAction) return action;
+
+    const originalArgs = getIntegrationArgsRecord(
+      originalAction.integrationArgs,
+    );
+    const aiAction = aiArgs?.[`${action.type}-${action.id}`];
+    const resolvedArgs = getIntegrationArgsRecord(action.integrationArgs);
+    const renderedArgs: Record<string, string> = {};
+
+    for (const arg of spec.args) {
+      const template = originalArgs[arg.key];
+      if (arg.control.type !== "text" || typeof template !== "string") continue;
+      if (isAiFilledArgValue(arg, template)) continue;
+
+      renderedArgs[arg.key] = renderIntegrationTextArg({
+        template,
+        aiVars: aiAction?.[`${INTEGRATION_ARGS_FIELD_PREFIX}${arg.key}`],
+        values,
+      });
+    }
+
+    return {
+      ...action,
+      integrationArgs: {
+        ...resolvedArgs,
+        ...renderedArgs,
+      } as Action["integrationArgs"],
+    };
+  });
 }
