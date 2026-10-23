@@ -1,5 +1,6 @@
 import "server-only";
 import { SafeError } from "@/utils/error";
+import { isIntegrationActionEnabledForUserId } from "@/utils/integration-action.server";
 import { runWithCallPolicy } from "@/utils/integrations/call-policy";
 import { getNativeExecutor } from "@/utils/integrations/executors.server";
 import {
@@ -8,7 +9,11 @@ import {
   type NativeIntegrationExecutor,
 } from "@/utils/integrations/types";
 import type { Logger } from "@/utils/logger";
-import { findIntegration } from "@/utils/mcp/integrations";
+import {
+  findIntegration,
+  type IntegrationKey,
+  type MCP_INTEGRATIONS,
+} from "@/utils/mcp/integrations";
 import { assertIntegrationsTierAccess } from "@/utils/mcp/tier-access";
 import {
   generateSignedOAuthState,
@@ -63,6 +68,36 @@ export async function deactivateIntegrationConnection({
   });
 }
 
+// Hosted-provider integrations authenticate with the platform key, so their
+// auth failures say nothing about this mailbox's connection.
+export async function deactivateConnectionOnAuthFailure({
+  error,
+  integration,
+  emailAccountId,
+  logger,
+}: {
+  error: unknown;
+  integration: (typeof MCP_INTEGRATIONS)[IntegrationKey];
+  emailAccountId: string;
+  logger: Logger;
+}): Promise<void> {
+  if (!(error instanceof IntegrationError) || error.kind !== "auth") return;
+  if (integration.provider) return;
+
+  await deactivateIntegrationConnection({
+    emailAccountId,
+    integrationName: integration.name,
+  }).catch((deactivateError) => {
+    logger.warn("Failed to deactivate integration connection", {
+      integration: integration.name,
+      errorType:
+        deactivateError instanceof Error
+          ? deactivateError.name
+          : typeof deactivateError,
+    });
+  });
+}
+
 export async function connectWithToken({
   userId,
   emailAccountId,
@@ -78,6 +113,7 @@ export async function connectWithToken({
 }): Promise<void> {
   const accessToken = normalizeToken(token);
   await assertIntegrationsTierAccess({ userId, logger });
+  await assertIntegrationActionsEnabled(userId);
   const { executor, displayName } = getTokenConnectTarget(
     integrationName,
     "api-token-paste",
@@ -107,6 +143,7 @@ export async function createTokenRedirect({
   logger: Logger;
 }): Promise<{ url: string; state: string; cookieName: string }> {
   await assertIntegrationsTierAccess({ userId, logger });
+  await assertIntegrationActionsEnabled(userId);
   const { executor } = getTokenConnectTarget(integrationName, "token-redirect");
   if (!executor.buildAuthorizeUrl) {
     throw new SafeError(WRONG_CONNECT_KIND_MESSAGE);
@@ -173,6 +210,7 @@ export async function completeTokenRedirect({
   }
 
   const accessToken = normalizeToken(token);
+  await assertIntegrationActionsEnabled(userId);
   const { executor, displayName } = getTokenConnectTarget(
     integrationName,
     "token-redirect",
@@ -194,6 +232,14 @@ function normalizeToken(token: string): string {
     throw new SafeError(TOKEN_REJECTED_MESSAGE);
   }
   return accessToken;
+}
+
+// Native apps are hidden from the Integrations page while the feature is off,
+// so a direct call must not be able to connect one either.
+async function assertIntegrationActionsEnabled(userId: string) {
+  if (!(await isIntegrationActionEnabledForUserId(userId))) {
+    throw new SafeError(WRONG_CONNECT_KIND_MESSAGE);
+  }
 }
 
 function getTokenConnectTarget(
@@ -242,6 +288,11 @@ async function testAndStoreToken({
     // outage would make that message wrong.
     if (kind === "auth" || kind === "permanent") {
       throw new SafeError(TOKEN_REJECTED_MESSAGE);
+    }
+    if (kind === "rate_limit") {
+      throw new SafeError(
+        `${displayName} is limiting requests right now. Try again in a minute.`,
+      );
     }
     throw new SafeError(
       `Couldn't reach ${displayName} to check the token. Try again in a moment.`,

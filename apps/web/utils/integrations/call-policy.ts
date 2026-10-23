@@ -6,6 +6,9 @@ const MAX_WRITE_ATTEMPTS = 3;
 const TOTAL_BUDGET_MS = 30_000;
 const MAX_RETRY_AFTER_MS = 10_000;
 const DEFAULT_RETRY_AFTER_MS = 1000;
+// A connect plus one write needs a few seconds; a shorter retry would mostly
+// time out mid-request and turn a definite "nothing sent" into "may have been sent".
+const MIN_RETRY_WINDOW_MS = 5000;
 
 export async function runWithCallPolicy<T>(
   attempt: (signal: AbortSignal) => Promise<T>,
@@ -28,7 +31,10 @@ export async function runWithCallPolicy<T>(
       if (attemptNumber >= maxAttempts) throw integrationError;
 
       const waitMs = getRetryWaitMs(integrationError);
-      if (waitMs === null || waitMs >= deadline - Date.now()) {
+      if (
+        waitMs === null ||
+        waitMs + MIN_RETRY_WINDOW_MS > deadline - Date.now()
+      ) {
         throw integrationError;
       }
       if (waitMs > 0) await sleep(waitMs);

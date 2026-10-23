@@ -58,12 +58,20 @@ describe("parseIntegrationCallResult", () => {
     });
   });
 
-  it("keeps a non-https url value as stored but never displayable", () => {
-    const result = parseIntegrationCallResult({
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "http://example.com/items/abc-123",
+  ])("drops a non-https url but keeps the id: %s", (url) => {
+    expect(parseIntegrationCallResult({ externalId: "abc-123", url })).toEqual({
       externalId: "abc-123",
-      url: "javascript:alert(1)",
     });
-    expect(getSafeIntegrationResultUrl(result?.url)).toBeNull();
+  });
+
+  it("returns null when the only field is a non-https url", () => {
+    expect(
+      parseIntegrationCallResult({ url: "javascript:alert(1)" }),
+    ).toBeNull();
   });
 
   it("rejects an over-long id", () => {

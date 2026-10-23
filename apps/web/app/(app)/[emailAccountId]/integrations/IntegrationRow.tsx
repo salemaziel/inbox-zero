@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAction } from "next-safe-action/hooks";
 import type { GetIntegrationsResponse } from "@/app/api/mcp/integrations/route";
 import { Toggle } from "@/components/Toggle";
@@ -57,7 +57,11 @@ export function IntegrationRow({
     startIntegrationTokenRedirectAction.bind(null, emailAccountId),
     {
       onSuccess: ({ data }) => {
-        if (data) redirectToSafeUrl(data.url, { allowExternal: true });
+        if (!data) {
+          setConnecting(false);
+          return;
+        }
+        redirectToSafeUrl(data.url, { allowExternal: true });
       },
       onError: (error) => {
         analytics.captureAction("integration_connect_failed", {
@@ -72,6 +76,16 @@ export function IntegrationRow({
       },
     },
   );
+
+  // Coming back from the app's page via the back button restores this page
+  // from the back-forward cache with the button still on "Connecting...".
+  useEffect(() => {
+    const resetOnRestore = (event: PageTransitionEvent) => {
+      if (event.persisted) setConnecting(false);
+    };
+    window.addEventListener("pageshow", resetOnRestore);
+    return () => window.removeEventListener("pageshow", resetOnRestore);
+  }, []);
 
   const isNative = integration.execution === "native";
   const isCustom = integration.isCustom;

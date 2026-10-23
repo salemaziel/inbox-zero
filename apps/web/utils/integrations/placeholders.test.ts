@@ -94,6 +94,12 @@ describe("findUnknownPlaceholders", () => {
     ).toEqual(["Subject", "unknown"]);
   });
 
+  it("ignores markers inside AI sections, which are never substituted", () => {
+    expect(
+      findUnknownPlaceholders("{{mention [[nope]]}} [[bad]] {{ [[worse]] }}"),
+    ).toEqual(["bad"]);
+  });
+
   it("ignores known and malformed markers", () => {
     expect(
       findUnknownPlaceholders(

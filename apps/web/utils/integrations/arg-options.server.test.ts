@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import prisma from "@/utils/__mocks__/prisma";
 import { SafeError } from "@/utils/error";
 import { getIntegrationArgOptions } from "@/utils/integrations/arg-options.server";
 import { IntegrationError } from "@/utils/integrations/types";
@@ -15,19 +16,21 @@ import {
 } from "@/__tests__/fixtures/integrations/fixture-integration";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/utils/prisma");
 
 const mocks = vi.hoisted(() => ({
   callMcpTool: vi.fn(),
   getActiveNativeConnection: vi.fn(),
-  deactivateIntegrationConnection: vi.fn(),
   getNativeExecutor: vi.fn(),
   specs: [] as IntegrationToolSpec[],
 }));
 
 vi.mock("@/utils/mcp/call-tool", () => ({ callMcpTool: mocks.callMcpTool }));
-vi.mock("@/utils/integrations/connection.server", () => ({
+vi.mock("@/utils/integrations/connection.server", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/utils/integrations/connection.server")
+  >()),
   getActiveNativeConnection: mocks.getActiveNativeConnection,
-  deactivateIntegrationConnection: mocks.deactivateIntegrationConnection,
 }));
 vi.mock("@/utils/integrations/executors.server", () => ({
   getNativeExecutor: mocks.getNativeExecutor,
@@ -114,7 +117,7 @@ describe("getIntegrationArgOptions", () => {
     fixture = createFixtureExecutor();
     mocks.getNativeExecutor.mockReturnValue(fixture.executor);
     mocks.getActiveNativeConnection.mockResolvedValue(connection);
-    mocks.deactivateIntegrationConnection.mockResolvedValue(undefined);
+    prisma.mcpConnection.updateMany.mockResolvedValue({ count: 1 });
   });
 
   describe("native integrations", () => {
@@ -221,9 +224,12 @@ describe("getIntegrationArgOptions", () => {
         }),
       ).rejects.toMatchObject({ kind: "auth" });
 
-      expect(mocks.deactivateIntegrationConnection).toHaveBeenCalledWith({
-        emailAccountId: "account-1",
-        integrationName: "fixture",
+      expect(prisma.mcpConnection.updateMany).toHaveBeenCalledWith({
+        where: {
+          emailAccountId: "account-1",
+          integration: { name: "fixture" },
+        },
+        data: { isActive: false },
       });
     });
 
@@ -243,14 +249,12 @@ describe("getIntegrationArgOptions", () => {
       ).rejects.toMatchObject({ kind: "not_sent" });
 
       expect(fixture.calls).toHaveLength(1);
-      expect(mocks.deactivateIntegrationConnection).not.toHaveBeenCalled();
+      expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
     });
 
     it("still surfaces the auth error when deactivation fails", async () => {
       fixture.enqueue("listOptions", new IntegrationError({ kind: "auth" }));
-      mocks.deactivateIntegrationConnection.mockRejectedValue(
-        new Error("db down"),
-      );
+      prisma.mcpConnection.updateMany.mockRejectedValue(new Error("db down"));
 
       await expect(
         getIntegrationArgOptions({
@@ -324,9 +328,12 @@ describe("getIntegrationArgOptions", () => {
         }),
       ).rejects.toMatchObject({ kind: "auth" });
 
-      expect(mocks.deactivateIntegrationConnection).toHaveBeenCalledWith({
-        emailAccountId: "account-1",
-        integrationName: "fixture-mcp",
+      expect(prisma.mcpConnection.updateMany).toHaveBeenCalledWith({
+        where: {
+          emailAccountId: "account-1",
+          integration: { name: "fixture-mcp" },
+        },
+        data: { isActive: false },
       });
     });
   });

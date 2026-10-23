@@ -146,6 +146,53 @@ describe("integrationFetch", () => {
     expect(integrationError.message).not.toContain("xxx");
   });
 
+  it.each([
+    [
+      "an HTML content type",
+      new Response("Service unavailable", {
+        status: 503,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    ],
+    [
+      "HTML markup without a content type",
+      new Response(
+        "  <!DOCTYPE html><html><body><h1>502 Bad Gateway</h1></body></html>",
+        { status: 502, headers: { "content-type": "" } },
+      ),
+    ],
+    [
+      "an HTML fragment",
+      new Response("<html><head><title>Error</title></head></html>", {
+        status: 500,
+        headers: { "content-type": "text/plain" },
+      }),
+    ],
+  ])("leaves out an error page sent as %s", async (_, response) => {
+    fetchMock.mockResolvedValueOnce(response);
+
+    const error = await integrationFetch(ITEMS_URL, fetchInit()).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(IntegrationError);
+    expect((error as IntegrationError).providerMessage).toBeUndefined();
+  });
+
+  it("keeps a JSON error body as the app's message", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: "List not found" }, { status: 404 }),
+    );
+
+    const error = await integrationFetch(ITEMS_URL, fetchInit()).catch(
+      (e: unknown) => e,
+    );
+
+    expect((error as IntegrationError).providerMessage).toBe(
+      '{"error":"List not found"}',
+    );
+  });
+
   it("does not retry a connection reset after connect", async () => {
     fetchMock.mockRejectedValue(networkError("ECONNRESET"));
 

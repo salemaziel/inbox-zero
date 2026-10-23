@@ -120,6 +120,23 @@ describe("callMcpTool", () => {
     expect(mockClientConnect).not.toHaveBeenCalled();
   });
 
+  it("classifies a failed refresh of an expired token on a still-active connection as not sent", async () => {
+    mockGetAuthToken.mockRejectedValue(
+      new Error("Token endpoint returned 503"),
+    );
+    prisma.mcpConnection.findFirst.mockResolvedValue({
+      isActive: true,
+      accessToken: "token",
+      apiKey: null,
+      expiresAt: new Date(Date.now() - 1000),
+    } as never);
+
+    const error = await getError(callTodoist());
+
+    expect(error.kind).toBe("not_sent");
+    expect(mockClientConnect).not.toHaveBeenCalled();
+  });
+
   it("classifies a setup failure as not sent when the connection lookup also fails", async () => {
     mockGetAuthToken.mockRejectedValue(new Error("database unavailable"));
     prisma.mcpConnection.findFirst.mockRejectedValue(
@@ -136,15 +153,6 @@ describe("callMcpTool", () => {
       name: "the refresh deactivated the connection",
       connection: {
         isActive: false,
-        accessToken: "token",
-        apiKey: null,
-        expiresAt: new Date(Date.now() - 1000),
-      },
-    },
-    {
-      name: "the token expired and could not be refreshed",
-      connection: {
-        isActive: true,
         accessToken: "token",
         apiKey: null,
         expiresAt: new Date(Date.now() - 1000),

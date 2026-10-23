@@ -1,3 +1,4 @@
+import { MAX_PROVIDER_MESSAGE_LENGTH } from "@/utils/integrations/provider-message";
 import { IntegrationError } from "@/utils/integrations/types";
 import type { IntegrationErrorKind } from "@/utils/integrations/types";
 import { createScopedLogger } from "@/utils/logger";
@@ -5,7 +6,7 @@ import { getRetryAfterDelayMs } from "@/utils/retry/provider-retry";
 
 const logger = createScopedLogger("integrations/http");
 
-const MAX_PROVIDER_MESSAGE_LENGTH = 500;
+const HTML_DOCUMENT_PATTERN = /^<(!doctype html|html)\b/i;
 
 // Only failures before the request leaves the machine are safe to retry; a
 // reset or socket error after connect may follow a write that already landed.
@@ -43,8 +44,7 @@ export async function integrationFetch(
     throw new IntegrationError({
       kind: getKindForStatus(response.status),
       message: `Integration request failed with status ${response.status}`,
-      providerMessage:
-        body.trim().slice(0, MAX_PROVIDER_MESSAGE_LENGTH) || undefined,
+      providerMessage: getProviderMessage(response, body),
       retryAfterMs:
         response.status === 429
           ? getRetryAfterDelayMs(
@@ -78,6 +78,19 @@ function getKindForStatus(status: number): IntegrationErrorKind {
   if (status === 429) return "rate_limit";
   if (status >= 500) return "maybe_sent";
   return "permanent";
+}
+
+// A proxy or CDN error page is markup, not something the app said.
+function getProviderMessage(response: Response, body: string) {
+  const text = body.trim();
+  if (!text) return;
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("text/html") || HTML_DOCUMENT_PATTERN.test(text)) {
+    return;
+  }
+
+  return text.slice(0, MAX_PROVIDER_MESSAGE_LENGTH);
 }
 
 function getCauseCode(error: unknown): string {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
 import {
   createFixtureExecutor,
+  FIXTURE_MCP,
   FIXTURE_NATIVE,
   FIXTURE_REDIRECT,
 } from "@/__tests__/fixtures/integrations/fixture-integration";
@@ -9,19 +10,26 @@ import {
   completeTokenRedirect,
   connectWithToken,
   createTokenRedirect,
+  deactivateConnectionOnAuthFailure,
 } from "@/utils/integrations/connection.server";
 import { IntegrationError } from "@/utils/integrations/types";
 import { createScopedLogger } from "@/utils/logger";
 import { generateSignedOAuthState } from "@/utils/oauth/state";
 
-const { mockGetNativeExecutor } = vi.hoisted(() => ({
-  mockGetNativeExecutor: vi.fn(),
-}));
+const { mockGetNativeExecutor, mockIsIntegrationActionEnabled } = vi.hoisted(
+  () => ({
+    mockGetNativeExecutor: vi.fn(),
+    mockIsIntegrationActionEnabled: vi.fn(),
+  }),
+);
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/utils/prisma");
 vi.mock("@/utils/integrations/executors.server", () => ({
   getNativeExecutor: mockGetNativeExecutor,
+}));
+vi.mock("@/utils/integration-action.server", () => ({
+  isIntegrationActionEnabledForUserId: mockIsIntegrationActionEnabled,
 }));
 vi.mock("@/utils/mcp/integrations", async () => {
   const { FIXTURE_NATIVE, FIXTURE_REDIRECT, FIXTURE_MCP } =
@@ -96,6 +104,27 @@ describe("connectWithToken", () => {
       "Integrations require a Plus plan",
     );
     expect(fixture.calls).toHaveLength(0);
+    expectNothingWritten();
+  });
+
+  it("refuses when integration actions are switched off for the user, without testing the token", async () => {
+    mockIsIntegrationActionEnabled.mockResolvedValue(false);
+
+    await expect(connectWithToken(pasteOptions())).rejects.toThrow(KIND_ERROR);
+    expect(mockIsIntegrationActionEnabled).toHaveBeenCalledWith("user-1");
+    expect(fixture.calls).toHaveLength(0);
+    expectNothingWritten();
+  });
+
+  it("tells the user the app is rate limiting instead of blaming the token or the network", async () => {
+    fixture.enqueue(
+      "testConnection",
+      new IntegrationError({ kind: "rate_limit" }),
+    );
+
+    await expect(connectWithToken(pasteOptions())).rejects.toThrow(
+      `${FIXTURE_NATIVE.displayName} is limiting requests right now. Try again in a minute.`,
+    );
     expectNothingWritten();
   });
 
@@ -209,6 +238,14 @@ describe("createTokenRedirect", () => {
     );
   });
 
+  it("refuses when integration actions are switched off for the user", async () => {
+    mockIsIntegrationActionEnabled.mockResolvedValue(false);
+
+    await expect(createTokenRedirect(redirectStartOptions())).rejects.toThrow(
+      KIND_ERROR,
+    );
+  });
+
   it("refuses a paste-connect app", async () => {
     await expect(
       createTokenRedirect({
@@ -309,6 +346,21 @@ describe("completeTokenRedirect", () => {
     expectNothingWritten();
   });
 
+  it("refuses when integration actions are switched off for the user", async () => {
+    const state = signState();
+    mockIsIntegrationActionEnabled.mockResolvedValue(false);
+
+    await expect(
+      completeTokenRedirect({
+        ...redirectCompleteOptions(),
+        state,
+        cookieState: state,
+      }),
+    ).rejects.toThrow(KIND_ERROR);
+    expect(fixture.calls).toHaveLength(0);
+    expectNothingWritten();
+  });
+
   it("refuses a token the app rejects and writes nothing", async () => {
     const state = signState();
     fixture.enqueue("testConnection", new IntegrationError({ kind: "auth" }));
@@ -324,10 +376,76 @@ describe("completeTokenRedirect", () => {
   });
 });
 
+describe("deactivateConnectionOnAuthFailure", () => {
+  beforeEach(() => {
+    setUp();
+    prisma.mcpConnection.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("deactivates the mailbox's connection on an auth failure", async () => {
+    await deactivateConnectionOnAuthFailure({
+      error: new IntegrationError({ kind: "auth" }),
+      integration: FIXTURE_MCP,
+      emailAccountId: "account-1",
+      logger,
+    });
+
+    expect(prisma.mcpConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        emailAccountId: "account-1",
+        integration: { name: FIXTURE_MCP.name },
+      },
+      data: { isActive: false },
+    });
+  });
+
+  it.each([
+    ["a non-auth failure", new IntegrationError({ kind: "not_sent" })],
+    ["an unclassified error", new Error("boom")],
+  ])("keeps the connection on %s", async (_, error) => {
+    await deactivateConnectionOnAuthFailure({
+      error,
+      integration: FIXTURE_MCP,
+      emailAccountId: "account-1",
+      logger,
+    });
+
+    expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps a hosted-provider connection, whose auth uses the platform key", async () => {
+    await deactivateConnectionOnAuthFailure({
+      error: new IntegrationError({ kind: "auth" }),
+      integration: {
+        ...FIXTURE_MCP,
+        provider: { id: "composio", app: "fixture" },
+      },
+      emailAccountId: "account-1",
+      logger,
+    });
+
+    expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when deactivation fails", async () => {
+    prisma.mcpConnection.updateMany.mockRejectedValue(new Error("db down"));
+
+    await expect(
+      deactivateConnectionOnAuthFailure({
+        error: new IntegrationError({ kind: "auth" }),
+        integration: FIXTURE_MCP,
+        emailAccountId: "account-1",
+        logger,
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
+
 function setUp() {
   vi.clearAllMocks();
   fixture = createFixtureExecutor();
   mockGetNativeExecutor.mockReturnValue(fixture.executor);
+  mockIsIntegrationActionEnabled.mockResolvedValue(true);
   prisma.user.findUnique.mockResolvedValue({
     premium: { tier: "PLUS_MONTHLY", stripeSubscriptionStatus: "active" },
   } as never);

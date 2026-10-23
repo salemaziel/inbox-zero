@@ -50,17 +50,23 @@ export function getArgsToClear(
 
 /**
  * The parent values needed to load an arg's options, or null while any parent
- * is unset (the select stays disabled until then).
+ * is unset (the select stays disabled until then). A parent with no stored
+ * value counts as its default, which is what the editor shows for it.
  */
 export function getParentValues(
+  spec: IntegrationToolSpec,
   arg: IntegrationArgSpec,
   storedArgs: Record<string, unknown> | null | undefined,
 ): Record<string, string> | null {
   const parents: Record<string, string> = {};
 
   for (const key of getDependsOn(arg)) {
-    const value = storedArgs?.[key];
-    if (typeof value !== "string" || !value.trim()) return null;
+    const stored = storedArgs?.[key];
+    const value =
+      typeof stored === "string" && stored.trim()
+        ? stored
+        : spec.args.find((candidate) => candidate.key === key)?.defaultValue;
+    if (!value?.trim()) return null;
     parents[key] = value;
   }
 

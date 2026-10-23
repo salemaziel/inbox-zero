@@ -1,7 +1,7 @@
 import "server-only";
 import { runWithCallPolicy } from "@/utils/integrations/call-policy";
 import {
-  deactivateIntegrationConnection,
+  deactivateConnectionOnAuthFailure,
   getActiveNativeConnection,
 } from "@/utils/integrations/connection.server";
 import {
@@ -9,6 +9,7 @@ import {
   getNativeExecutor,
 } from "@/utils/integrations/executors.server";
 import { findPriorIntegrationResult } from "@/utils/integrations/idempotency.server";
+import { MAX_PROVIDER_MESSAGE_LENGTH } from "@/utils/integrations/provider-message";
 import {
   type IntegrationCallResult,
   parseIntegrationCallResult,
@@ -23,8 +24,6 @@ import type {
   IntegrationKey,
   MCP_INTEGRATIONS,
 } from "@/utils/mcp/integrations";
-
-const MAX_PROVIDER_MESSAGE_LENGTH = 500;
 
 const ERROR_CODES: Record<IntegrationErrorKind, string> = {
   auth: "INTEGRATION_AUTH_FAILED",
@@ -165,21 +164,12 @@ export async function runIntegrationAction({
     });
     logger.trace("Integration action failure details", () => ({ error }));
 
-    if (kind === "auth" && !integrationConfig.provider) {
-      // Hosted-provider auth failures may concern the platform key, not this mailbox's connection
-      await deactivateIntegrationConnection({
-        emailAccountId,
-        integrationName,
-      }).catch((deactivateError) => {
-        logger.warn("Failed to deactivate integration connection", {
-          integration: integrationName,
-          errorType:
-            deactivateError instanceof Error
-              ? deactivateError.name
-              : typeof deactivateError,
-        });
-      });
-    }
+    await deactivateConnectionOnAuthFailure({
+      error,
+      integration: integrationConfig,
+      emailAccountId,
+      logger,
+    });
 
     const providerMessage =
       error instanceof IntegrationError

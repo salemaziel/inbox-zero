@@ -64,6 +64,7 @@ import { findIntegration } from "@/utils/mcp/integrations";
 import {
   buildDefaultIntegrationArgs,
   getIntegrationToolSpec,
+  getOnlyIntegrationToolSpec,
   type IntegrationArgSpec,
   type IntegrationToolSpec,
   normalizeSelectArgValue,
@@ -1117,7 +1118,7 @@ function IntegrationArgFields({
   });
   const spec =
     getIntegrationToolSpec(integrationName, integrationToolName) ??
-    getPreselectedIntegrationSpec();
+    getOnlyIntegrationToolSpec();
   const hasToolChoice = getIntegrationToolChoices().length > 1;
 
   const { data: integrationsData, isLoading: integrationsLoading } =
@@ -1214,7 +1215,7 @@ function IntegrationArgField({
   spec: IntegrationToolSpec;
   isConnected: boolean;
 }) {
-  const parents = getParentValues(arg, storedArgs);
+  const parents = getParentValues(spec, arg, storedArgs);
   const { data: optionsData, isLoading: optionsLoading } =
     useIntegrationArgOptions({
       integration: spec.integration,
@@ -1264,12 +1265,18 @@ function IntegrationArgField({
         <Label>{arg.label}</Label>
         <Select
           value={selectedValue}
-          onValueChange={(nextValue) =>
+          onValueChange={(nextValue) => {
+            for (const key of getArgsToClear(spec, arg.key)) {
+              setValue(
+                `actions.${index}.integrationArgs.${key}` as const,
+                null,
+              );
+            }
             setValue(
               `actions.${index}.integrationArgs.${arg.key}` as const,
               nextValue,
-            )
-          }
+            );
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -1487,7 +1494,7 @@ function updateActionType({
 
   if (nextType === ActionType.INTEGRATION) {
     if (actionTypeBeforeUpdate !== ActionType.INTEGRATION) {
-      const spec = getPreselectedIntegrationSpec();
+      const spec = getOnlyIntegrationToolSpec();
       setValue(`actions.${index}.integrationName`, spec?.integration ?? null);
       setValue(`actions.${index}.integrationToolName`, spec?.tool ?? null);
       // Text args seed empty on purpose: empty means the AI writes them
@@ -1710,13 +1717,6 @@ function renderFieldRows(
   }
 
   return rows;
-}
-
-// AI- and API-authored actions may omit the tool, so a single choice is assumed.
-function getPreselectedIntegrationSpec() {
-  const choices = getIntegrationToolChoices();
-  if (choices.length !== 1) return;
-  return getIntegrationToolSpec(choices[0].integration, choices[0].tool);
 }
 
 function buildDefaultArgsForChoice(choice: IntegrationToolChoice) {

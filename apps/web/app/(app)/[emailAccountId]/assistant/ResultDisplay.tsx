@@ -25,9 +25,8 @@ import {
   getSafeIntegrationResultUrl,
   parseIntegrationCallResult,
 } from "@/utils/integrations/result";
+import { MAX_PROVIDER_MESSAGE_LENGTH } from "@/utils/integrations/provider-message";
 import { findIntegration } from "@/utils/mcp/integrations";
-
-const MAX_INTEGRATION_MESSAGE_LENGTH = 500;
 
 // History rows carry every ExecutedAction column at runtime; RunRulesResult only
 // types the ones the rule engine produces.
@@ -284,7 +283,7 @@ function getIntegrationErrorMessage(executionError: unknown) {
   if (!executionError || typeof executionError !== "object") return null;
   const { message } = executionError as { message?: unknown };
   if (typeof message !== "string" || !message.trim()) return null;
-  return message.slice(0, MAX_INTEGRATION_MESSAGE_LENGTH);
+  return message.slice(0, MAX_PROVIDER_MESSAGE_LENGTH);
 }
 
 function PrettyConditions({

@@ -2,7 +2,12 @@ import { z } from "zod";
 
 export const integrationCallResultSchema = z.object({
   externalId: z.string().min(1).max(500).optional(),
-  url: z.string().url().max(2000).optional(),
+  url: z
+    .string()
+    .url()
+    .max(2000)
+    .refine((value) => getSafeIntegrationResultUrl(value) !== null)
+    .optional(),
 });
 
 export type IntegrationCallResult = z.infer<typeof integrationCallResultSchema>;

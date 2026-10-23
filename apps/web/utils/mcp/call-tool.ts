@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { MAX_PROVIDER_MESSAGE_LENGTH } from "@/utils/integrations/provider-message";
 import {
   IntegrationError,
   type IntegrationErrorKind,
@@ -12,8 +13,6 @@ import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 
 const logger = createScopedLogger("mcp-call-tool");
-
-const MAX_PROVIDER_MESSAGE_LENGTH = 500;
 
 type CallStage = "allowlist" | "connection" | "connect" | "call";
 
@@ -151,7 +150,6 @@ async function getConnectionFailureKind({
         isActive: true,
         accessToken: true,
         apiKey: true,
-        expiresAt: true,
       },
     })
     .catch(() => undefined);
@@ -164,11 +162,9 @@ async function getConnectionFailureKind({
     return connection.apiKey ? "not_sent" : "auth";
   }
 
-  if (!connection.accessToken) return "auth";
-  if (connection.expiresAt && connection.expiresAt.getTime() <= Date.now()) {
-    return "auth";
-  }
-  return "not_sent";
+  // An expired token on a still-active connection means the refresh failed for
+  // a transient reason: the OAuth layer deactivates on every definite failure.
+  return connection.accessToken ? "not_sent" : "auth";
 }
 
 function getHttpStatusKind(error: unknown): IntegrationErrorKind | null {

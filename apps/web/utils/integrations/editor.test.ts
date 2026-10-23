@@ -113,6 +113,34 @@ describe("getArgsToClear", () => {
     expect(getArgsToClear(spec, "b")).toEqual(["c"]);
   });
 
+  it("clears dependents of a plain select parent", () => {
+    const spec: IntegrationToolSpec = {
+      ...fixtureCreateItemSpec,
+      args: [
+        {
+          key: "kind",
+          label: "Kind",
+          control: {
+            type: "select",
+            options: [{ value: "a", label: "A" }],
+          },
+        },
+        {
+          key: "target",
+          label: "Target",
+          control: {
+            type: "remote-select",
+            source: "native",
+            dependsOn: ["kind"],
+          },
+          displayValueKey: "targetName",
+        },
+      ],
+    };
+
+    expect(getArgsToClear(spec, "kind")).toEqual(["target", "targetName"]);
+  });
+
   it("terminates when dependencies form a cycle", () => {
     const spec: IntegrationToolSpec = {
       ...fixtureCreateItemSpec,
@@ -146,26 +174,70 @@ describe("getParentValues", () => {
   const listArg = findArg(fixtureCreateItemSpec, "listId");
 
   it("returns the stored value of each parent", () => {
-    expect(getParentValues(listArg, { boardId: "board-1" })).toEqual({
+    expect(
+      getParentValues(fixtureCreateItemSpec, listArg, { boardId: "board-1" }),
+    ).toEqual({
       boardId: "board-1",
     });
   });
 
   it("returns null when a parent is missing", () => {
-    expect(getParentValues(listArg, {})).toBeNull();
-    expect(getParentValues(listArg, null)).toBeNull();
-    expect(getParentValues(listArg, undefined)).toBeNull();
+    expect(getParentValues(fixtureCreateItemSpec, listArg, {})).toBeNull();
+    expect(getParentValues(fixtureCreateItemSpec, listArg, null)).toBeNull();
+    expect(
+      getParentValues(fixtureCreateItemSpec, listArg, undefined),
+    ).toBeNull();
   });
 
   it("returns null when a parent is empty or not a string", () => {
-    expect(getParentValues(listArg, { boardId: "  " })).toBeNull();
-    expect(getParentValues(listArg, { boardId: 3 })).toBeNull();
+    expect(
+      getParentValues(fixtureCreateItemSpec, listArg, { boardId: "  " }),
+    ).toBeNull();
+    expect(
+      getParentValues(fixtureCreateItemSpec, listArg, { boardId: 3 }),
+    ).toBeNull();
+  });
+
+  it("falls back to the parent's default value when none is stored", () => {
+    const spec: IntegrationToolSpec = {
+      ...fixtureCreateItemSpec,
+      args: [
+        {
+          key: "boardId",
+          label: "Board",
+          control: { type: "remote-select", source: "native" },
+          defaultValue: "board-default",
+        },
+        {
+          key: "listId",
+          label: "List",
+          control: {
+            type: "remote-select",
+            source: "native",
+            dependsOn: ["boardId"],
+          },
+        },
+      ],
+    };
+    const listArg = findArg(spec, "listId");
+
+    expect(getParentValues(spec, listArg, {})).toEqual({
+      boardId: "board-default",
+    });
+    expect(getParentValues(spec, listArg, { boardId: " " })).toEqual({
+      boardId: "board-default",
+    });
+    expect(getParentValues(spec, listArg, { boardId: "board-1" })).toEqual({
+      boardId: "board-1",
+    });
   });
 
   it("returns an empty object for an arg with no parents", () => {
-    expect(getParentValues(findArg(todoistSpec, "projectId"), null)).toEqual(
-      {},
-    );
-    expect(getParentValues(findArg(todoistSpec, "content"), null)).toEqual({});
+    expect(
+      getParentValues(todoistSpec, findArg(todoistSpec, "projectId"), null),
+    ).toEqual({});
+    expect(
+      getParentValues(todoistSpec, findArg(todoistSpec, "content"), null),
+    ).toEqual({});
   });
 });

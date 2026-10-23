@@ -298,6 +298,9 @@ export function getAppPageViewProperties({
   pathname: string | null | undefined;
   searchParams?: Pick<URLSearchParams, "get"> | null;
 }) {
+  // A redirected app token lands on this page in the URL fragment.
+  if (pathname?.includes("/integrations/connect/")) return null;
+
   const page = getAppPageFromPathname(pathname);
   if (!page) return null;
 
@@ -322,6 +325,8 @@ const URL_PROPERTY_KEYS = [
   "$referrer",
   "$initial_current_url",
   "$initial_referrer",
+  "$session_entry_url",
+  "$session_entry_referrer",
 ];
 
 /**
@@ -363,7 +368,10 @@ type StringLeaf<T> = T extends string
 function withoutUntrackedParams(value: string) {
   try {
     const url = new URL(value);
-    for (const param of UNTRACKED_PAGE_VIEW_PARAMS)
+    // The fragment can carry a redirected app token, and `state` is the
+    // signed connect state.
+    url.hash = "";
+    for (const param of [...UNTRACKED_PAGE_VIEW_PARAMS, "state"])
       url.searchParams.delete(param);
     return url.toString();
   } catch {

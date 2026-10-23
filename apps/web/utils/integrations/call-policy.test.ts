@@ -154,13 +154,52 @@ describe("runWithCallPolicy", () => {
     expect(attempt).toHaveBeenCalledTimes(1);
   });
 
+  it("does not start a retry with less than 5 s left and returns the last definite error", async () => {
+    const attempt = vi.fn(() =>
+      rejectAfter(14_000, new IntegrationError({ kind: "not_sent" })),
+    );
+
+    const result = runWithCallPolicy(attempt, { mode: "write" });
+    const assertion = expect(result).rejects.toMatchObject({
+      kind: "not_sent",
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await assertion;
+    expect(attempt).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start a retry when the rate-limit wait leaves less than 5 s", async () => {
+    const attempt = vi
+      .fn()
+      .mockImplementationOnce(() =>
+        rejectAfter(14_000, new IntegrationError({ kind: "not_sent" })),
+      )
+      .mockImplementationOnce(() =>
+        rejectAfter(
+          11_000,
+          new IntegrationError({ kind: "rate_limit", retryAfterMs: 1000 }),
+        ),
+      )
+      .mockResolvedValue("ok");
+
+    const result = runWithCallPolicy(attempt, { mode: "write" });
+    const assertion = expect(result).rejects.toMatchObject({
+      kind: "rate_limit",
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await assertion;
+    expect(attempt).toHaveBeenCalledTimes(2);
+  });
+
   it("caps the last attempt so the total never exceeds 30 s", async () => {
     const start = Date.now();
     const signals: AbortSignal[] = [];
     const attempt = vi.fn((signal: AbortSignal) => {
       signals.push(signal);
       if (signals.length < 3) {
-        return rejectAfter(14_000, new IntegrationError({ kind: "not_sent" }));
+        return rejectAfter(10_000, new IntegrationError({ kind: "not_sent" }));
       }
       return new Promise<never>(() => {});
     });

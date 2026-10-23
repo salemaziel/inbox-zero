@@ -510,17 +510,24 @@ describe("INTEGRATION action validation", () => {
       }
     });
 
-    it("reports one issue per unknown marker, including inside AI segments", () => {
+    it("reports one issue per unknown marker outside AI segments", () => {
       const result = parseWithArgs({
-        content: "[[foo]] {{write [[bar]] here}} [[foo]]",
+        content: "[[foo]] {{write [[bar]] here}} [[foo]] [[baz]]",
       });
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.issues.map((issue) => issue.message)).toEqual([
           expect.stringContaining("[[foo]]"),
-          expect.stringContaining("[[bar]]"),
+          expect.stringContaining("[[baz]]"),
         ]);
       }
+    });
+
+    it("accepts marker-like text inside an AI segment, which runtime leaves as written", () => {
+      const result = parseWithArgs({
+        content: "{{summarize the [[Body]] section}} for [[subject]]",
+      });
+      expect(result.success).toBe(true);
     });
 
     it("accepts known markers, with or without inner spaces", () => {

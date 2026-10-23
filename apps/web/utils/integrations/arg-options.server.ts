@@ -2,11 +2,10 @@ import "server-only";
 import { SafeError } from "@/utils/error";
 import { runWithCallPolicy } from "@/utils/integrations/call-policy";
 import {
-  deactivateIntegrationConnection,
+  deactivateConnectionOnAuthFailure,
   getActiveNativeConnection,
 } from "@/utils/integrations/connection.server";
 import { getNativeExecutor } from "@/utils/integrations/executors.server";
-import { IntegrationError } from "@/utils/integrations/types";
 import type { Logger } from "@/utils/logger";
 import { callMcpTool } from "@/utils/mcp/call-tool";
 import { findIntegration } from "@/utils/mcp/integrations";
@@ -77,23 +76,12 @@ export async function getIntegrationArgOptions({
 
     return { options };
   } catch (error) {
-    if (error instanceof IntegrationError && error.kind === "auth") {
-      // Hosted-provider integrations use the platform key, not this mailbox's connection
-      if (!entry.provider) {
-        await deactivateIntegrationConnection({
-          emailAccountId,
-          integrationName: integration,
-        }).catch((deactivateError) => {
-          logger.warn("Failed to deactivate integration connection", {
-            integration,
-            errorType:
-              deactivateError instanceof Error
-                ? deactivateError.name
-                : typeof deactivateError,
-          });
-        });
-      }
-    }
+    await deactivateConnectionOnAuthFailure({
+      error,
+      integration: entry,
+      emailAccountId,
+      logger,
+    });
     throw error;
   }
 }

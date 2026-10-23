@@ -19,10 +19,14 @@ export type PlaceholderValues = Record<PlaceholderName, string>;
 
 const MARKER_PATTERN = "\\[\\[ *([A-Za-z][A-Za-z0-9]*) *\\]\\]";
 
+// Only the author-written parts count: markers inside {{…}} are never
+// substituted at runtime, so they are neither valid nor invalid.
 export function findUnknownPlaceholders(text: string): string[] {
   const unknown = new Set<string>();
-  for (const match of text.matchAll(new RegExp(MARKER_PATTERN, "g"))) {
-    if (!isPlaceholderName(match[1])) unknown.add(match[1]);
+  for (const literal of text.split(new RegExp(TEMPLATE_VARIABLE_PATTERN))) {
+    for (const match of literal.matchAll(new RegExp(MARKER_PATTERN, "g"))) {
+      if (!isPlaceholderName(match[1])) unknown.add(match[1]);
+    }
   }
   return [...unknown];
 }

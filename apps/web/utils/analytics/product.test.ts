@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getAppPageFromPathname,
+  getAppPageViewProperties,
   getPageViewSearch,
   stripUntrackedUrlParams,
 } from "@/utils/analytics/product";
@@ -49,6 +50,49 @@ describe("stripUntrackedUrlParams", () => {
     expect(event.$set_once).toEqual({
       $initial_current_url: "https://app.test/acc/mail",
     });
+  });
+
+  it("removes a redirected token fragment and the signed state from every URL PostHog attaches", () => {
+    const tokenUrl =
+      "https://app.test/acc/integrations/connect/app?state=signed#token=secret-token";
+    const urls = {
+      $current_url: tokenUrl,
+      $referrer: tokenUrl,
+      $initial_current_url: tokenUrl,
+      $initial_referrer: tokenUrl,
+      $session_entry_url: tokenUrl,
+      $session_entry_referrer: tokenUrl,
+    };
+    const event = stripUntrackedUrlParams({
+      properties: { ...urls },
+      $set: { ...urls },
+      $set_once: { ...urls },
+    });
+
+    const cleanUrl = "https://app.test/acc/integrations/connect/app";
+    const cleanUrls = Object.fromEntries(
+      Object.keys(urls).map((key) => [key, cleanUrl]),
+    );
+    expect(event.properties).toEqual(cleanUrls);
+    expect(event.$set).toEqual(cleanUrls);
+    expect(event.$set_once).toEqual(cleanUrls);
+  });
+});
+
+describe("getAppPageViewProperties", () => {
+  it("tracks the integrations page", () => {
+    expect(
+      getAppPageViewProperties({ pathname: "/acc/integrations" }),
+    ).toMatchObject({ app_page: "integrations" });
+  });
+
+  it("does not track the page a redirected token lands on", () => {
+    expect(
+      getAppPageViewProperties({
+        pathname: "/acc/integrations/connect/app",
+        searchParams: new URLSearchParams("state=signed"),
+      }),
+    ).toBeNull();
   });
 });
 
