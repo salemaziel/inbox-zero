@@ -11,6 +11,7 @@ import { useIntegrations } from "@/hooks/useIntegrations";
 import { useAccount } from "@/providers/EmailAccountProvider";
 import { completeIntegrationTokenRedirectAction } from "@/utils/actions/integrations";
 import { getActionErrorMessage } from "@/utils/error";
+import { takeIntegrationToken } from "@/utils/integrations/token-fragment";
 import { prefixPath } from "@/utils/path";
 
 export function TokenRedirectCapture({
@@ -44,17 +45,15 @@ export function TokenRedirectCapture({
     },
   );
 
-  // The token lives in the URL fragment and must be removed from the address
-  // bar before anything else runs. The ref keeps the dev double-mount from
-  // reading the already-cleared URL.
+  // instrumentation-client moves the token out of the URL fragment into
+  // session storage before hydration; reading it also removes it. The ref keeps
+  // the dev double-mount from running a second time with nothing left to read.
   useEffect(() => {
     if (started.current) return;
     started.current = true;
 
     const state = new URLSearchParams(window.location.search).get("state");
-    const token = new URLSearchParams(window.location.hash.slice(1)).get(
-      "token",
-    );
+    const token = takeIntegrationToken();
     window.history.replaceState(null, "", window.location.pathname);
 
     if (!state || !token) {
