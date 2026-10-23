@@ -4,7 +4,7 @@ import type React from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import { SideNavWithTopNav } from "@/components/SideNavWithTopNav";
 import {
   CHAT_SIDEBAR_DEFAULT_WIDTH,
@@ -36,9 +36,10 @@ import { booleanString } from "@/utils/zod";
 
 const logger = createScopedLogger("AppLayout");
 
-const inter = Inter({
-  subsets: ["latin"],
+const inter = localFont({
+  src: "../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2",
   variable: "--font-inter",
+  weight: "100 900",
   preload: true,
   display: "swap",
 });
