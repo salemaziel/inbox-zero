@@ -171,6 +171,7 @@ export function MailShell() {
   const [isDesktopApp, setIsDesktopApp] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isMailNavOpen, setIsMailNavOpen] = useState(false);
+  const [isListScrolled, setIsListScrolled] = useState(false);
   const [labelPicker, setLabelPicker] = useState<{
     mode: "label" | "move";
     targets: ThreadSelection[];
@@ -1150,6 +1151,9 @@ export function MailShell() {
     senderCommandContext?.threadId === singleActionTarget?.selection.threadId
       ? senderCommandContext
       : null;
+  const onToggleAssistant = useStableCallback(() =>
+    toggleSidebar(["chat-sidebar"]),
+  );
   // `useShortcuts` keeps handlers in a ref, so these need no memoization.
   const handlers: ShortcutHandlers = (() => {
     if (sidePanelThreadId || labelPicker) return {};
@@ -1250,6 +1254,7 @@ export function MailShell() {
       },
       toggleLayout,
       togglePreview,
+      toggleAssistant: onToggleAssistant,
       help: () => setIsHelpOpen(true),
       search: isMailOverlayOpen
         ? undefined
@@ -1392,9 +1397,6 @@ export function MailShell() {
         threadId: sentThreadId,
       });
     },
-  );
-  const onToggleAssistant = useStableCallback(() =>
-    toggleSidebar(["chat-sidebar"]),
   );
   const searchFolders = useMemo(
     () =>
@@ -1540,6 +1542,7 @@ export function MailShell() {
                     isAllAccounts ? combinedLabelSplits : undefined
                   }
                   labelsByAccount={isAllAccounts ? labelsByAccount : undefined}
+                  showDivider={isListScrolled}
                 />
               )}
               {isAllAccounts && combinedThreadState.failedAccountIds.length ? (
@@ -1585,6 +1588,7 @@ export function MailShell() {
                       showSentOpenStatus={
                         scopeType === "sent" && !isAllAccounts
                       }
+                      onScrolledChange={setIsListScrolled}
                       listKey={
                         isAllAccounts
                           ? `all-accounts:${searchQuery ?? displayedActiveSplitId}`
