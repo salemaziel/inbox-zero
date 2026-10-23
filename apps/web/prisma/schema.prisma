@@ -891,6 +891,7 @@ model ExecutedAction {
   draftModelName       String?
   draftPipelineVersion Int?
   draftContextMetadata Json?
+  integrationResult    Json? // { externalId?, url? } returned by an INTEGRATION action
   draftSendLog         DraftSendLog? // Exists when an outbound reply was compared against this draft
   digestItems          DigestItem[] // Relation to digest items created by this action
   scheduledAction      ScheduledAction? // Reverse relation for delayed actions

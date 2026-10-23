@@ -6,6 +6,10 @@ import {
 import { getErrorMessage } from "@/utils/error";
 import type { Logger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
+import {
+  parseIntegrationCallResult,
+  type IntegrationCallResult,
+} from "@/utils/integrations/result";
 
 type ActionExecutionError = {
   code: string;
@@ -27,12 +31,14 @@ export async function persistExecutedActionOutcome({
   status,
   error,
   sentMessageIds,
+  integrationResult,
   logger,
 }: {
   actionId: string;
   status: ExecutedActionStatus;
   error: ActionExecutionError | null;
   sentMessageIds?: string[];
+  integrationResult?: IntegrationCallResult | null;
   logger: Logger;
 }) {
   try {
@@ -43,6 +49,7 @@ export async function persistExecutedActionOutcome({
         executedAt: new Date(),
         executionError: error ?? Prisma.DbNull,
         ...(sentMessageIds?.length ? { sentMessageIds } : {}),
+        ...(integrationResult ? { integrationResult } : {}),
       },
     });
   } catch (persistenceError) {
@@ -62,6 +69,12 @@ export function getSentMessageIds(actionResult: unknown): string[] {
           typeof messageId === "string" && !!messageId,
       )
     : [];
+}
+
+export function getIntegrationResult(
+  actionResult: unknown,
+): IntegrationCallResult | null {
+  return parseIntegrationCallResult(asRecord(actionResult)?.integrationResult);
 }
 
 export function getActionResultError(

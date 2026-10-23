@@ -115,6 +115,104 @@ describe("executeAct", () => {
     });
   });
 
+  it("persists the integration result on a succeeded integration action", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      success: true,
+      integrationResult: {
+        externalId: "task-1",
+        url: "https://app.example.com/task-1",
+      },
+    });
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.INTEGRATION }],
+    } as any;
+
+    await executeAct({
+      client: mockClient,
+      executedRule,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: {
+        executionStatus: "SUCCEEDED",
+        executedAt: expect.any(Date),
+        executionError: Prisma.DbNull,
+        integrationResult: {
+          externalId: "task-1",
+          url: "https://app.example.com/task-1",
+        },
+      },
+    });
+  });
+
+  it("persists the prior integration result on a skipped rerun and keeps the rule APPLIED", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      skipped: true,
+      reason: "INTEGRATION_ALREADY_CREATED",
+      integrationResult: { externalId: "task-1" },
+    });
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.INTEGRATION }],
+    } as any;
+
+    const result = await executeAct({
+      client: mockClient,
+      executedRule,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(result).toBe(ExecutedRuleStatus.APPLIED);
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: {
+        executionStatus: "SKIPPED",
+        executedAt: expect.any(Date),
+        executionError: Prisma.DbNull,
+        integrationResult: { externalId: "task-1" },
+      },
+    });
+    expect(mockExecutedRuleUpdate).toHaveBeenCalledWith({
+      where: { id: "executed-rule-1" },
+      data: { status: ExecutedRuleStatus.APPLIED },
+    });
+  });
+
+  it("does not write integrationResult when the integration returned none", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      success: true,
+      integrationResult: null,
+    });
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.INTEGRATION }],
+    } as any;
+
+    await executeAct({
+      client: mockClient,
+      executedRule,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: {
+        executionStatus: "SUCCEEDED",
+        executedAt: expect.any(Date),
+        executionError: Prisma.DbNull,
+      },
+    });
+  });
+
   it("keeps labels but skips archive for protected company senders", async () => {
     envMock.WHITELIST_FROM = "onboarding@getinboxzero.com";
     mockRunActionFunction.mockResolvedValueOnce({ success: true });
