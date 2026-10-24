@@ -172,8 +172,8 @@ export type RuleActionFields = {
 
 export type RuleAction = {
   type: ActionType;
-  integrationName?: string;
-  integrationToolName?: string;
+  integrationName?: string | null;
+  integrationToolName?: string | null;
   fields?: RuleActionFields | null;
   delayInMinutes?: number | null;
 };
