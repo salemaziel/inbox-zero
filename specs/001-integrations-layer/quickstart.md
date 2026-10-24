@@ -27,9 +27,9 @@ The root `test` script runs Vitest inside `apps/web`, and Vitest matches filters
 | US3 retry and classification | `pnpm test utils/integrations/call-policy.test.ts utils/integrations/http.test.ts utils/mcp/call-tool.test.ts` | Attempts, waits and kinds match data-model.md; never retries `maybe_sent`. |
 | US4 rerun protection | `pnpm test utils/integrations/idempotency.server.test.ts utils/integrations/run-integration-action.server.test.ts` | Prior result from an earlier run → no fixture call, `SKIPPED` with prior link; two identical actions in one run both execute. |
 | US5 connect/test/disconnect | `pnpm test utils/integrations/connection.server.test.ts utils/actions/mcp.test.ts app/api/mcp/integrations/route.test.ts` | Tier enforced, token trimmed and verified before save, bad state rejected, revoke called on disconnect (and a hung revoke still deletes), no `McpTool` rows, native apps hidden when gated off. |
-| US6 picker and dependent options | `pnpm test utils/integrations/editor.test.ts utils/integrations/arg-options.server.test.ts utils/mcp/tool-specs.test.ts` | Single tool preselected; child cleared on parent change; undeclared parent keys refused. |
+| US6 picker and dependent options | `pnpm test utils/integrations/editor.test.ts utils/integrations/arg-options.server.test.ts utils/mcp/tool-specs.test.ts` | Picker lists tools of connected apps, shows available but unconnected apps disabled ("Connect <app> first"), hides the rest; child cleared on parent change; undeclared parent keys refused. |
 | US7 hosted-provider write tools | `pnpm test utils/mcp/server-connection.test.ts` | Provider receives read and write tools. |
-| US8 (only if owner approved) | `pnpm test utils/ai/rule/create-rule-schema.test.ts utils/rule/rule.test.ts` | One rule-writer option per tool, app and tool saved. |
+| US8 (approved, built in Phase 5) | `pnpm test utils/ai/rule/create-rule-schema.test.ts utils/rule/rule.test.ts utils/rule/mobile-rule.test.ts utils/ai/assistant/chat-rule-tools.test.ts` | One rule-writer option per tool, app and tool saved; an action naming no tool is rejected at save. |
 
 ## End-of-phase verification (run once, after all tasks)
 

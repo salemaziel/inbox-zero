@@ -22,7 +22,7 @@ Specs are added to `INTEGRATION_TOOL_SPECS`. App-specific spec files may live in
 
 ## 3. Server executor (server-only) — `apps/web/utils/integrations/executors.server.ts`
 
-- Native: an entry in `NATIVE_EXECUTORS[<integration>]` implementing `NativeIntegrationExecutor` (`run`, `parseResult`, `listOptions`, `testConnection`, optional `revoke`, `buildAuthorizeUrl` when `connectKind = "token-redirect"`).
+- Native: an entry in `NATIVE_EXECUTORS[<integration>]` implementing `NativeIntegrationExecutor` (`run`, `parseResult`, `listOptions`, `testConnection`, optional `revoke`, `buildAuthorizeUrl` when `connectKind = "token-redirect"`, optional `isConfigured`). `run` and `parseResult` receive the tool name.
 - MCP: optionally an entry in `MCP_RESULT_PARSERS[<integration>][<tool>]` with `parseResult(raw)`; nothing else.
 
 Executor rules:
@@ -36,7 +36,7 @@ Executor rules:
 
 ## 4. Call result
 
-`run` returns the raw response; `parseResult(raw)` returns `{ externalId?, url? } | null`. Only an `externalId` enables rerun protection. The URL is shown in history only if `https:`.
+`run` returns the raw response; `parseResult(raw, tool)` returns `{ externalId?, url? } | null`. Only an `externalId` enables rerun protection. The URL is shown in history only if `https:`.
 
 ## 5. Error kinds the layer understands
 
