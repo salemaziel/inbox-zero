@@ -129,6 +129,8 @@ const nextConfig: NextConfig = {
           [
             "connect-src 'self' https: wss: https://*.mux.com https://*.litix.io",
             microsoftEmulatorOrigin,
+            // tap2line locator (apps/web/scripts/tap2line), dev only
+            isDevelopment ? "http://127.0.0.1:3939" : undefined,
           ]
             .filter(Boolean)
             .join(" "),
