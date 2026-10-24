@@ -9,6 +9,10 @@ import {
 import { ConditionType } from "@/utils/config";
 import { NINETY_DAYS_MINUTES } from "@/utils/date";
 import { validateLabelNameBasic } from "@/utils/gmail/label-validation";
+import {
+  findUnknownPlaceholders,
+  PLACEHOLDER_NAMES,
+} from "@/utils/integrations/placeholders";
 import { findIntegration } from "@/utils/mcp/integrations";
 import {
   getIntegrationArgKeys,
@@ -525,6 +529,19 @@ function addIntegrationActionIssues({
       message: `Unknown argument for this integration tool: ${key}`,
       path: ["integrationArgs", key],
     });
+  }
+
+  for (const arg of spec.args) {
+    if (arg.control.type !== "text" || typeof args[arg.key] !== "string") {
+      continue;
+    }
+    for (const name of findUnknownPlaceholders(args[arg.key] as string)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Unknown field [[${name}]]. Available: ${PLACEHOLDER_NAMES.join(", ")}.`,
+        path: ["integrationArgs", arg.key],
+      });
+    }
   }
 
   for (const arg of spec.args) {

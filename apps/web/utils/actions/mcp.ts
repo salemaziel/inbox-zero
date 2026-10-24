@@ -21,7 +21,12 @@ import { findIntegration } from "@/utils/mcp/integrations";
 import { getIntegrationProvider } from "@/utils/mcp/providers/registry";
 import { syncMcpTools } from "@/utils/mcp/sync-tools";
 import { getCustomMcpServerUrlError } from "@/utils/mcp/safe-fetch";
+import { runWithCallPolicy } from "@/utils/integrations/call-policy";
+import { deactivateIntegrationConnection } from "@/utils/integrations/connection.server";
+import { getNativeExecutor } from "@/utils/integrations/executors.server";
+import { IntegrationError } from "@/utils/integrations/types";
 import prisma from "@/utils/prisma";
+import type { Logger } from "@/utils/logger";
 
 const MAX_CUSTOM_SERVERS_PER_ACCOUNT = 10;
 
@@ -29,15 +34,33 @@ export const disconnectMcpConnectionAction = actionClient
   .metadata({ name: "disconnectMcpConnection" })
   .inputSchema(disconnectMcpConnectionBody)
   .action(
-    async ({ ctx: { emailAccountId }, parsedInput: { connectionId } }) => {
+    async ({
+      ctx: { emailAccountId, logger },
+      parsedInput: { connectionId },
+    }) => {
       const connection = await prisma.mcpConnection.findUnique({
         where: { id: connectionId, emailAccountId },
-        select: { integration: { select: { name: true } } },
+        select: {
+          accessToken: true,
+          integration: { select: { name: true } },
+        },
       });
       if (!connection) throw new SafeError("Connection not found");
 
+      const integration = findIntegration(connection.integration.name);
+
+      if (integration?.execution === "native") {
+        await revokeNativeConnection({
+          connectionId,
+          emailAccountId,
+          integrationName: integration.name,
+          accessToken: connection.accessToken,
+          logger,
+        });
+      }
+
       // Revoke at the provider first so it never keeps tokens we no longer track
-      const provider = findIntegration(connection.integration.name)?.provider;
+      const provider = integration?.provider;
       if (provider) {
         await getIntegrationProvider(provider.id).disconnect({
           app: provider.app,
@@ -76,11 +99,24 @@ export const testMcpConnectionAction = actionClient
     }) => {
       const connection = await prisma.mcpConnection.findUnique({
         where: { id: connectionId, emailAccountId },
-        select: { isActive: true, integration: { select: { name: true } } },
+        select: {
+          isActive: true,
+          accessToken: true,
+          integration: { select: { name: true } },
+        },
       });
       if (!connection) throw new SafeError("Connection not found");
       if (!connection.isActive) {
         throw new SafeError("Resume this integration to test it.");
+      }
+
+      const integration = findIntegration(connection.integration.name);
+      if (integration?.execution === "native") {
+        return testNativeConnection({
+          emailAccountId,
+          integrationName: connection.integration.name,
+          accessToken: connection.accessToken,
+        });
       }
 
       try {
@@ -91,15 +127,27 @@ export const testMcpConnectionAction = actionClient
         );
         return { toolsCount };
       } catch (error) {
+        if (isAuthRejection(error)) {
+          // Hosted-provider servers authenticate with the platform key, so a
+          // rejection says nothing about this mailbox's connection
+          if (!integration?.provider) {
+            await deactivateIntegrationConnection({
+              emailAccountId,
+              integrationName: connection.integration.name,
+            });
+          }
+          throw new SafeError(AUTH_EXPIRED_MESSAGE);
+        }
+
         // A failed token refresh deactivates the connection
         const latest = await prisma.mcpConnection.findUnique({
           where: { id: connectionId, emailAccountId },
           select: { isActive: true },
         });
         throw new SafeError(
-          !latest?.isActive || isAuthRejection(error)
-            ? "Authorization expired or was revoked. Reconnect and try again."
-            : "Could not reach the server. Check that it is online and try again.",
+          latest?.isActive
+            ? "Could not reach the server. Check that it is online and try again."
+            : AUTH_EXPIRED_MESSAGE,
         );
       }
     },
@@ -191,6 +239,79 @@ export const removeCustomMcpServerAction = actionClient
 
     if (!count) throw new SafeError("Server not found");
   });
+
+const AUTH_EXPIRED_MESSAGE =
+  "Authorization expired or was revoked. Reconnect and try again.";
+
+async function testNativeConnection({
+  emailAccountId,
+  integrationName,
+  accessToken,
+}: {
+  emailAccountId: string;
+  integrationName: string;
+  accessToken: string | null;
+}) {
+  const executor = getNativeExecutor(integrationName);
+  if (!executor) throw new SafeError("This integration is not available.");
+  if (!accessToken) throw new SafeError(AUTH_EXPIRED_MESSAGE);
+
+  try {
+    await runWithCallPolicy(
+      (signal) => executor.testConnection({ accessToken }, { signal }),
+      { mode: "read" },
+    );
+    return { toolsCount: 0 };
+  } catch (error) {
+    if (error instanceof IntegrationError && error.kind === "auth") {
+      await deactivateIntegrationConnection({
+        emailAccountId,
+        integrationName,
+      });
+      throw new SafeError(AUTH_EXPIRED_MESSAGE);
+    }
+    if (error instanceof IntegrationError && error.kind === "rate_limit") {
+      throw new SafeError(
+        "The app is limiting requests right now. Try again in a minute.",
+      );
+    }
+    throw new SafeError(
+      "Could not reach the server. Check that it is online and try again.",
+    );
+  }
+}
+
+// Revoking is best effort: a failing or hanging app must not keep the user
+// from removing the connection.
+async function revokeNativeConnection({
+  connectionId,
+  emailAccountId,
+  integrationName,
+  accessToken,
+  logger,
+}: {
+  connectionId: string;
+  emailAccountId: string;
+  integrationName: string;
+  accessToken: string | null;
+  logger: Logger;
+}) {
+  const executor = getNativeExecutor(integrationName);
+  if (!executor?.revoke || !accessToken) return;
+
+  const conn = { id: connectionId, emailAccountId, accessToken };
+  try {
+    await runWithCallPolicy(
+      async (signal) => executor.revoke?.(conn, { signal }),
+      { mode: "read" },
+    );
+  } catch (error) {
+    logger.warn("Could not revoke integration connection", {
+      integrationName,
+      kind: error instanceof IntegrationError ? error.kind : "unknown",
+    });
+  }
+}
 
 function isAuthRejection(error: unknown): boolean {
   let current = error;

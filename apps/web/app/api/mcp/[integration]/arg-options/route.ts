@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { withEmailAccount } from "@/utils/middleware";
 import { SafeError } from "@/utils/error";
-import { callMcpTool } from "@/utils/mcp/call-tool";
-import { findIntegration } from "@/utils/mcp/integrations";
-import { getRemoteSelectArg } from "@/utils/mcp/tool-specs";
+import { getIntegrationArgOptions } from "@/utils/integrations/arg-options.server";
+
+const parentsSchema = z.record(z.string(), z.string());
 
 export type GetIntegrationArgOptionsResponse = Awaited<
-  ReturnType<typeof getData>
+  ReturnType<typeof getIntegrationArgOptions>
 >;
 
 export const GET = withEmailAccount(
@@ -16,43 +17,29 @@ export const GET = withEmailAccount(
     const searchParams = request.nextUrl.searchParams;
 
     return NextResponse.json(
-      await getData({
+      await getIntegrationArgOptions({
         emailAccountId: request.auth.emailAccountId,
         integration,
         tool: searchParams.get("tool"),
         argKey: searchParams.get("argKey"),
+        parents: parseParents(searchParams.get("parents")),
+        logger: request.logger,
       }),
     );
   },
 );
 
-async function getData({
-  emailAccountId,
-  integration,
-  tool,
-  argKey,
-}: {
-  emailAccountId: string;
-  integration: string;
-  tool: string | null;
-  argKey: string | null;
-}) {
-  // Never trust the URL: the integration and the arg must both be declared.
-  if (!findIntegration(integration)) {
-    throw new SafeError("Unknown integration");
+function parseParents(raw: string | null): Record<string, string> | undefined {
+  if (raw === null) return;
+
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new SafeError("Invalid parents");
   }
 
-  const remoteSelect = getRemoteSelectArg({ integration, tool, argKey });
-  if (!remoteSelect) {
-    throw new SafeError("Unknown integration argument");
-  }
-
-  const content = await callMcpTool({
-    emailAccountId,
-    integration,
-    toolName: remoteSelect.control.optionsTool,
-    args: {},
-  });
-
-  return { options: remoteSelect.control.parseOptions(content) };
+  const parsed = parentsSchema.safeParse(json);
+  if (!parsed.success) throw new SafeError("Invalid parents");
+  return parsed.data;
 }

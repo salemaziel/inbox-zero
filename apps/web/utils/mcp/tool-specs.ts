@@ -38,9 +38,21 @@ export type IntegrationArgControl =
   // which integration it is talking to.
   | {
       type: "remote-select";
+      source?: "mcp";
       optionsTool: string; // MCP read tool supplying the options (not the spec's write tool)
       parseOptions: (content: unknown) => IntegrationArgOption[];
+      buildOptionsArgs?: (
+        parents: Record<string, string>,
+      ) => Record<string, unknown>;
+      dependsOn?: readonly string[]; // other arg keys whose values the options depend on
       fallbackOptions?: readonly IntegrationArgOption[]; // always offered, even if the fetch fails
+    }
+  // Options come from the native executor's listOptions.
+  | {
+      type: "remote-select";
+      source: "native";
+      dependsOn?: readonly string[];
+      fallbackOptions?: readonly IntegrationArgOption[];
     };
 
 export type IntegrationArgSpec = {
@@ -228,15 +240,20 @@ export function getIntegrationActionDisplayValue(action: {
   return typeof value === "string" ? value.trim() || null : null;
 }
 
-/** Read tools the app calls directly to populate a remote-select. */
-export function getIntegrationRemoteSelectTools(integration: string): string[] {
-  return INTEGRATION_TOOL_SPECS.filter(
-    (spec) => spec.integration === integration,
-  ).flatMap((spec) =>
-    spec.args.flatMap((arg) =>
-      arg.control.type === "remote-select" ? [arg.control.optionsTool] : [],
-    ),
-  );
+/** MCP read tools the app calls directly to populate a remote-select. */
+export function getIntegrationRemoteSelectTools(
+  integration: string,
+  specs: readonly IntegrationToolSpec[] = INTEGRATION_TOOL_SPECS,
+): string[] {
+  return specs
+    .filter((spec) => spec.integration === integration)
+    .flatMap((spec) =>
+      spec.args.flatMap((arg) =>
+        arg.control.type === "remote-select" && arg.control.source !== "native"
+          ? [arg.control.optionsTool]
+          : [],
+      ),
+    );
 }
 
 /** Resolves a remote-select arg from untrusted request parameters. */

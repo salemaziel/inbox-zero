@@ -18,7 +18,8 @@ import { handlePreviousDraftDeletion } from "@/utils/ai/choose-rule/draft-manage
 import { sendColdEmailNotification } from "@/utils/cold-email/send-notification";
 import type { ParsedMessage } from "@/utils/types";
 import prisma from "@/utils/prisma";
-import { callMcpTool } from "@/utils/mcp/call-tool";
+import { runIntegrationAction } from "@/utils/integrations/run-integration-action.server";
+import { findIntegration } from "@/utils/mcp/integrations";
 import { createTestLogger } from "@/__tests__/helpers";
 
 const { mockEnv, mockIsIntegrationActionEnabledForUserId } = vi.hoisted(() => ({
@@ -44,8 +45,8 @@ vi.mock("@/env", () => ({
   },
 }));
 
-vi.mock("@/utils/mcp/call-tool", () => ({
-  callMcpTool: vi.fn().mockResolvedValue([]),
+vi.mock("@/utils/integrations/run-integration-action.server", () => ({
+  runIntegrationAction: vi.fn(),
 }));
 
 vi.mock("@/utils/integration-action.server", () => ({
@@ -974,7 +975,7 @@ describe("runActionFunction", () => {
         email,
         action,
         emailAccount,
-        executedRule: { id: "rule-1" } as never,
+        executedRule: { id: "executed-rule-1", ruleId: "rule-1" } as never,
         logger,
       });
     }
@@ -984,17 +985,30 @@ describe("runActionFunction", () => {
       vi.mocked(prisma.mcpConnection.findFirst).mockResolvedValue({
         id: "connection-1",
       } as never);
-      vi.mocked(callMcpTool).mockResolvedValue([]);
+      vi.mocked(runIntegrationAction).mockResolvedValue({
+        success: true,
+        integrationResult: null,
+      });
     });
 
-    it("adds a Todoist task with the resolved args", async () => {
+    it("adds a Todoist task with the resolved args through the execution core", async () => {
+      const coreResult = {
+        success: true as const,
+        integrationResult: {
+          externalId: "task-1",
+          url: "https://app.todoist.com/app/task/task-1",
+        },
+      };
+      vi.mocked(runIntegrationAction).mockResolvedValue(coreResult);
+
       const result = await runIntegration(integrationAction);
 
-      expect(callMcpTool).toHaveBeenCalledWith({
-        emailAccountId: "account-1",
-        integration: "todoist",
+      expect(runIntegrationAction).toHaveBeenCalledTimes(1);
+      expect(runIntegrationAction).toHaveBeenCalledWith({
+        integrationName: "todoist",
         toolName: "add-tasks",
-        args: {
+        integrationConfig: findIntegration("todoist"),
+        payload: {
           tasks: [
             {
               content: "Follow up on lease packet",
@@ -1004,8 +1018,13 @@ describe("runActionFunction", () => {
             },
           ],
         },
+        emailAccountId: "account-1",
+        messageId: "message-1",
+        ruleId: "rule-1",
+        executedRuleId: "executed-rule-1",
+        logger: expect.anything(),
       });
-      expect(result).toEqual({ success: true });
+      expect(result).toEqual(coreResult);
     });
 
     it("omits empty optional args (e.g. AI decided there is no due date)", async () => {
@@ -1014,9 +1033,9 @@ describe("runActionFunction", () => {
         integrationArgs: { content: "Follow up", dueString: "  " },
       });
 
-      expect(callMcpTool).toHaveBeenCalledWith(
+      expect(runIntegrationAction).toHaveBeenCalledWith(
         expect.objectContaining({
-          args: { tasks: [{ content: "Follow up" }] },
+          payload: { tasks: [{ content: "Follow up" }] },
         }),
       );
     });
@@ -1032,9 +1051,9 @@ describe("runActionFunction", () => {
         },
       });
 
-      expect(callMcpTool).toHaveBeenCalledWith(
+      expect(runIntegrationAction).toHaveBeenCalledWith(
         expect.objectContaining({
-          args: {
+          payload: {
             tasks: [
               {
                 content: "Follow up",
@@ -1053,9 +1072,9 @@ describe("runActionFunction", () => {
         integrationArgs: { content: "Follow up", dueString: "next Friday" },
       });
 
-      expect(callMcpTool).toHaveBeenCalledWith(
+      expect(runIntegrationAction).toHaveBeenCalledWith(
         expect.objectContaining({
-          args: {
+          payload: {
             tasks: [{ content: "Follow up", dueString: "next Friday" }],
           },
         }),
@@ -1068,9 +1087,9 @@ describe("runActionFunction", () => {
         integrationArgs: { content: "Follow up", dueString: "ai" },
       });
 
-      expect(callMcpTool).toHaveBeenCalledWith(
+      expect(runIntegrationAction).toHaveBeenCalledWith(
         expect.objectContaining({
-          args: { tasks: [{ content: "Follow up" }] },
+          payload: { tasks: [{ content: "Follow up" }] },
         }),
       );
     });
@@ -1085,9 +1104,9 @@ describe("runActionFunction", () => {
         },
       });
 
-      expect(callMcpTool).toHaveBeenCalledWith(
+      expect(runIntegrationAction).toHaveBeenCalledWith(
         expect.objectContaining({
-          args: { tasks: [{ content: "Follow up", projectId: "6X7" }] },
+          payload: { tasks: [{ content: "Follow up", projectId: "6X7" }] },
         }),
       );
     });
@@ -1097,7 +1116,7 @@ describe("runActionFunction", () => {
 
       const result = await runIntegration(integrationAction);
 
-      expect(callMcpTool).not.toHaveBeenCalled();
+      expect(runIntegrationAction).not.toHaveBeenCalled();
       expect(result).toEqual({
         skipped: true,
         reason: "INTEGRATION_ACTION_DISABLED",
@@ -1109,7 +1128,7 @@ describe("runActionFunction", () => {
 
       const result = await runIntegration(integrationAction);
 
-      expect(callMcpTool).not.toHaveBeenCalled();
+      expect(runIntegrationAction).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         success: false,
         errorCode: "INTEGRATION_NOT_CONNECTED",
@@ -1122,7 +1141,7 @@ describe("runActionFunction", () => {
         integrationArgs: { description: "no content" },
       });
 
-      expect(callMcpTool).not.toHaveBeenCalled();
+      expect(runIntegrationAction).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         success: false,
         errorCode: "MISSING_INTEGRATION_ARGS",
@@ -1135,22 +1154,37 @@ describe("runActionFunction", () => {
         integrationToolName: "delete-tasks",
       });
 
-      expect(callMcpTool).not.toHaveBeenCalled();
+      expect(runIntegrationAction).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         success: false,
         errorCode: "UNSUPPORTED_INTEGRATION_TOOL",
       });
     });
 
-    it("returns a structured failure when the tool call throws", async () => {
-      vi.mocked(callMcpTool).mockRejectedValue(new Error("server unavailable"));
+    it("returns the execution core's failure unchanged", async () => {
+      const coreFailure = {
+        success: false as const,
+        errorCode: "INTEGRATION_MAYBE_SENT",
+        errorMessage: "The task may have been created in Todoist",
+      };
+      vi.mocked(runIntegrationAction).mockResolvedValue(coreFailure);
 
       const result = await runIntegration(integrationAction);
 
+      expect(result).toEqual(coreFailure);
+    });
+
+    it("checks the integration config before anything else after the gate", async () => {
+      const result = await runIntegration({
+        ...integrationAction,
+        integrationToolName: null,
+      });
+
+      expect(prisma.mcpConnection.findFirst).not.toHaveBeenCalled();
+      expect(runIntegrationAction).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         success: false,
-        errorCode: "INTEGRATION_CALL_FAILED",
-        errorMessage: expect.stringContaining("server unavailable"),
+        errorCode: "MISSING_INTEGRATION_CONFIG",
       });
     });
   });

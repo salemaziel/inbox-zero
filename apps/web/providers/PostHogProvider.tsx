@@ -103,6 +103,8 @@ if (typeof window !== "undefined" && env.NEXT_PUBLIC_POSTHOG_KEY) {
     // Without consent, nothing is written to cookies or storage, so an
     // anonymous visitor is only recognized within the current page session.
     persistence: canUseTrackingCookies() ? "localStorage+cookie" : "memory",
+    // A redirected app token arrives in the URL fragment.
+    disable_capture_url_hashes: true,
     before_send: stripUntrackedUrlParams,
   });
   posthog.register(getClientAnalyticsProperties());

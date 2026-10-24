@@ -19,7 +19,10 @@ export async function getMcpServerConnection(
     return getIntegrationProvider(integration.provider.id).getMcpServer({
       app: integration.provider.app,
       emailAccountId,
-      allowedTools: integration.allowedTools ?? [],
+      allowedTools: [
+        ...(integration.allowedTools ?? []),
+        ...(integration.ruleActionWriteTools ?? []),
+      ],
     });
   }
 

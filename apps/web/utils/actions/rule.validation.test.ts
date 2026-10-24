@@ -482,6 +482,68 @@ describe("INTEGRATION action validation", () => {
     }
   });
 
+  describe("email-field markers", () => {
+    function parseWithArgs(integrationArgs: Record<string, string>) {
+      return createRuleBody.safeParse({
+        ...validRule,
+        actions: [{ ...integrationAction, integrationArgs }],
+      });
+    }
+
+    it("rejects an unknown marker, naming it and the available fields", () => {
+      const result = parseWithArgs({ content: "Reply to [[sender]]" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const issue = result.error.issues[0];
+        expect(issue.path.slice(-2)).toEqual(["integrationArgs", "content"]);
+        expect(issue.message).toBe(
+          "Unknown field [[sender]]. Available: subject, from, to, date, snippet, link, ruleName.",
+        );
+      }
+    });
+
+    it("rejects a marker with the wrong case", () => {
+      const result = parseWithArgs({ content: "[[Subject]]" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].message).toContain("[[Subject]]");
+      }
+    });
+
+    it("reports one issue per unknown marker outside AI segments", () => {
+      const result = parseWithArgs({
+        content: "[[foo]] {{write [[bar]] here}} [[foo]] [[baz]]",
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.message)).toEqual([
+          expect.stringContaining("[[foo]]"),
+          expect.stringContaining("[[baz]]"),
+        ]);
+      }
+    });
+
+    it("accepts marker-like text inside an AI segment, which runtime leaves as written", () => {
+      const result = parseWithArgs({
+        content: "{{summarize the [[Body]] section}} for [[subject]]",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts known markers, with or without inner spaces", () => {
+      const result = parseWithArgs({
+        content: "[[subject]] from [[ from ]] ([[ruleName]])",
+        description: "[[link]] [[snippet]] [[to]] [[date]]",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("ignores marker-like text in a select arg", () => {
+      const result = parseWithArgs({ content: "Review", dueString: "[[foo]]" });
+      expect(result.success).toBe(true);
+    });
+  });
+
   it("rejects tools that are not registered write tools", () => {
     const result = createRuleBody.safeParse({
       ...validRule,

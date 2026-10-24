@@ -1,14 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import {
   combineActionsWithAiArgs,
   filterIncompleteDraftActions,
+  getActionItemsWithAiArgs,
   getParameterFieldsForAction,
   parseTemplate,
 } from "./choose-args";
 import { ActionType } from "@/generated/prisma/enums";
 import type { Action } from "@/generated/prisma/client";
 import type { DraftAttribution } from "@/utils/ai/reply/draft-attribution";
+import { aiGenerateArgs } from "@/utils/ai/choose-rule/ai-choose-args";
+import { fetchMessagesAndGenerateDraftWithConfidenceThreshold } from "@/utils/reply-tracker/generate-draft";
+import { getEmailAccount, getMockMessage, getRule } from "@/__tests__/helpers";
+import { createScopedLogger } from "@/utils/logger";
+import type { EmailProvider } from "@/utils/email/types";
+import type { ParsedMessage } from "@/utils/types";
+
+vi.mock("@/utils/ai/choose-rule/ai-choose-args", () => ({
+  aiGenerateArgs: vi.fn(),
+}));
+vi.mock("@/utils/reply-tracker/generate-draft", () => ({
+  fetchMessagesAndGenerateDraftWithConfidenceThreshold: vi.fn(),
+}));
+
+const logger = createScopedLogger("choose-args-test");
 
 describe("getParameterFieldsForAction", () => {
   it("creates schema for simple field", () => {
@@ -572,6 +588,126 @@ describe("filterIncompleteDraftActions", () => {
     expect(result[0].id).toBe("draft-filled");
   });
 });
+
+describe("getActionItemsWithAiArgs integration placeholders", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(aiGenerateArgs).mockResolvedValue({
+      args: undefined,
+      attribution: null,
+    });
+  });
+
+  it("resolves marker-only text args without calling the AI and leaves select args alone", async () => {
+    const action = createTodoistAction({
+      content: "Reply to [[from]] about [[subject]]",
+      description: "[[ ruleName ]]: [[snippet]] [[to]]",
+      dueString: "today",
+      projectId: "[[subject]]",
+    });
+
+    const [result] = await runGetActionItems([action]);
+
+    expect(aiGenerateArgs).not.toHaveBeenCalled();
+    expect(result.integrationArgs).toEqual({
+      content: "Reply to alice@example.com about Signed lease",
+      description: "Follow-ups: Please sign by Friday user@example.com",
+      dueString: "today",
+      projectId: "[[subject]]",
+    });
+  });
+
+  it("resolves both the AI part and the markers of a mixed arg", async () => {
+    const action = createTodoistAction({
+      content: "{{short task}} for [[from]]",
+      description: "Static context",
+      dueString: "today",
+      projectId: "inbox",
+    });
+    vi.mocked(aiGenerateArgs).mockResolvedValue({
+      args: {
+        "INTEGRATION-todoist-1": {
+          "integrationArgs.content": { var1: "Send the lease" },
+        },
+      },
+      attribution: null,
+    });
+
+    const [result] = await runGetActionItems([action]);
+
+    expect(aiGenerateArgs).toHaveBeenCalledTimes(1);
+    expect(result.integrationArgs).toEqual({
+      content: "Send the lease for alice@example.com",
+      description: "Static context",
+      dueString: "today",
+      projectId: "inbox",
+    });
+  });
+
+  it("resolves markers on the draft-only path", async () => {
+    const draftAction = createMockAction({
+      id: "draft-1",
+      type: ActionType.DRAFT_EMAIL,
+      content: null,
+    });
+    const integrationAction = createTodoistAction({
+      content: "[[subject]]",
+      description: "Static context",
+      dueString: "today",
+      projectId: "inbox",
+    });
+    vi.mocked(
+      fetchMessagesAndGenerateDraftWithConfidenceThreshold,
+    ).mockResolvedValue({
+      draft: "Thanks, signing today.",
+      confidence: "HIGH_CONFIDENCE",
+      attribution: null,
+    } as Awaited<
+      ReturnType<typeof fetchMessagesAndGenerateDraftWithConfidenceThreshold>
+    >);
+
+    const result = await runGetActionItems([draftAction, integrationAction]);
+
+    expect(result.map((action) => action.content)).toEqual([
+      "Thanks, signing today.",
+      null,
+    ]);
+    expect(result[1].integrationArgs).toMatchObject({
+      content: "Signed lease",
+    });
+  });
+});
+
+async function runGetActionItems(actions: Action[]) {
+  const message = getMockMessage({
+    from: "alice@example.com",
+    to: "user@example.com",
+    subject: "Signed lease",
+    snippet: "Please sign by Friday",
+  }) as ParsedMessage;
+
+  return getActionItemsWithAiArgs({
+    message,
+    emailAccount: {
+      ...getEmailAccount(),
+      draftReplyConfidence: "ALL_EMAILS",
+    },
+    selectedRule: getRule("", actions, "Follow-ups"),
+    client: {} as EmailProvider,
+    modelType: "default",
+    logger,
+  });
+}
+
+function createTodoistAction(integrationArgs: Record<string, string>) {
+  return createMockAction({
+    id: "todoist-1",
+    type: ActionType.INTEGRATION,
+    integrationName: "todoist",
+    integrationToolName: "add-tasks",
+    integrationArgs,
+  });
+}
 
 function createMockAction(overrides: Partial<Action> = {}): Action {
   return {

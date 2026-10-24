@@ -3,6 +3,7 @@ import { withEmailAccount } from "@/utils/middleware";
 import { MCP_INTEGRATIONS } from "@/utils/mcp/integrations";
 import { fromDbAuthType } from "@/utils/mcp/resolve-integration";
 import { getIntegrationProvider } from "@/utils/mcp/providers/registry";
+import { isIntegrationActionEnabledForEmailAccountId } from "@/utils/integration-action.server";
 import prisma from "@/utils/prisma";
 
 export type GetIntegrationsResponse = Awaited<ReturnType<typeof getData>>;
@@ -42,11 +43,19 @@ async function getData(emailAccountId: string) {
   const findConnection = (name: string) =>
     connections.find((connection) => connection.integration.name === name);
 
+  const hasNativeIntegrations = Object.values(MCP_INTEGRATIONS).some(
+    (integration) => integration.execution === "native",
+  );
+  const nativeEnabled =
+    hasNativeIntegrations &&
+    (await isIntegrationActionEnabledForEmailAccountId(emailAccountId));
+
   const builtIn = Object.values(MCP_INTEGRATIONS)
-    .filter(
-      (integration) =>
-        !integration.provider ||
-        getIntegrationProvider(integration.provider.id).isConfigured(),
+    .filter((integration) =>
+      integration.execution === "native"
+        ? nativeEnabled
+        : !integration.provider ||
+          getIntegrationProvider(integration.provider.id).isConfigured(),
     )
     .map((integration) => ({
       name: integration.name,
@@ -57,6 +66,11 @@ async function getData(emailAccountId: string) {
       comingSoon: integration.comingSoon,
       authType: integration.authType,
       isCustom: false,
+      execution: integration.execution ?? ("mcp" as const),
+      connectKind:
+        integration.execution === "native"
+          ? integration.connectKind
+          : undefined,
       connection: findConnection(integration.name),
     }));
 
@@ -74,6 +88,8 @@ async function getData(emailAccountId: string) {
         ? fromDbAuthType(integration.authType)
         : ("oauth" as const),
       isCustom: true,
+      execution: "mcp" as const,
+      connectKind: undefined,
       connection: findConnection(integration.name),
     };
   });

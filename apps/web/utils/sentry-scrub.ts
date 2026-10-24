@@ -1,4 +1,4 @@
-import type { Event } from "@sentry/nextjs";
+import type { Breadcrumb, Event, ReplayFrameEvent } from "@sentry/nextjs";
 import {
   CONTENT_FIELD_NAMES,
   normalizeRedactionFieldName,
@@ -17,6 +17,14 @@ const REDACT_KEYS = new Set<string>(
   ].map(normalizeRedactionFieldName),
 );
 
+// A token-redirect connect returns the token in the URL fragment and an OAuth
+// style `state` in the query, so neither may leave the browser in a URL.
+const DROPPED_QUERY_PARAMS = new Set(["state"]);
+const BREADCRUMB_URL_KEYS = ["from", "to", "url"];
+const SPAN_URL_KEYS = ["url", "url.full", "http.url", "http.target"];
+const SPAN_QUERY_KEYS = ["url.query", "http.query"];
+const SPAN_FRAGMENT_KEYS = ["url.fragment", "http.fragment"];
+
 // Sentry is a third party. Before sending an event, redact PII/secrets from the
 // fields where captureException context and request data land. We redact (not
 // hash) so this stays client- and edge-safe (no node:crypto). event.user.email
@@ -30,6 +38,24 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     if (data) event.request.data = redactPii(data);
     if (headers) event.request.headers = redactPii(headers);
     if (cookies) event.request.cookies = redactPii(cookies);
+    if (event.request.url) {
+      event.request.url = stripSensitiveUrlParts(event.request.url);
+    }
+    if (event.request.query_string) {
+      event.request.query_string = stripSensitiveQuery(
+        event.request.query_string,
+      );
+    }
+  }
+  if (event.breadcrumbs) {
+    event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb);
+  }
+  scrubSpanData(event.contexts?.trace?.data);
+  for (const span of event.spans ?? []) scrubSpanData(span.data);
+  // Replay events carry the visited page URLs (initial URL includes the hash).
+  const replayUrls = (event as { urls?: unknown }).urls;
+  if (Array.isArray(replayUrls)) {
+    (event as { urls?: unknown }).urls = replayUrls.map(stripSensitiveUrlParts);
   }
   return event;
 }
@@ -41,6 +67,30 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
 // which @sentry/nextjs does not re-export.
 export const beforeSend = scrubSentryEvent;
 export const beforeSendTransaction = scrubSentryEvent;
+
+// Breadcrumbs stay in the client buffer for the whole session and also feed
+// session replay, so clean them before they are stored.
+export function beforeBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+  return scrubBreadcrumb(breadcrumb);
+}
+
+// Session replay records history navigations and network requests as span
+// frames, and slow/multi click breadcrumbs with the page URL; none of these
+// pass through beforeBreadcrumb or beforeSend.
+export function beforeAddRecordingEvent(
+  event: ReplayFrameEvent,
+): ReplayFrameEvent {
+  if (event.data.tag === "performanceSpan") {
+    const payload = event.data.payload;
+    payload.description = stripSensitiveUrlParts(payload.description);
+    if (payload.data && "previous" in payload.data) {
+      payload.data.previous = stripSensitiveUrlParts(payload.data.previous);
+    }
+  } else if (event.data.tag === "breadcrumb") {
+    event.data.payload = scrubBreadcrumb(event.data.payload);
+  }
+  return event;
+}
 
 function redactPii<T>(value: T, depth = 0): T {
   if (depth > MAX_DEPTH || value === null || value === undefined) return value;
@@ -58,6 +108,59 @@ function redactPii<T>(value: T, depth = 0): T {
       : redactPii(nested, depth + 1);
   }
   return result as T;
+}
+
+function scrubBreadcrumb<T extends Breadcrumb>(breadcrumb: T): T {
+  if (!breadcrumb.data) return breadcrumb;
+  const data = { ...breadcrumb.data };
+  for (const key of BREADCRUMB_URL_KEYS) {
+    if (key in data) data[key] = stripSensitiveUrlParts(data[key]);
+  }
+  return { ...breadcrumb, data };
+}
+
+function scrubSpanData(data: Record<string, unknown> | undefined) {
+  if (!data) return;
+  for (const key of SPAN_URL_KEYS) {
+    if (key in data) data[key] = stripSensitiveUrlParts(data[key]);
+  }
+  for (const key of SPAN_QUERY_KEYS) {
+    if (key in data) data[key] = stripSensitiveQuery(data[key]);
+  }
+  for (const key of SPAN_FRAGMENT_KEYS) delete data[key];
+}
+
+// String splitting instead of URL parsing keeps relative and malformed URLs
+// (and the rest of the URL's encoding) intact without throwing.
+function stripSensitiveUrlParts<T>(url: T): T {
+  if (typeof url !== "string") return url;
+  const withoutFragment = url.split("#", 1)[0];
+  const queryStart = withoutFragment.indexOf("?");
+  if (queryStart === -1) return withoutFragment as T;
+
+  const base = withoutFragment.slice(0, queryStart);
+  const query = withoutFragment
+    .slice(queryStart + 1)
+    .split("&")
+    .filter((pair) => !DROPPED_QUERY_PARAMS.has(decodeQueryKey(pair)))
+    .join("&");
+  return (query ? `${base}?${query}` : base) as T;
+}
+
+function stripSensitiveQuery<T>(query: T): T {
+  if (typeof query !== "string") return query;
+  const hasPrefix = query.startsWith("?");
+  const cleaned = stripSensitiveUrlParts(hasPrefix ? query : `?${query}`);
+  return (hasPrefix ? cleaned : cleaned.slice(1)) as T;
+}
+
+function decodeQueryKey(pair: string) {
+  const key = pair.split("=", 1)[0].replace(/\+/g, " ");
+  try {
+    return decodeURIComponent(key);
+  } catch {
+    return key;
+  }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

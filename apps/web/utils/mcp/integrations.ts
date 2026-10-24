@@ -11,7 +11,13 @@ type McpIntegrationConfig = {
   skipResourceParam?: boolean; // Some OAuth servers don't support RFC 8707 resource parameter
   filterWriteTools?: boolean; // Require read-only annotations and names; new tools start disabled
   ruleActionWriteTools?: string[];
-};
+} & (
+  | { execution?: "mcp" }
+  | {
+      execution: "native";
+      connectKind: "api-token-paste" | "token-redirect";
+    }
+);
 
 export const MCP_INTEGRATIONS: Record<
   string,

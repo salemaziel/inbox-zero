@@ -16,6 +16,7 @@ import { shouldSkipAutomatedArchiveForSender } from "@/utils/ai/automated-archiv
 import { flushLoggerSafely } from "@/utils/logger-flush";
 import {
   getActionResultError,
+  getIntegrationResult,
   getSentMessageIds,
   isActionResultSkipped,
   normalizeActionExecutionError,
@@ -99,6 +100,7 @@ export async function executeAct({
           actionId: action.id,
           status: ExecutedActionStatus.SKIPPED,
           error: null,
+          integrationResult: getIntegrationResult(actionResult),
           logger: log,
         });
         continue;
@@ -123,6 +125,7 @@ export async function executeAct({
           status: ExecutedActionStatus.SUCCEEDED,
           error: null,
           sentMessageIds: getSentMessageIds(actionResult),
+          integrationResult: getIntegrationResult(actionResult),
           logger: log,
         });
       }

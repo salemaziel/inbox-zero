@@ -4,12 +4,23 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { env } from "@/env";
-import { beforeSend, beforeSendTransaction } from "@/utils/sentry-scrub";
+import {
+  beforeAddRecordingEvent,
+  beforeBreadcrumb,
+  beforeSend,
+  beforeSendTransaction,
+  scrubSentryEvent,
+} from "@/utils/sentry-scrub";
 import { installStaleDeploymentReload } from "@/utils/stale-deployment";
 import {
   canUseTrackingCookies,
   subscribeToCookieConsent,
 } from "@/utils/cookie-consent";
+import { moveTokenFragmentToSessionStorage } from "@/utils/integrations/token-fragment";
+
+// Must run before Sentry.init (and before PostHog, which starts after
+// hydration) so no telemetry sees a URL that still holds a connect token.
+moveTokenFragmentToSessionStorage();
 
 const REPLAY_SESSION_SAMPLE_RATE = 0.1;
 
@@ -29,6 +40,7 @@ Sentry.init({
   // Redact PII/secrets before sending to Sentry (third party).
   beforeSend,
   beforeSendTransaction,
+  beforeBreadcrumb,
 
   // Session replay stores data in the browser, so it waits for cookie consent
   // where that is required.
@@ -41,8 +53,14 @@ Sentry.init({
     Sentry.replayIntegration({
       maskAllText: true,
       blockAllMedia: true,
+      beforeAddRecordingEvent,
     }),
   ],
+});
+
+// Replay events skip beforeSend, but carry the visited page URLs.
+Sentry.getClient()?.on("postprocessEvent", (event) => {
+  if (event.type === "replay_event") scrubSentryEvent(event);
 });
 
 if (!canUseTrackingCookies()) {

@@ -66,8 +66,19 @@ import {
   getIntegrationToolSpec,
   getOnlyIntegrationToolSpec,
   type IntegrationArgSpec,
+  type IntegrationToolSpec,
   normalizeSelectArgValue,
 } from "@/utils/mcp/tool-specs";
+import {
+  getArgsToClear,
+  getIntegrationToolChoices,
+  getParentValues,
+  type IntegrationToolChoice,
+} from "@/utils/integrations/editor";
+import {
+  IntegrationPlaceholderHint,
+  IntegrationToolPicker,
+} from "@/app/(app)/[emailAccountId]/assistant/IntegrationToolPicker";
 import { useIntegrations } from "@/hooks/useIntegrations";
 import { useIntegrationArgOptions } from "@/hooks/useIntegrationArgOptions";
 import { LoadingContent } from "@/components/LoadingContent";
@@ -1108,6 +1119,7 @@ function IntegrationArgFields({
   const spec =
     getIntegrationToolSpec(integrationName, integrationToolName) ??
     getOnlyIntegrationToolSpec();
+  const hasToolChoice = getIntegrationToolChoices().length > 1;
 
   const { data: integrationsData, isLoading: integrationsLoading } =
     useIntegrations();
@@ -1128,44 +1140,61 @@ function IntegrationArgFields({
   const errorMessage =
     typeof rawErrorMessage === "string" ? rawErrorMessage : undefined;
 
-  if (!spec) return null;
+  const toolPicker = hasToolChoice ? (
+    <IntegrationToolPicker
+      integration={spec?.integration}
+      tool={spec?.tool}
+      onSelect={(choice) => {
+        setValue(`actions.${index}.integrationName`, choice.integration);
+        setValue(`actions.${index}.integrationToolName`, choice.tool);
+        setValue(
+          `actions.${index}.integrationArgs`,
+          buildDefaultArgsForChoice(choice),
+        );
+      }}
+    />
+  ) : null;
+
+  if (!spec) return toolPicker;
 
   const displayName =
     findIntegration(spec.integration)?.displayName ?? spec.integration;
 
   return (
-    <LoadingContent loading={integrationsLoading}>
-      {!isConnected ? (
-        <div className="space-y-3">
-          <MutedText className="px-1">
-            {`${displayName} isn't connected. Connect it to use this action.`}
-          </MutedText>
-          <Button asChild size="sm" variant="outline">
-            <Link href={prefixPath(emailAccountId, "/integrations")}>
-              {`Connect ${displayName}`}
-            </Link>
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {spec.args.map((arg) => (
-            <IntegrationArgField
-              key={arg.key}
-              arg={arg}
-              index={index}
-              register={register}
-              setValue={setValue}
-              storedArgs={integrationArgs}
-              integration={spec.integration}
-              tool={spec.tool}
-              isConnected={isConnected}
-            />
-          ))}
+    <div className="space-y-4">
+      {toolPicker}
+      <LoadingContent loading={integrationsLoading}>
+        {!isConnected ? (
+          <div className="space-y-3">
+            <MutedText className="px-1">
+              {`${displayName} isn't connected. Connect it to use this action.`}
+            </MutedText>
+            <Button asChild size="sm" variant="outline">
+              <Link href={prefixPath(emailAccountId, "/integrations")}>
+                {`Connect ${displayName}`}
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {spec.args.map((arg) => (
+              <IntegrationArgField
+                key={arg.key}
+                arg={arg}
+                index={index}
+                register={register}
+                setValue={setValue}
+                storedArgs={integrationArgs}
+                spec={spec}
+                isConnected={isConnected}
+              />
+            ))}
 
-          {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
-        </div>
-      )}
-    </LoadingContent>
+            {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
+          </div>
+        )}
+      </LoadingContent>
+    </div>
   );
 }
 
@@ -1175,8 +1204,7 @@ function IntegrationArgField({
   register,
   setValue,
   storedArgs,
-  integration,
-  tool,
+  spec,
   isConnected,
 }: {
   arg: IntegrationArgSpec;
@@ -1184,15 +1212,16 @@ function IntegrationArgField({
   register: UseFormRegister<CreateRuleBody>;
   setValue: UseFormSetValue<CreateRuleBody>;
   storedArgs: CreateRuleBody["actions"][number]["integrationArgs"];
-  integration: string;
-  tool: string;
+  spec: IntegrationToolSpec;
   isConnected: boolean;
 }) {
+  const parents = getParentValues(spec, arg, storedArgs);
   const { data: optionsData, isLoading: optionsLoading } =
     useIntegrationArgOptions({
-      integration,
-      tool,
+      integration: spec.integration,
+      tool: spec.tool,
       argKey: arg.key,
+      parents,
       enabled: isConnected && arg.control.type === "remote-select",
     });
 
@@ -1216,6 +1245,7 @@ function IntegrationArgField({
           )}
           placeholder={arg.placeholder}
         />
+        <IntegrationPlaceholderHint />
       </div>
     );
   }
@@ -1235,12 +1265,18 @@ function IntegrationArgField({
         <Label>{arg.label}</Label>
         <Select
           value={selectedValue}
-          onValueChange={(nextValue) =>
+          onValueChange={(nextValue) => {
+            for (const key of getArgsToClear(spec, arg.key)) {
+              setValue(
+                `actions.${index}.integrationArgs.${key}` as const,
+                null,
+              );
+            }
             setValue(
               `actions.${index}.integrationArgs.${arg.key}` as const,
               nextValue,
-            )
-          }
+            );
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -1286,7 +1322,14 @@ function IntegrationArgField({
       <LoadingContent loading={optionsLoading}>
         <Select
           value={selectedValue}
+          disabled={parents === null}
           onValueChange={(nextValue) => {
+            for (const key of getArgsToClear(spec, arg.key)) {
+              setValue(
+                `actions.${index}.integrationArgs.${key}` as const,
+                null,
+              );
+            }
             setValue(
               `actions.${index}.integrationArgs.${arg.key}` as const,
               nextValue,
@@ -1674,4 +1717,9 @@ function renderFieldRows(
   }
 
   return rows;
+}
+
+function buildDefaultArgsForChoice(choice: IntegrationToolChoice) {
+  const spec = getIntegrationToolSpec(choice.integration, choice.tool);
+  return spec ? buildDefaultIntegrationArgs(spec) : {};
 }
