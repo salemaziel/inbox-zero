@@ -55,7 +55,7 @@ Run `build:ci` in the background with a bounded timeout (AGENTS.md). Turbo prefi
 grep -rn "Add Todoist task\|Connect Todoist\|Integration" apps/web/__tests__/playwright
 ```
 
-The focused browser spec (`pnpm -F inbox-zero-ai test:playwright:emulated integration-action`) needs the emulated environment and a database. Run it only if the owner confirms that environment is available.
+The focused browser spec (`pnpm -F inbox-zero-ai test:playwright:emulated automation/integration-action.spec.ts`; the runner takes an area or a spec path relative to `__tests__/playwright/emulated`) needs the emulated environment and a database. Run it only if the owner confirms that environment is available. Locally, use a throwaway Postgres (the config defaults to port 5433) and Redis-over-HTTP rather than the dev database, because the spec's helpers delete integration rows, and leave `NEXT_PUBLIC_BASE_URL` unset so the runner picks a free port instead of reusing a server already on port 3000. In dev mode the shared sign-in setup can exceed its 30-second wait while pages compile on demand; running as CI does (`build:ci` with `NODE_ENV=production`, then `PLAYWRIGHT_PRODUCTION=1` with a fixed `NEXT_PUBLIC_BASE_URL`) avoids that.
 
 ## Database migration
 
