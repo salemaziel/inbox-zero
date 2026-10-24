@@ -32,6 +32,26 @@ describe("integrationFetch", () => {
     await expect(integrationFetch(ITEMS_URL, fetchInit())).resolves.toBeNull();
   });
 
+  it("lets the caller classify an app's error response", async () => {
+    fetchMock.mockResolvedValue(new Response("no access", { status: 401 }));
+    const classifyError = (status: number, body: string) =>
+      status === 401 && body === "no access"
+        ? { kind: "permanent" as const, providerMessage: "Board is private" }
+        : undefined;
+
+    await expect(
+      integrationFetch(ITEMS_URL, fetchInit(), { classifyError }),
+    ).rejects.toMatchObject({
+      kind: "permanent",
+      providerMessage: "Board is private",
+    });
+
+    fetchMock.mockResolvedValue(new Response("other", { status: 401 }));
+    await expect(
+      integrationFetch(ITEMS_URL, fetchInit(), { classifyError }),
+    ).rejects.toMatchObject({ kind: "auth", providerMessage: "other" });
+  });
+
   it("passes the caller's abort signal to fetch", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({}));
     const init = fetchInit();

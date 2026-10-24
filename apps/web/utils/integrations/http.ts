@@ -17,9 +17,18 @@ const NOT_SENT_NETWORK_CODES = new Set([
   "UND_ERR_CONNECT_TIMEOUT",
 ]);
 
+// Apps whose status codes don't map cleanly (for example a 401 that only
+// means "no access to this board") classify their own error responses;
+// returning undefined keeps the default mapping.
+type ClassifyError = (
+  status: number,
+  body: string,
+) => { kind: IntegrationErrorKind; providerMessage?: string } | undefined;
+
 export async function integrationFetch(
   url: string,
   init: RequestInit & { signal: AbortSignal },
+  { classifyError }: { classifyError?: ClassifyError } = {},
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -41,10 +50,12 @@ export async function integrationFetch(
       body,
     });
 
+    const classified = classifyError?.(response.status, body);
     throw new IntegrationError({
-      kind: getKindForStatus(response.status),
+      kind: classified?.kind ?? getKindForStatus(response.status),
       message: `Integration request failed with status ${response.status}`,
-      providerMessage: getProviderMessage(response, body),
+      providerMessage:
+        classified?.providerMessage ?? getProviderMessage(response, body),
       retryAfterMs:
         response.status === 429
           ? getRetryAfterDelayMs(

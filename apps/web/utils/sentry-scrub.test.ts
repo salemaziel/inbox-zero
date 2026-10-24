@@ -254,6 +254,28 @@ describe("Sentry URL scrubbing", () => {
     );
   });
 
+  it("redacts a token sent in the URL path, as Trello's revoke call does", () => {
+    const revokeUrl = "https://api.trello.com/1/tokens/abc123secret";
+    const cleanUrl = "https://api.trello.com/1/tokens/[redacted]";
+    const event = {
+      breadcrumbs: [
+        { category: "http", data: { method: "DELETE", url: revokeUrl } },
+      ],
+      spans: [
+        {
+          description: `DELETE ${revokeUrl}`,
+          data: { "url.full": revokeUrl },
+        },
+      ],
+    };
+
+    const result = scrubSentryEvent(event as never) as typeof event;
+
+    expect(result.breadcrumbs[0].data.url).toBe(cleanUrl);
+    expect(result.spans[0].data["url.full"]).toBe(cleanUrl);
+    expect(result.spans[0].description).toBe(`DELETE ${cleanUrl}`);
+  });
+
   it("does not throw on malformed URLs", () => {
     const event = {
       request: { url: "http://[bad host/%E0%A4%A?%E0%A4%A=1&state=x#token=y" },

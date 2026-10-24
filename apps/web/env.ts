@@ -346,6 +346,7 @@ const parsedEnv = createEnv({
     // single-tenant self-hosted deployment or against a local MCP emulator.
     MCP_ALLOW_PRIVATE_IPS: booleanString.optional().default(false),
     COMPOSIO_API_KEY: z.string().optional(),
+    TRELLO_API_KEY: z.string().optional(),
     INTERNAL_API_URL: z.string().optional(),
     INTERNAL_API_KEY: z.string(),
     WHITELIST_FROM: z.string().optional(),

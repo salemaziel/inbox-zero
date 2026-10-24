@@ -246,6 +246,14 @@ describe("createTokenRedirect", () => {
     );
   });
 
+  it("refuses an app the server isn't configured for", async () => {
+    fixture.executor.isConfigured = () => false;
+
+    await expect(createTokenRedirect(redirectStartOptions())).rejects.toThrow(
+      "isn't set up on this server",
+    );
+  });
+
   it("refuses a paste-connect app", async () => {
     await expect(
       createTokenRedirect({

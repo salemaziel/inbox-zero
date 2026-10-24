@@ -256,6 +256,9 @@ function getTokenConnectTarget(
   ) {
     throw new SafeError(WRONG_CONNECT_KIND_MESSAGE);
   }
+  if (executor.isConfigured && !executor.isConfigured()) {
+    throw new SafeError(`${entry.displayName} isn't set up on this server.`);
+  }
 
   return { executor, displayName: entry.displayName };
 }

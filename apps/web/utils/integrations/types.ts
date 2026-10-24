@@ -60,4 +60,7 @@ export type NativeIntegrationExecutor = {
   ): Promise<void>;
   revoke?(conn: NativeConnection, o: { signal: AbortSignal }): Promise<void>;
   buildAuthorizeUrl?(o: { returnUrl: string }): string;
+  // False when a server-level setting the app needs (such as an API key) is
+  // missing; the app is then not offered. Omitted means always configured.
+  isConfigured?(): boolean;
 };

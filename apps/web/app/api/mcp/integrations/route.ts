@@ -4,6 +4,7 @@ import { MCP_INTEGRATIONS } from "@/utils/mcp/integrations";
 import { fromDbAuthType } from "@/utils/mcp/resolve-integration";
 import { getIntegrationProvider } from "@/utils/mcp/providers/registry";
 import { isIntegrationActionEnabledForEmailAccountId } from "@/utils/integration-action.server";
+import { isNativeIntegrationConfigured } from "@/utils/integrations/executors.server";
 import prisma from "@/utils/prisma";
 
 export type GetIntegrationsResponse = Awaited<ReturnType<typeof getData>>;
@@ -53,7 +54,7 @@ async function getData(emailAccountId: string) {
   const builtIn = Object.values(MCP_INTEGRATIONS)
     .filter((integration) =>
       integration.execution === "native"
-        ? nativeEnabled
+        ? nativeEnabled && isNativeIntegrationConfigured(integration.name)
         : !integration.provider ||
           getIntegrationProvider(integration.provider.id).isConfigured(),
     )

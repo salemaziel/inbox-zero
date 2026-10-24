@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
 
-const { mockIsEnabled } = vi.hoisted(() => ({ mockIsEnabled: vi.fn() }));
+const { mockIsEnabled, mockIsConfigured } = vi.hoisted(() => ({
+  mockIsEnabled: vi.fn(),
+  mockIsConfigured: vi.fn(),
+}));
 
 vi.mock("@/utils/prisma");
 vi.mock("@/utils/middleware", () => ({
@@ -21,6 +24,9 @@ vi.mock("@/utils/middleware", () => ({
 vi.mock("@/utils/integration-action.server", () => ({
   isIntegrationActionEnabledForEmailAccountId: mockIsEnabled,
 }));
+vi.mock("@/utils/integrations/executors.server", () => ({
+  isNativeIntegrationConfigured: mockIsConfigured,
+}));
 vi.mock("@/utils/mcp/integrations", async () => {
   const { FIXTURE_MCP, FIXTURE_NATIVE } = await import(
     "@/__tests__/fixtures/integrations/fixture-integration"
@@ -37,6 +43,19 @@ describe("GET /api/mcp/integrations", () => {
     vi.clearAllMocks();
     prisma.mcpConnection.findMany.mockResolvedValue([]);
     prisma.mcpIntegration.findMany.mockResolvedValue([]);
+    mockIsConfigured.mockReturnValue(true);
+  });
+
+  it("hides a native app the server isn't configured for", async () => {
+    mockIsEnabled.mockResolvedValue(true);
+    mockIsConfigured.mockReturnValue(false);
+
+    const { integrations } = await getIntegrations();
+
+    expect(mockIsConfigured).toHaveBeenCalledWith("fixture");
+    expect(integrations.map((integration) => integration.name)).toEqual([
+      "fixture-mcp",
+    ]);
   });
 
   it("hides native apps when integration actions are off for the account", async () => {

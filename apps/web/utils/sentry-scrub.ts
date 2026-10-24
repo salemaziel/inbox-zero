@@ -24,6 +24,8 @@ const BREADCRUMB_URL_KEYS = ["from", "to", "url"];
 const SPAN_URL_KEYS = ["url", "url.full", "http.url", "http.target"];
 const SPAN_QUERY_KEYS = ["url.query", "http.query"];
 const SPAN_FRAGMENT_KEYS = ["url.fragment", "http.fragment"];
+// Trello only accepts a token to revoke in the URL path (DELETE /1/tokens/{token}).
+const PATH_TOKEN_PATTERN = /(\/1\/tokens\/)[^/?#\s]+/g;
 
 // Sentry is a third party. Before sending an event, redact PII/secrets from the
 // fields where captureException context and request data land. We redact (not
@@ -51,7 +53,12 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb);
   }
   scrubSpanData(event.contexts?.trace?.data);
-  for (const span of event.spans ?? []) scrubSpanData(span.data);
+  for (const span of event.spans ?? []) {
+    scrubSpanData(span.data);
+    if (span.description) {
+      span.description = redactPathTokens(span.description);
+    }
+  }
   // Replay events carry the visited page URLs (initial URL includes the hash).
   const replayUrls = (event as { urls?: unknown }).urls;
   if (Array.isArray(replayUrls)) {
@@ -134,7 +141,7 @@ function scrubSpanData(data: Record<string, unknown> | undefined) {
 // (and the rest of the URL's encoding) intact without throwing.
 function stripSensitiveUrlParts<T>(url: T): T {
   if (typeof url !== "string") return url;
-  const withoutFragment = url.split("#", 1)[0];
+  const withoutFragment = redactPathTokens(url.split("#", 1)[0]);
   const queryStart = withoutFragment.indexOf("?");
   if (queryStart === -1) return withoutFragment as T;
 
@@ -145,6 +152,10 @@ function stripSensitiveUrlParts<T>(url: T): T {
     .filter((pair) => !DROPPED_QUERY_PARAMS.has(decodeQueryKey(pair)))
     .join("&");
   return (query ? `${base}?${query}` : base) as T;
+}
+
+function redactPathTokens(text: string) {
+  return text.replace(PATH_TOKEN_PATTERN, `$1${REDACTED}`);
 }
 
 function stripSensitiveQuery<T>(query: T): T {
