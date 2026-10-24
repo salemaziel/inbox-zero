@@ -57,7 +57,8 @@ export function IntegrationToolPicker({
           ))}
         </SelectContent>
       </Select>
-      {choices.every((choice) => choice.disabledReason) ? (
+      {choices.length > 0 &&
+      choices.every((choice) => choice.disabledReason) ? (
         <MutedText className="text-xs">
           Connect an app on the Integrations page to use this action.
         </MutedText>
