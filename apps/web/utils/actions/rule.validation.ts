@@ -17,6 +17,7 @@ import { findIntegration } from "@/utils/mcp/integrations";
 import {
   getIntegrationArgKeys,
   getIntegrationToolSpec,
+  MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { addMissingRecipientIssue } from "@/utils/rule/recipient-validation";
 import { attachmentSourceInputSchema } from "@/utils/attachments/source-schema";
@@ -493,6 +494,15 @@ function addIntegrationActionIssues({
   ctx: z.RefinementCtx;
 }) {
   if (actionType !== ActionType.INTEGRATION) return;
+
+  if (!integrationName || !integrationToolName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: MISSING_INTEGRATION_TOOL_MESSAGE,
+      path: [integrationName ? "integrationToolName" : "integrationName"],
+    });
+    return;
+  }
 
   const integration = integrationName
     ? findIntegration(integrationName)

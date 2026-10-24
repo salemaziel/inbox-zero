@@ -52,6 +52,10 @@ test("configures and persists a Todoist rule action", async ({ page }) => {
     )
     .fill("Emails that contain a task I need to complete");
   await createDialog.getByRole("combobox").first().click();
+  await page.getByRole("option", { name: "Add to integration" }).click();
+  const toolSelect = getLabeledSelect(createDialog, "Integration action");
+  await expect(toolSelect).toBeVisible({ timeout: 60_000 });
+  await toolSelect.click();
   await page.getByRole("option", { name: "Add Todoist task" }).click();
 
   const taskField = createDialog.getByPlaceholder(
@@ -99,8 +103,11 @@ test("configures and persists a Todoist rule action", async ({ page }) => {
 
   const editDialog = page.getByRole("dialog", { name: "Edit Rule" });
   await expect(editDialog.getByRole("combobox").first()).toContainText(
-    "Add Todoist task",
+    "Add to integration",
   );
+  await expect(
+    getLabeledSelect(editDialog, "Integration action"),
+  ).toContainText("Add Todoist task");
   await expect(
     editDialog.getByPlaceholder("AI writes a short action item from the email"),
   ).toHaveValue("Review the request");

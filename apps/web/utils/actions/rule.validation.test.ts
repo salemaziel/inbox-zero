@@ -471,6 +471,25 @@ describe("INTEGRATION action validation", () => {
     }
   });
 
+  it("asks for an app and action when the integration action names none", () => {
+    const result = createRuleBody.safeParse({
+      ...validRule,
+      actions: [
+        {
+          ...integrationAction,
+          integrationName: null,
+          integrationToolName: null,
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toContain(
+        "doesn't say which app and action to use",
+      );
+    }
+  });
+
   it("rejects unknown integration names", () => {
     const result = createRuleBody.safeParse({
       ...validRule,

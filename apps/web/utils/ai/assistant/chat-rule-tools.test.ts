@@ -132,6 +132,47 @@ describe("createRuleTool overlap guard", () => {
     );
   });
 
+  it("keeps the app and tool the model chose for an integration action", async () => {
+    const result = await createRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+    }).execute({
+      name: "Invoices",
+      condition: {
+        aiInstructions: "Invoices",
+        static: null,
+        conditionalOperator: null,
+      },
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" },
+          delayInMinutes: null,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockCreateRule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: expect.objectContaining({ name: "Pay invoice" }),
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it("waits for confirmation instead of creating a risky rule", async () => {
     mockActionsNeedChatRiskConfirmation.mockReturnValue({
       needsConfirmation: true,

@@ -64,7 +64,6 @@ import { findIntegration } from "@/utils/mcp/integrations";
 import {
   buildDefaultIntegrationArgs,
   getIntegrationToolSpec,
-  getOnlyIntegrationToolSpec,
   type IntegrationArgSpec,
   type IntegrationToolSpec,
   normalizeSelectArgValue,
@@ -1116,13 +1115,13 @@ function IntegrationArgFields({
     control,
     name: `actions.${index}.integrationToolName`,
   });
-  const spec =
-    getIntegrationToolSpec(integrationName, integrationToolName) ??
-    getOnlyIntegrationToolSpec();
-  const hasToolChoice = getIntegrationToolChoices().length > 1;
+  const spec = getIntegrationToolSpec(integrationName, integrationToolName);
 
   const { data: integrationsData, isLoading: integrationsLoading } =
     useIntegrations();
+  const toolChoices = getIntegrationToolChoices({
+    integrations: integrationsData?.integrations ?? [],
+  });
   const connection = integrationsData?.integrations.find(
     (integration) => integration.name === spec?.integration,
   )?.connection;
@@ -1139,9 +1138,14 @@ function IntegrationArgFields({
     errors?.actions?.[index]?.integrationArgs?.root?.message;
   const errorMessage =
     typeof rawErrorMessage === "string" ? rawErrorMessage : undefined;
+  const toolErrorMessage =
+    errors?.actions?.[index]?.integrationName?.message ||
+    errors?.actions?.[index]?.integrationToolName?.message;
 
-  const toolPicker = hasToolChoice ? (
+  const toolPicker = (
     <IntegrationToolPicker
+      choices={toolChoices}
+      errorMessage={toolErrorMessage}
       integration={spec?.integration}
       tool={spec?.tool}
       onSelect={(choice) => {
@@ -1153,7 +1157,7 @@ function IntegrationArgFields({
         );
       }}
     />
-  ) : null;
+  );
 
   if (!spec) return toolPicker;
 
@@ -1494,14 +1498,10 @@ function updateActionType({
 
   if (nextType === ActionType.INTEGRATION) {
     if (actionTypeBeforeUpdate !== ActionType.INTEGRATION) {
-      const spec = getOnlyIntegrationToolSpec();
-      setValue(`actions.${index}.integrationName`, spec?.integration ?? null);
-      setValue(`actions.${index}.integrationToolName`, spec?.tool ?? null);
-      // Text args seed empty on purpose: empty means the AI writes them
-      setValue(
-        `actions.${index}.integrationArgs`,
-        spec ? buildDefaultIntegrationArgs(spec) : {},
-      );
+      // The tool picker sets the app, tool and its default args.
+      setValue(`actions.${index}.integrationName`, null);
+      setValue(`actions.${index}.integrationToolName`, null);
+      setValue(`actions.${index}.integrationArgs`, {});
       setValue(`actions.${index}.delayInMinutes`, null);
     }
   } else {

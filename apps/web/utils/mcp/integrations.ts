@@ -175,6 +175,16 @@ export const MCP_INTEGRATIONS: Record<
     allowedTools: [],
     ruleActionWriteTools: ["add-tasks"],
   },
+  trello: {
+    name: "trello",
+    displayName: "Trello",
+    url: "trello.com",
+    execution: "native",
+    connectKind: "token-redirect",
+    authType: "api-token",
+    scopes: [],
+    ruleActionWriteTools: ["create-card", "add-comment", "move-card"],
+  },
   hubspot: {
     name: "hubspot",
     displayName: "HubSpot",

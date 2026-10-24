@@ -3,7 +3,7 @@ import { ActionType, LogicalOperator } from "@/generated/prisma/enums";
 import { isMicrosoftProvider } from "@/utils/email/provider-types";
 import { isDefined } from "@/utils/types";
 import {
-  getOnlyIntegrationToolSpec,
+  INTEGRATION_TOOL_SPECS,
   type IntegrationToolSpec,
 } from "@/utils/mcp/tool-specs";
 import {
@@ -172,6 +172,8 @@ export type RuleActionFields = {
 
 export type RuleAction = {
   type: ActionType;
+  integrationName?: string;
+  integrationToolName?: string;
   fields?: RuleActionFields | null;
   delayInMinutes?: number | null;
 };
@@ -184,7 +186,6 @@ export const createRuleActionSchema = (
     ...getAvailableActionsForRuleEditor({ provider }),
     ...getExtraAvailableActionsForRuleEditor({ integrationActionsEnabled }),
   ]);
-  const integrationToolSpec = getOnlyIntegrationToolSpec();
   const optionalFieldsSchema = createOptionalActionFieldsSchema(provider);
 
   const actionSchemas: [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]] = [
@@ -235,14 +236,8 @@ export const createRuleActionSchema = (
           ),
         ]
       : []),
-    ...(allowedActionTypes.has(ActionType.INTEGRATION) && integrationToolSpec
-      ? [
-          createActionObjectSchema(
-            ActionType.INTEGRATION,
-            createIntegrationFieldsSchema(integrationToolSpec),
-            integrationToolSpec.llmDescription,
-          ),
-        ]
+    ...(allowedActionTypes.has(ActionType.INTEGRATION)
+      ? INTEGRATION_TOOL_SPECS.map(createIntegrationActionSchema)
       : []),
   ];
 
@@ -363,6 +358,20 @@ function createRequiredFolderFieldsSchema(provider: string) {
       "MOVE_FOLDER requires fields.folderName.",
     ),
   });
+}
+
+// One option per tool, so the model names the app and tool it means and
+// never leaves the save path to guess between them.
+function createIntegrationActionSchema(spec: IntegrationToolSpec) {
+  return z
+    .object({
+      type: z.literal(ActionType.INTEGRATION),
+      integrationName: z.literal(spec.integration),
+      integrationToolName: z.literal(spec.tool),
+      fields: createIntegrationFieldsSchema(spec),
+      delayInMinutes: delayInMinutesLlmSchema,
+    })
+    .describe(spec.llmDescription);
 }
 
 /** Exposes exactly the args the spec marks as LLM-settable. */

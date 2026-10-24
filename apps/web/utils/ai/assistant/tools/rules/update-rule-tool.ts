@@ -261,6 +261,8 @@ export const updateRuleTool = ({
             ruleId: rule.id,
             actions: effectiveUpdates.actions.map((action) => ({
               type: action.type,
+              integrationName: action.integrationName,
+              integrationToolName: action.integrationToolName,
               fields: buildProviderRuleActionFields({
                 provider,
                 fields: action.fields ?? {},

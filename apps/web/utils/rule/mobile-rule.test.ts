@@ -102,4 +102,60 @@ describe("toCreateRuleBodyFromAiRule", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("keeps the integration app, tool and args the AI chose, with the tool's defaults", () => {
+    const body = toCreateRuleBodyFromAiRule({
+      name: "Invoices",
+      condition: {
+        aiInstructions: "Invoices",
+        conditionalOperator: null,
+        static: null,
+      },
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice", description: null },
+          delayInMinutes: null,
+        },
+      ],
+    });
+
+    expect(body.actions[0]).toMatchObject({
+      integrationName: "trello",
+      integrationToolName: "create-card",
+      integrationArgs: {
+        name: "Pay invoice",
+        attachLink: "yes",
+        due: "none",
+        labelId: "none",
+      },
+    });
+    expect(body.actions[0].content).toBeUndefined();
+  });
+
+  it("produces an integration rule that passes rule validation", () => {
+    const result = createRuleBody.safeParse(
+      toCreateRuleBodyFromAiRule({
+        name: "Tasks",
+        condition: {
+          aiInstructions: "Emails with a task for me",
+          conditionalOperator: null,
+          static: null,
+        },
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            fields: { content: null, dueString: "tomorrow" },
+            delayInMinutes: null,
+          },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(true);
+  });
 });

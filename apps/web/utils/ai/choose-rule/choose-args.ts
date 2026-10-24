@@ -579,7 +579,25 @@ function applyIntegrationPlaceholders<T extends Action>({
 
     for (const arg of spec.args) {
       const template = originalArgs[arg.key];
-      if (arg.control.type !== "text" || typeof template !== "string") continue;
+      if (typeof template !== "string") continue;
+
+      // A spec can make a select option stand for an email field (for example
+      // "attach the email link"); the stored choice stays the option value.
+      if (arg.control.type === "select") {
+        const payloadValue = arg.control.options.find(
+          (option) => option.value === template.trim(),
+        )?.payloadValue;
+        if (!payloadValue) continue;
+
+        const rendered = renderIntegrationTextArg({
+          template: payloadValue,
+          values,
+        });
+        if (rendered !== payloadValue) renderedArgs[arg.key] = rendered;
+        continue;
+      }
+
+      if (arg.control.type !== "text") continue;
       if (isAiFilledArgValue(arg, template)) continue;
 
       renderedArgs[arg.key] = renderIntegrationTextArg({

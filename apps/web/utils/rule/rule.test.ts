@@ -820,6 +820,54 @@ describe("integration action access", () => {
     expect(prisma.rule.update).toHaveBeenCalled();
   });
 
+  it("saves the app and tool the rule writer named, with args from its fields", async () => {
+    prisma.mcpConnection.findMany.mockResolvedValue([
+      { integration: { name: "trello" } },
+    ] as never);
+
+    await updateRuleActions({
+      ruleId: RULE_ID,
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ],
+      provider: "gmail",
+      emailAccountId: EMAIL_ACCOUNT_ID,
+      logger,
+    });
+
+    const saved = JSON.stringify(prisma.rule.update.mock.calls[0][0]);
+    expect(saved).toContain('"integrationName":"trello"');
+    expect(saved).toContain('"integrationToolName":"create-card"');
+    expect(saved).toContain('"name":"Pay invoice"');
+    expect(saved).toContain('"attachLink":"yes"');
+  });
+
+  it("rejects an integration action that names no app and tool", async () => {
+    await expect(
+      updateRuleActions({
+        ruleId: RULE_ID,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            fields: { content: "Create a task" } as any,
+            delayInMinutes: null,
+          } as RuleAction,
+        ],
+        provider: "gmail",
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        logger,
+      }),
+    ).rejects.toThrow("doesn't say which app and action to use");
+
+    expect(prisma.rule.update).not.toHaveBeenCalled();
+  });
+
   it("rejects integration action updates when access is disabled", async () => {
     mockIsIntegrationActionEnabledForEmailAccountId.mockResolvedValue(false);
 
@@ -1081,6 +1129,8 @@ function deleteAction(): RuleAction {
 function integrationAction(): RuleAction {
   return {
     type: ActionType.INTEGRATION,
+    integrationName: "todoist",
+    integrationToolName: "add-tasks",
     fields: { content: "Create a task" } as any,
     delayInMinutes: null,
   } as RuleAction;

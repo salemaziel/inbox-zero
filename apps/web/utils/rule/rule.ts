@@ -32,10 +32,8 @@ import {
 } from "@/utils/rule-action-feature-gates";
 import { findIntegration } from "@/utils/mcp/integrations";
 import {
-  buildDefaultIntegrationArgs,
-  getIntegrationToolSpec,
-  getOnlyIntegrationToolSpec,
-  normalizeSelectArgValue,
+  buildIntegrationArgsFromFields,
+  MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { assertNoSenderOnlyOverlap } from "@/utils/rule/sender-scope-overlap";
 import { isIntegrationActionEnabledForEmailAccountId } from "@/utils/integration-action.server";
@@ -795,16 +793,14 @@ async function mapActionFields(
 }
 
 function getIntegrationCreateFields(action: MappableAction) {
-  // AI- and API-authored actions carry flat fields with no integration named,
-  // so fall back to the only write spec we have. getOnlyIntegrationToolSpec
-  // returns undefined once there are two, forcing an explicit choice then.
-  const defaultSpec = getOnlyIntegrationToolSpec();
-  const integrationName = action.integrationName ?? defaultSpec?.integration;
-  const integrationToolName = action.integrationToolName ?? defaultSpec?.tool;
+  const { integrationName, integrationToolName } = action;
+  if (!integrationName || !integrationToolName) {
+    throw new SafeError(MISSING_INTEGRATION_TOOL_MESSAGE);
+  }
 
   return {
-    integrationName: integrationName ?? null,
-    integrationToolName: integrationToolName ?? null,
+    integrationName,
+    integrationToolName,
     integrationArgs: (action.integrationArgs ??
       buildIntegrationArgsFromFields({
         integrationName,
@@ -835,40 +831,6 @@ function buildRiskAction(action: MappableAction): RiskAction {
   };
 }
 
-/**
- * Builds stored args from an AI-authored action's flat fields, applying the
- * spec's defaults so an omitted field means "the AI writes it at execution".
- */
-function buildIntegrationArgsFromFields({
-  integrationName,
-  integrationToolName,
-  fields,
-}: {
-  integrationName: string | null | undefined;
-  integrationToolName: string | null | undefined;
-  fields: MappableAction["fields"];
-}) {
-  const spec = getIntegrationToolSpec(integrationName, integrationToolName);
-  if (!spec) return {};
-
-  const args = buildDefaultIntegrationArgs(spec);
-
-  for (const arg of spec.args) {
-    const value = (
-      fields as Record<string, string | null | undefined> | null
-    )?.[arg.key];
-    if (value == null) continue;
-
-    const normalized =
-      arg.control.type === "select"
-        ? normalizeSelectArgValue(arg, value)
-        : value;
-    if (normalized !== undefined) args[arg.key] = normalized;
-  }
-
-  return args;
-}
-
 export async function assertIntegrationActionsConnected(
   actions: readonly { type: ActionType; integrationName?: string | null }[],
   emailAccountId: string,
@@ -877,10 +839,7 @@ export async function assertIntegrationActionsConnected(
     ...new Set(
       actions
         .filter((action) => action.type === ActionType.INTEGRATION)
-        .map(
-          (action) =>
-            action.integrationName ?? getOnlyIntegrationToolSpec()?.integration,
-        )
+        .map((action) => action.integrationName)
         .filter((name): name is string => !!name),
     ),
   ];
