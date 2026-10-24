@@ -508,7 +508,7 @@ No separate tasks; every call path needs the policy. It is delivered by:
 
 ## Phase 11: Polish & end-of-phase verification
 
-- [ ] T027 Full verification (once)
+- [x] T027 Full verification (once)
   - **Files**: none edited unless a check fails.
   - **Does**:
     - Run every command in quickstart.md "End-of-phase verification": full `pnpm test`, `pnpm lint`, `pnpm konsistent`, `check-server-actions`, `check-enums`, and `build:ci` with CI's placeholder env (in the background, bounded).
