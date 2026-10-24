@@ -195,6 +195,34 @@ describe("ResultDisplayContent", () => {
       screen.getByRole("button", { name: "View exclusions" }),
     ).toBeTruthy();
   });
+
+  it("shows a failed integration action's full message under its label", () => {
+    const appMessage = "x".repeat(500);
+    const message = `Todoist rejected the request. Todoist said: ${appMessage}`;
+
+    render(
+      <ResultDisplayContent
+        result={{
+          createdAt: new Date("2025-01-01"),
+          status: ExecutedRuleStatus.APPLIED,
+          reason: "Matched",
+          actionItems: [
+            {
+              id: "action-1",
+              type: "INTEGRATION",
+              integrationName: "todoist",
+              integrationToolName: "add-tasks",
+              executionStatus: "FAILED",
+              executionError: { message },
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Add Todoist task:")).toBeTruthy();
+    expect(screen.getByText(message)).toBeTruthy();
+  });
 });
 
 describe("getRuleResultReasonDisplay", () => {

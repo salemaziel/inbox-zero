@@ -110,9 +110,8 @@ export const testMcpConnectionAction = actionClient
         throw new SafeError("Resume this integration to test it.");
       }
 
-      if (
-        findIntegration(connection.integration.name)?.execution === "native"
-      ) {
+      const integration = findIntegration(connection.integration.name);
+      if (integration?.execution === "native") {
         return testNativeConnection({
           emailAccountId,
           integrationName: connection.integration.name,
@@ -128,15 +127,27 @@ export const testMcpConnectionAction = actionClient
         );
         return { toolsCount };
       } catch (error) {
+        if (isAuthRejection(error)) {
+          // Hosted-provider servers authenticate with the platform key, so a
+          // rejection says nothing about this mailbox's connection
+          if (!integration?.provider) {
+            await deactivateIntegrationConnection({
+              emailAccountId,
+              integrationName: connection.integration.name,
+            });
+          }
+          throw new SafeError(AUTH_EXPIRED_MESSAGE);
+        }
+
         // A failed token refresh deactivates the connection
         const latest = await prisma.mcpConnection.findUnique({
           where: { id: connectionId, emailAccountId },
           select: { isActive: true },
         });
         throw new SafeError(
-          !latest?.isActive || isAuthRejection(error)
-            ? "Authorization expired or was revoked. Reconnect and try again."
-            : "Could not reach the server. Check that it is online and try again.",
+          latest?.isActive
+            ? "Could not reach the server. Check that it is online and try again."
+            : AUTH_EXPIRED_MESSAGE,
         );
       }
     },

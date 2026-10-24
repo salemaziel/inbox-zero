@@ -184,6 +184,31 @@ describe("testMcpConnectionAction", () => {
     expect(result?.serverError).toBe(
       "Authorization expired or was revoked. Reconnect and try again.",
     );
+    expect(prisma.mcpConnection.updateMany).toHaveBeenCalledWith({
+      where: { emailAccountId: "account-1", integration: { name: "notion" } },
+      data: { isActive: false },
+    });
+  });
+
+  it("keeps a hosted-provider connection active when the server rejects the credentials", async () => {
+    prisma.mcpConnection.findUnique.mockResolvedValue({
+      isActive: true,
+      integration: { name: "hubspot" },
+    } as never);
+    mockSyncMcpTools.mockRejectedValue(
+      new Error("Failed to sync tools", {
+        cause: new StreamableHTTPError(401, "Unauthorized"),
+      }),
+    );
+
+    const result = await testMcpConnectionAction("account-1", {
+      connectionId: "connection-1",
+    });
+
+    expect(result?.serverError).toBe(
+      "Authorization expired or was revoked. Reconnect and try again.",
+    );
+    expect(prisma.mcpConnection.updateMany).not.toHaveBeenCalled();
   });
 
   it("reports an auth failure when the token refresh deactivated the connection", async () => {

@@ -41,4 +41,4 @@ Missing values resolve to `""`. The rule's AI-written `reason` is deliberately a
 
 ## Save-time validation
 
-`addIntegrationActionIssues` (in `apps/web/utils/actions/rule.validation.ts`) adds an issue at `integrationArgs.<key>` for each unknown marker name in a text arg: "Unknown field [[name]]. Available: subject, from, to, date, snippet, link, ruleName."
+`addIntegrationActionIssues` (in `apps/web/utils/actions/rule.validation.ts`) adds an issue at `integrationArgs.<key>` for each unknown marker name in a text arg: "Unknown field [[name]]. Available: subject, from, to, date, snippet, link, ruleName." Only the author-written literal parts are checked; markers inside `{{…}}` AI sections are never replaced, so they are skipped.

@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-23
 
-**Status**: Draft
+**Status**: Implemented (Phase 4, 2026-10-23)
 
 **Input**: Owner brief, Phase 3 (planning for the Phase 4 build). "When an Inbox Zero rule matches an email, it should be able to run an action in a connected third-party app." This spec covers the shared layer only. No app-specific integration (Trello or any other) is built here.
 
@@ -193,7 +193,7 @@ When the owner asks the assistant to "create a rule that adds a task for every i
 
 - **FR-006**: The existing checks before execution (feature gate, configured tool, write-tool allowlist, active connection, known tool, required fields) MUST keep their current order, outcomes and error codes.
 - **FR-007**: After those checks, the action MUST run through the integration's declared path, inside one shared call policy.
-- **FR-008**: The call policy MUST: abandon an attempt after 15 seconds or when the 30-second total budget runs out, whichever is sooner, even if the attempt ignores cancellation; make at most 3 attempts; retry only failures known to have happened before the request was sent (connection refused, name resolution failure, connect timeout, or a failure while preparing the call) and rate-limit responses whose requested wait is at most 10 seconds and fits in the remaining budget (a missing wait value means 1 second); never retry a timeout, a connection reset, or a server error on a write. Any unexpected failure inside the layer MUST be recorded as a failure of that action only, never abort the rule's later actions.
+- **FR-008**: The call policy MUST: abandon an attempt after 15 seconds or when the 30-second total budget runs out, whichever is sooner, even if the attempt ignores cancellation; make at most 3 attempts; retry only failures known to have happened before the request was sent (connection refused, name resolution failure, connect timeout, or a failure while preparing the call) and rate-limit responses whose requested wait is at most 10 seconds and fits in the remaining budget (a missing wait value means 1 second); never retry a timeout, a connection reset, or a server error on a write. A retry of either kind starts only when its wait plus a 5-second minimum attempt window fits in the remaining budget; otherwise the last definite error is returned. Any unexpected failure inside the layer MUST be recorded as a failure of that action only, never abort the rule's later actions.
 - **FR-008a**: Loading options for a remote choice field, testing a connection, and revoking a token MUST each use one attempt with the same 15-second timeout. Option loading falls back to the field's fixed fallback options on failure, as today; a revoke failure or timeout is logged and the disconnect proceeds.
 - **FR-009**: Failures MUST be classified as one of: auth, rate_limit, not_sent, maybe_sent, permanent; each MUST map to a distinct stored error code with owner-readable copy in history, and "maybe_sent" copy MUST say the item may have been created. "permanent" keeps today's generic call-failed code so existing history copy stays valid. A rerun-skipped action leaves the rule's overall status "applied".
 - **FR-010**: An auth failure on a built-in-client or direct MCP connection (during a run, an options load or a connection test) MUST mark that connection inactive so the Integrations page shows it as needing reconnection. Hosted-provider connections are not deactivated.
@@ -210,13 +210,13 @@ When the owner asks the assistant to "create a rule that adds a task for every i
 - **FR-015**: Text fields of integration actions MUST support markers for these email and rule fields: subject, from, to, date (the message's date as an ISO 8601 UTC timestamp), snippet, link (a link that opens the email in the user's mail client, using the product's existing per-provider link rules, which for Outlook use the provider's own message URL), ruleName. A marker name is case-sensitive; surrounding spaces inside the brackets are allowed. The marker syntax MUST NOT contain `{{` (see Questions for the owner, Q2; default `[[name]]`).
 - **FR-016**: Markers MUST be replaced only in text the rule author wrote, after AI filling, before the values are stored; inserted values MUST never be re-parsed for markers or AI templates.
 - **FR-017**: Marker replacement MUST also run when the rule needs no AI call, and MUST NOT cause one.
-- **FR-018**: Saving a rule with an unknown marker in an integration text field MUST be rejected; markers in select fields MUST be ignored.
+- **FR-018**: Saving a rule with an unknown marker in an integration text field MUST be rejected; markers in select fields MUST be ignored. Markers inside `{{…}}` AI sections are never replaced (they are left for the AI), so they are not checked at save.
 - **FR-019**: The rule's AI-written reason MUST NOT be offered as a marker.
 
 **Connect, test, disconnect**
 
 - **FR-020**: Both connect kinds MUST enforce the existing plan-tier requirement, trim surrounding whitespace from the token, verify the credential with the app before storing it, and store it encrypted in the existing connection record.
-- **FR-021**: The token-redirect flow MUST bind the return to a signed, expiring state issued to the same user and mailbox. The state travels in the return address's query string (apps commonly do not echo a state value back), and a token arriving in the browser-only part of the URL MUST be captured client-side, removed from the address bar, and submitted to the server with that state.
+- **FR-021**: The token-redirect flow MUST bind the return to a signed, expiring state issued to the same user and mailbox. The state travels in the return address's query string (apps commonly do not echo a state value back), and a token arriving in the browser-only part of the URL MUST be captured client-side, removed from the address bar, and submitted to the server with that state. The same state is also held in a short-lived httpOnly cookie, which is cleared before completion so each state can be used once.
 - **FR-022**: Connection test and disconnect MUST use the integration's own test and revoke for built-in-client integrations; the MCP-only paths (tool sync, OAuth authorize URL, MCP token lookup) MUST NOT be reached for them.
 - **FR-023**: Built-in-client connections MUST never produce tools for chat or agents.
 
@@ -237,7 +237,7 @@ When the owner asks the assistant to "create a rule that adds a task for every i
 **Compatibility and constraints**
 
 - **FR-029**: Existing stored rules, the existing Todoist action and its editor flow, other action types, and the feature-flagged integration path MUST keep working without data migration.
-- **FR-030**: New behaviour MUST live in new files under the shared integrations folder; frequently-changed upstream files MUST be touched only at small call-site seams.
+- **FR-030**: New behaviour MUST live in new files under the shared integrations folder; frequently-changed upstream files MUST be touched only at small call-site seams. Exception: keeping the redirect token out of telemetry (FR-021) needs direct changes to the shared error-reporting scrubber, the analytics URL filters and client start-up.
 - **FR-032**: Following the Q3 default, built-in-client apps MUST be hidden from the Integrations page for users who do not have integration actions enabled; MCP apps are listed as today.
 - **FR-031**: No new environment variable is required by the shared layer. If one becomes necessary, it MUST be added to the env example, the env schema and the build config together.
 
@@ -297,9 +297,13 @@ described with the tool's existing `llmDescription`. Prompt text is unchanged. F
 
 **Default**: Not applied. The task is planned last and is droppable; until approved, the rule writer keeps today's single-tool behaviour (which works while one production tool exists). Revisit before Phase 5 adds a second tool.
 
+**Resolution (2026-10-23)**: Declined for Phase 4. The task was dropped and the rule writer is unchanged.
+
 ### Q2. Marker syntax for email fields
 
 **Default**: `[[subject]]`, `[[from]]`, `[[to]]`, `[[date]]`, `[[snippet]]`, `[[link]]`, `[[ruleName]]`. It cannot collide with the AI template syntax `{{...}}`, rarely appears in ordinary text, and unknown names are rejected at save. Alternatives: single braces `{subject}` (collides visually with `{{...}}` and with JSON-like text), or a picker-only chip UI (larger editor change).
+
+**Resolution (2026-10-23)**: Owner approved `[[name]]`.
 
 ### Q3. Show built-in-client apps on the Integrations page when integration actions are disabled for the user?
 
@@ -307,9 +311,13 @@ described with the tool's existing `llmDescription`. Prompt text is unchanged. F
 
 **Default**: Hide built-in-client apps from the Integrations page for users without integration actions enabled; MCP apps are listed as today.
 
+**Resolution**: Built on the default; the owner has not overridden it.
+
 ### Q4. Which planning files go into the feature branch's commits?
 
 **Default**: commit `docs/integrations/` and `specs/001-integrations-layer/` (both written for a public repository); never commit `.omc/`, `apps/web/.omc/` or `.specify/` (local tool state).
+
+**Resolution**: Built on the default; the owner has not overridden it.
 
 ## Design notes found while specifying
 

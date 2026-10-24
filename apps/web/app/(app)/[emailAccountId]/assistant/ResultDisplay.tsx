@@ -25,7 +25,7 @@ import {
   getSafeIntegrationResultUrl,
   parseIntegrationCallResult,
 } from "@/utils/integrations/result";
-import { MAX_PROVIDER_MESSAGE_LENGTH } from "@/utils/integrations/provider-message";
+import { getIntegrationActionLabel } from "@/utils/mcp/tool-specs";
 import { findIntegration } from "@/utils/mcp/integrations";
 
 // History rows carry every ExecutedAction column at runtime; RunRulesResult only
@@ -272,7 +272,10 @@ function IntegrationActionOutcome({
       )}
       {message && (
         <MutedText className="whitespace-pre-wrap break-words">
-          {message}
+          <span className="font-medium">
+            {getIntegrationActionLabel(action)}:
+          </span>{" "}
+          <span>{message}</span>
         </MutedText>
       )}
     </div>
@@ -283,7 +286,8 @@ function getIntegrationErrorMessage(executionError: unknown) {
   if (!executionError || typeof executionError !== "object") return null;
   const { message } = executionError as { message?: unknown };
   if (typeof message !== "string" || !message.trim()) return null;
-  return message.slice(0, MAX_PROVIDER_MESSAGE_LENGTH);
+  // Already bounded when stored: our copy plus at most 500 chars from the app
+  return message;
 }
 
 function PrettyConditions({
