@@ -121,17 +121,17 @@ export async function runIntegrationAction({
       }
 
       const raw = await runWithCallPolicy(
-        (signal) => executor.run(connection, payload, { signal }),
+        (signal) =>
+          executor.run(connection, { tool: toolName, payload }, { signal }),
         { mode: "write" },
       );
 
       return {
         success: true,
-        integrationResult: parseResult(() => executor.parseResult(raw), {
-          integrationName,
-          toolName,
-          logger,
-        }),
+        integrationResult: parseResult(
+          () => executor.parseResult(raw, toolName),
+          { integrationName, toolName, logger },
+        ),
       };
     }
 

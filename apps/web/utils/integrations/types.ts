@@ -44,10 +44,10 @@ export type NativeConnection = {
 export type NativeIntegrationExecutor = {
   run(
     conn: NativeConnection,
-    payload: Record<string, unknown>,
+    call: { tool: string; payload: Record<string, unknown> },
     o: { signal: AbortSignal },
   ): Promise<unknown>;
-  parseResult(raw: unknown): IntegrationCallResult | null;
+  parseResult(raw: unknown, tool: string): IntegrationCallResult | null;
   listOptions(
     conn: NativeConnection,
     argKey: string,
