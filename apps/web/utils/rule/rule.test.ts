@@ -1037,6 +1037,115 @@ describe("integration action access", () => {
         "boardId",
       );
     });
+
+    it("for values chat could also set but didn't send", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: {
+              content: "Call the customer back",
+              description: "",
+              projectId: "6X7",
+              projectName: "Work",
+              dueString: "tomorrow",
+            },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          fields: { content: null, description: null, dueString: null } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).toEqual({
+        content: "Call the customer back",
+        description: "",
+        projectId: "6X7",
+        projectName: "Work",
+        dueString: "tomorrow",
+      });
+    });
+
+    it("but uses what chat sends, and an empty value lets the AI write it", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            ...trelloCreateCard,
+            integrationArgs: {
+              ...trelloCreateCard.integrationArgs,
+              name: "Pay invoice",
+              description: "From the billing inbox",
+            },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay this invoice", description: "" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).toEqual({
+        ...trelloCreateCard.integrationArgs,
+        name: "Pay this invoice",
+        description: "",
+      });
+    });
+
+    it("for each action when chat resends two of the same tool in another order", async () => {
+      const opsCard = {
+        ...trelloCreateCard,
+        integrationArgs: { ...trelloCreateCard.integrationArgs, name: "Ops" },
+      };
+      const salesCard = {
+        ...trelloCreateCard,
+        integrationArgs: {
+          ...trelloCreateCard.integrationArgs,
+          boardId: "board-2",
+          boardName: "Sales",
+          listId: "list-2",
+          listName: "Leads",
+          name: "Sales",
+        },
+      };
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [opsCard, salesCard],
+      } as never);
+
+      const saved = await updateTo(
+        ["Sales", "Ops"].map(
+          (name) =>
+            ({
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: { name } as any,
+              delayInMinutes: null,
+            }) as RuleAction,
+        ),
+      );
+
+      expect(
+        saved.createMany.data.map((action) => action.integrationArgs?.boardId),
+      ).toEqual(["board-2", "board-1"]);
+    });
   });
 
   it("rejects an integration action that names no app and tool", async () => {

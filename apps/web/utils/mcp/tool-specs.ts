@@ -537,6 +537,42 @@ export function buildIntegrationArgsFromFields({
 }
 
 /**
+ * The inverse of `buildIntegrationArgsFromFields`: the stored values of the
+ * args the rule writer may set, leaving out the ones the AI fills per email,
+ * so the rule writer can see and resend what the user fixed in the editor.
+ */
+export function getIntegrationFieldsFromArgs({
+  integrationName,
+  integrationToolName,
+  integrationArgs,
+}: {
+  integrationName: string | null | undefined;
+  integrationToolName: string | null | undefined;
+  integrationArgs: unknown;
+}): Record<string, string> {
+  const spec = getIntegrationToolSpec(integrationName, integrationToolName);
+  if (
+    !spec ||
+    !integrationArgs ||
+    typeof integrationArgs !== "object" ||
+    Array.isArray(integrationArgs)
+  ) {
+    return {};
+  }
+
+  const fields: Record<string, string> = {};
+  for (const arg of spec.args) {
+    const value = (integrationArgs as Record<string, unknown>)[arg.key];
+    if (!arg.llmDescription || typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+    if (!isAiFilledArgValue(arg, value)) fields[arg.key] = value;
+  }
+
+  return fields;
+}
+
+/**
  * Maps a loosely-specified select value (e.g. "in 7 days" from an AI-authored
  * rule) onto the option value we store, so the editor can show the choice.
  */

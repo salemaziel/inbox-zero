@@ -1,5 +1,6 @@
 import type { CreateOrUpdateRuleSchema } from "@/utils/ai/rule/create-rule-schema";
 import { after } from "next/server";
+import isEqual from "lodash/isEqual";
 import prisma from "@/utils/prisma";
 import type { Logger } from "@/utils/logger";
 import { ActionType } from "@/generated/prisma/enums";
@@ -33,6 +34,7 @@ import {
 import { findIntegration } from "@/utils/mcp/integrations";
 import {
   buildIntegrationArgsFromFields,
+  getIntegrationFieldsFromArgs,
   getIntegrationToolSpec,
   getMissingEditorPicks,
   MISSING_INTEGRATION_TOOL_MESSAGE,
@@ -897,10 +899,13 @@ function joinWords(words: string[]) {
   return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
-// The rule writer resends whole action lists but can only set an integration's
-// AI-settable args, so an edit would otherwise drop what the user picked in the
-// editor (board, list, card, project...). Each existing action with the same
-// app and tool lends its picks to one incoming action, in order.
+// The rule writer resends whole action lists, so an edit would otherwise drop
+// what the user set in the editor (board, list, card, project, a fixed title or
+// due date...). Each existing action with the same app and tool lends its
+// stored values to one incoming action: the one showing the same field values
+// first, so a reordered list keeps each action's picks, then in order. A field
+// the rule writer leaves out keeps its stored value; one it sends wins, and an
+// empty one means the AI fills it per email.
 function keepEditorPickedIntegrationArgs<T extends MappableAction>(
   actions: T[],
   existingActions: {
@@ -925,22 +930,33 @@ function keepEditorPickedIntegrationArgs<T extends MappableAction>(
       action.integrationName,
       action.integrationToolName,
     );
-    const matchIndex = unused.findIndex(
+    const fields: Record<string, string | null | undefined> | null | undefined =
+      action.fields;
+    const args: Record<string, unknown> = buildIntegrationArgsFromFields({
+      integrationName: action.integrationName,
+      integrationToolName: action.integrationToolName,
+      fields,
+    });
+    const isSameTool = (existing: (typeof unused)[number]) =>
+      existing.integrationName === action.integrationName &&
+      existing.integrationToolName === action.integrationToolName;
+    const sentFields = getIntegrationFieldsFromArgs({
+      ...action,
+      integrationArgs: args,
+    });
+    const sameFieldsIndex = unused.findIndex(
       (existing) =>
-        existing.integrationName === action.integrationName &&
-        existing.integrationToolName === action.integrationToolName,
+        isSameTool(existing) &&
+        isEqual(getIntegrationFieldsFromArgs(existing), sentFields),
     );
+    const matchIndex =
+      sameFieldsIndex === -1 ? unused.findIndex(isSameTool) : sameFieldsIndex;
     const existingArgs = unused[matchIndex]?.integrationArgs;
     if (!spec || !isJsonObject(existingArgs)) return action;
     unused.splice(matchIndex, 1);
 
-    const args: Record<string, unknown> = buildIntegrationArgsFromFields({
-      integrationName: action.integrationName,
-      integrationToolName: action.integrationToolName,
-      fields: action.fields,
-    });
     for (const arg of spec.args) {
-      if (arg.llmDescription) continue;
+      if (arg.llmDescription && fields?.[arg.key] != null) continue;
       for (const key of [arg.key, arg.displayValueKey]) {
         if (key && key in existingArgs) args[key] = existingArgs[key];
       }
