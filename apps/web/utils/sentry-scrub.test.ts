@@ -276,6 +276,44 @@ describe("Sentry URL scrubbing", () => {
     expect(result.spans[0].description).toBe(`DELETE ${cleanUrl}`);
   });
 
+  it("redacts a path token from every string in span data, span names and breadcrumbs", () => {
+    const revokeUrl = "https://api.trello.com/1/tokens/abc123secret";
+    const event = {
+      transaction: "DELETE /1/tokens/abc123secret",
+      contexts: {
+        trace: {
+          description: `fetch DELETE ${revokeUrl}`,
+          data: {
+            "url.path": "/1/tokens/abc123secret",
+            "next.span_name": `fetch DELETE ${revokeUrl}`,
+          },
+        },
+      },
+      breadcrumbs: [
+        {
+          category: "fetch",
+          message: `DELETE ${revokeUrl} [204]`,
+          data: { "some.future.field": revokeUrl },
+        },
+      ],
+      spans: [
+        {
+          description: `fetch DELETE ${revokeUrl}`,
+          data: {
+            "url.path": "/1/tokens/abc123secret",
+            "next.span_name": `fetch DELETE ${revokeUrl}`,
+            "some.future.field": { nested: [revokeUrl] },
+          },
+        },
+      ],
+    };
+
+    const result = scrubSentryEvent(event as never);
+
+    expect(JSON.stringify(result)).not.toContain("abc123secret");
+    expect(result.spans?.[0].data?.["url.path"]).toBe("/1/tokens/[redacted]");
+  });
+
   it("does not throw on malformed URLs", () => {
     const event = {
       request: { url: "http://[bad host/%E0%A4%A?%E0%A4%A=1&state=x#token=y" },

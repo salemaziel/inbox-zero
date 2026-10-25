@@ -53,11 +53,14 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb);
   }
   scrubSpanData(event.contexts?.trace?.data);
-  for (const span of event.spans ?? []) {
-    scrubSpanData(span.data);
-    if (span.description) {
-      span.description = redactPathTokens(span.description);
-    }
+  for (const span of event.spans ?? []) scrubSpanData(span.data);
+  // Instrumentations put the request URL into whichever span names and data
+  // keys they like (url.path, next.span_name, ...), so a fixed key list misses
+  // some. Redact the path token from every string instead.
+  if (event.contexts) event.contexts = redactPathTokensDeep(event.contexts);
+  if (event.spans) event.spans = redactPathTokensDeep(event.spans);
+  if (event.transaction) {
+    event.transaction = redactPathTokens(event.transaction);
   }
   // Replay events carry the visited page URLs (initial URL includes the hash).
   const replayUrls = (event as { urls?: unknown }).urls;
@@ -118,12 +121,12 @@ function redactPii<T>(value: T, depth = 0): T {
 }
 
 function scrubBreadcrumb<T extends Breadcrumb>(breadcrumb: T): T {
-  if (!breadcrumb.data) return breadcrumb;
+  if (!breadcrumb.data) return redactPathTokensDeep(breadcrumb);
   const data = { ...breadcrumb.data };
   for (const key of BREADCRUMB_URL_KEYS) {
     if (key in data) data[key] = stripSensitiveUrlParts(data[key]);
   }
-  return { ...breadcrumb, data };
+  return redactPathTokensDeep({ ...breadcrumb, data });
 }
 
 function scrubSpanData(data: Record<string, unknown> | undefined) {
@@ -156,6 +159,21 @@ function stripSensitiveUrlParts<T>(url: T): T {
 
 function redactPathTokens(text: string) {
   return text.replace(PATH_TOKEN_PATTERN, `$1${REDACTED}`);
+}
+
+function redactPathTokensDeep<T>(value: T, depth = 0): T {
+  if (typeof value === "string") return redactPathTokens(value) as T;
+  if (depth > MAX_DEPTH) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactPathTokensDeep(item, depth + 1)) as T;
+  }
+  if (!isPlainObject(value)) return value;
+
+  const result: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    result[key] = redactPathTokensDeep(nested, depth + 1);
+  }
+  return result as T;
 }
 
 function stripSensitiveQuery<T>(query: T): T {
