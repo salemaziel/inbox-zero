@@ -9,6 +9,7 @@ import {
   type RuleAction,
 } from "@/utils/ai/rule/create-rule-schema";
 import { isDuplicateError } from "@/utils/prisma-helpers";
+import { SafeError } from "@/utils/error";
 import {
   getIntegrationSetupMessage,
   partialUpdateRule,
@@ -285,16 +286,23 @@ export const updateRuleTool = ({
           // user finishes the action in the rule editor.
           setupMessage = getIntegrationSetupMessage(updatedRule.actions);
         }
-        const updatedEnabled = setupMessage
+        let updatedEnabled = setupMessage
           ? false
           : (effectiveUpdates.enabled ?? rule.enabled);
 
         if (!setupMessage && updatedEnabled !== rule.enabled) {
-          await setRuleEnabled({
-            ruleId: rule.id,
-            emailAccountId,
-            enabled: updatedEnabled,
-          });
+          try {
+            await setRuleEnabled({
+              ruleId: rule.id,
+              emailAccountId,
+              enabled: updatedEnabled,
+            });
+          } catch (error) {
+            // setRuleEnabled refuses to turn on a rule the editor must finish.
+            if (!(error instanceof SafeError)) throw error;
+            setupMessage = error.message;
+            updatedEnabled = rule.enabled;
+          }
         }
 
         const snapshot = await loadRuleSnapshotAfterWrite({

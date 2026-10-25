@@ -9,6 +9,7 @@ import { createRuleTool } from "./tools/rules/create-rule-tool";
 import { updateRuleTool } from "./tools/rules/update-rule-tool";
 import { deleteRuleTool } from "./tools/rules/delete-rule-tool";
 import { loadAssistantRuleSnapshot } from "./chat-rule-state";
+import { SafeError } from "@/utils/error";
 
 const {
   mockCreateRule,
@@ -870,6 +871,46 @@ describe("updateRuleTool with an unfinished integration action", () => {
       updatedEnabled: false,
       message:
         "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+    });
+  });
+
+  it("leaves the rule off and says why when asked only to turn it on", async () => {
+    vi.clearAllMocks();
+    mockAssistantRuleSnapshot([]);
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      enabled: false,
+    });
+    const message =
+      "This rule can't be turned on yet. Open it in the rule editor, pick the Trello board and list, then turn it on.";
+    mockSetRuleEnabled.mockRejectedValue(new SafeError(message));
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: { enabled: true },
+    });
+
+    expect(mockSetRuleEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+    );
+    expect(result).toMatchObject({
+      success: true,
+      originalEnabled: false,
+      updatedEnabled: false,
+      message,
     });
   });
 });
