@@ -9,7 +9,6 @@ import { createRuleTool } from "./tools/rules/create-rule-tool";
 import { updateRuleTool } from "./tools/rules/update-rule-tool";
 import { deleteRuleTool } from "./tools/rules/delete-rule-tool";
 import { loadAssistantRuleSnapshot } from "./chat-rule-state";
-import { SafeError } from "@/utils/error";
 
 const {
   mockCreateRule,
@@ -29,6 +28,7 @@ const {
       findUnique: vi.fn(),
     },
     rule: {
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
@@ -881,9 +881,21 @@ describe("updateRuleTool with an unfinished integration action", () => {
       ...vendorBillingRuleWithActions(),
       enabled: false,
     });
-    const message =
-      "This rule can't be turned on yet. Open it in the rule editor, pick the Trello board and list, then turn it on.";
-    mockSetRuleEnabled.mockRejectedValue(new SafeError(message));
+    mockPrisma.rule.findFirst.mockResolvedValue({
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { boardId: "", listId: "", name: "" },
+        },
+      ],
+    });
+    const { setRuleEnabled } =
+      await vi.importActual<typeof import("@/utils/rule/rule")>(
+        "@/utils/rule/rule",
+      );
+    mockSetRuleEnabled.mockImplementation(setRuleEnabled);
 
     const result = await updateRuleTool({
       email: "user@example.com",
@@ -910,7 +922,8 @@ describe("updateRuleTool with an unfinished integration action", () => {
       success: true,
       originalEnabled: false,
       updatedEnabled: false,
-      message,
+      message:
+        "This rule can't be turned on yet. Open it in the rule editor, pick the Trello board and list, then turn it on.",
     });
   });
 });

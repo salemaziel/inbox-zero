@@ -1108,6 +1108,41 @@ describe("integration action access", () => {
       });
     });
 
+    it("but an empty due date lets the AI take it from each email again", async () => {
+      const storedArgs = {
+        content: "Call the customer back",
+        projectId: "6X7",
+        projectName: "Work",
+        dueString: "tomorrow",
+      };
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: storedArgs,
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          fields: { content: null, dueString: "" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).toEqual({
+        ...storedArgs,
+        dueString: "ai",
+      });
+    });
+
     it("for each action when chat resends two of the same tool in another order", async () => {
       const opsCard = {
         ...trelloCreateCard,

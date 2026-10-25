@@ -379,6 +379,24 @@ describe("toggleAllRulesAction", () => {
           },
         ],
       },
+      {
+        id: "projects-rule",
+        name: "Projects",
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "create-card",
+            integrationArgs: {
+              boardId: "board-1",
+              boardName: "Ops",
+              listId: "list-1",
+              listName: "To do",
+              name: "",
+            },
+          },
+        ],
+      },
     ] as never);
 
     const result = await toggleAllRulesAction(
@@ -386,6 +404,16 @@ describe("toggleAllRulesAction", () => {
       { enabled: true } as never,
     );
 
+    expect(prisma.rule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          emailAccountId: "ea_1",
+          organizationRuleId: null,
+          enabled: false,
+          actions: { some: { type: ActionType.INTEGRATION } },
+        },
+      }),
+    );
     expect(prisma.rule.updateMany).toHaveBeenCalledWith({
       where: {
         emailAccountId: "ea_1",
