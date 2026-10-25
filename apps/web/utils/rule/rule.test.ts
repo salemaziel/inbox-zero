@@ -1146,6 +1146,50 @@ describe("integration action access", () => {
         saved.createMany.data.map((action) => action.integrationArgs?.boardId),
       ).toEqual(["board-2", "board-1"]);
     });
+
+    it("for each action when chat leaves one's fixed title out and gives the other a title", async () => {
+      const payInvoiceCard = {
+        ...trelloCreateCard,
+        integrationArgs: {
+          ...trelloCreateCard.integrationArgs,
+          name: "Pay invoice",
+        },
+      };
+      const aiTitledCard = {
+        ...trelloCreateCard,
+        integrationArgs: {
+          ...trelloCreateCard.integrationArgs,
+          boardId: "board-2",
+          boardName: "Sales",
+          listId: "list-2",
+          listName: "Leads",
+        },
+      };
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [payInvoiceCard, aiTitledCard],
+      } as never);
+
+      const saved = await updateTo(
+        [null, "Receipts"].map(
+          (name) =>
+            ({
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: { name } as any,
+              delayInMinutes: null,
+            }) as RuleAction,
+        ),
+      );
+
+      expect(
+        saved.createMany.data.map((action) => action.integrationArgs),
+      ).toEqual([
+        payInvoiceCard.integrationArgs,
+        { ...aiTitledCard.integrationArgs, name: "Receipts" },
+      ]);
+    });
   });
 
   it("rejects an integration action that names no app and tool", async () => {

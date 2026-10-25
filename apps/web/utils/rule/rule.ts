@@ -1,6 +1,5 @@
 import type { CreateOrUpdateRuleSchema } from "@/utils/ai/rule/create-rule-schema";
 import { after } from "next/server";
-import isEqual from "lodash/isEqual";
 import prisma from "@/utils/prisma";
 import type { Logger } from "@/utils/logger";
 import { ActionType } from "@/generated/prisma/enums";
@@ -902,34 +901,24 @@ function joinWords(words: string[]) {
 // The rule writer resends whole action lists, so an edit would otherwise drop
 // what the user set in the editor (board, list, card, project, a fixed title or
 // due date...). Each existing action with the same app and tool lends its
-// stored values to one incoming action: the one showing the same field values
-// first, so a reordered list keeps each action's picks, then in order. A field
-// the rule writer leaves out keeps its stored value; one it sends wins, and an
-// empty one means the AI fills it per email.
+// stored values to one incoming action, in list order, unless the values sent
+// show each action was only moved. A field the rule writer leaves out keeps its
+// stored value; one it sends wins, and an empty one means the AI fills it per
+// email.
 function keepEditorPickedIntegrationArgs<T extends MappableAction>(
   actions: T[],
-  existingActions: {
-    type: ActionType;
-    integrationName: string | null;
-    integrationToolName: string | null;
-    integrationArgs: Prisma.JsonValue | null;
-  }[],
+  existingActions: ExistingIntegrationAction[],
 ): T[] {
   if (!actions.some((action) => action.type === ActionType.INTEGRATION)) {
     return actions;
   }
-  const unused = existingActions.filter(
+  const existingIntegrationActions = existingActions.filter(
     (action) => action.type === ActionType.INTEGRATION,
   );
-
-  return actions.map((action) => {
+  const incoming = actions.flatMap((action, index) => {
     if (action.type !== ActionType.INTEGRATION || action.integrationArgs) {
-      return action;
+      return [];
     }
-    const spec = getIntegrationToolSpec(
-      action.integrationName,
-      action.integrationToolName,
-    );
     const fields: Record<string, string | null | undefined> | null | undefined =
       action.fields;
     const args: Record<string, unknown> = buildIntegrationArgsFromFields({
@@ -937,23 +926,42 @@ function keepEditorPickedIntegrationArgs<T extends MappableAction>(
       integrationToolName: action.integrationToolName,
       fields,
     });
-    const isSameTool = (existing: (typeof unused)[number]) =>
-      existing.integrationName === action.integrationName &&
-      existing.integrationToolName === action.integrationToolName;
-    const sentFields = getIntegrationFieldsFromArgs({
-      ...action,
-      integrationArgs: args,
-    });
-    const sameFieldsIndex = unused.findIndex(
-      (existing) =>
-        isSameTool(existing) &&
-        isEqual(getIntegrationFieldsFromArgs(existing), sentFields),
+    return [{ action, index, fields, args }];
+  });
+
+  const matches = new Map<number, ExistingIntegrationAction>();
+  for (const toolKey of new Set(
+    incoming.map(({ action }) => getToolKey(action)),
+  )) {
+    const group = incoming.filter(
+      ({ action }) => getToolKey(action) === toolKey,
     );
-    const matchIndex =
-      sameFieldsIndex === -1 ? unused.findIndex(isSameTool) : sameFieldsIndex;
-    const existingArgs = unused[matchIndex]?.integrationArgs;
-    if (!spec || !isJsonObject(existingArgs)) return action;
-    unused.splice(matchIndex, 1);
+    const candidates = existingIntegrationActions.filter(
+      (existing) => getToolKey(existing) === toolKey,
+    );
+    const valueMatches = group.map(({ action, fields, args }) =>
+      findOnlyActionShowingSentValues(action, fields, args, candidates),
+    );
+    const isClearlyReordered =
+      valueMatches.every(Boolean) &&
+      new Set(valueMatches).size === valueMatches.length;
+    group.forEach(({ index }, position) => {
+      const match = isClearlyReordered
+        ? valueMatches[position]
+        : candidates[position];
+      if (match) matches.set(index, match);
+    });
+  }
+
+  return actions.map((action, index) => {
+    const entry = incoming.find((item) => item.index === index);
+    const existingArgs = matches.get(index)?.integrationArgs;
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    if (!entry || !spec || !isJsonObject(existingArgs)) return action;
+    const { fields, args } = entry;
 
     for (const arg of spec.args) {
       if (arg.llmDescription && fields?.[arg.key] != null) continue;
@@ -964,6 +972,49 @@ function keepEditorPickedIntegrationArgs<T extends MappableAction>(
 
     return { ...action, integrationArgs: args as Prisma.JsonValue };
   });
+}
+
+type ExistingIntegrationAction = {
+  type: ActionType;
+  integrationName: string | null;
+  integrationToolName: string | null;
+  integrationArgs: Prisma.JsonValue | null;
+};
+
+function getToolKey(action: {
+  integrationName?: string | null;
+  integrationToolName?: string | null;
+}) {
+  return `${action.integrationName}/${action.integrationToolName}`;
+}
+
+// Value pairing only overrides list order when the values chat sent point to
+// exactly one stored action. A field left out could belong to any action, and
+// an AI-written field looks the same on every action, so neither counts.
+function findOnlyActionShowingSentValues(
+  action: MappableAction,
+  fields: Record<string, string | null | undefined> | null | undefined,
+  args: Record<string, unknown>,
+  candidates: ExistingIntegrationAction[],
+) {
+  const spec = getIntegrationToolSpec(
+    action.integrationName,
+    action.integrationToolName,
+  );
+  const sentKeys = (spec?.args ?? [])
+    .filter((arg) => arg.llmDescription && fields?.[arg.key] != null)
+    .map((arg) => arg.key);
+  const shown = getIntegrationFieldsFromArgs({
+    ...action,
+    integrationArgs: args,
+  });
+  if (!sentKeys.some((key) => shown[key] !== undefined)) return;
+
+  const showingSentValues = candidates.filter((existing) => {
+    const stored = getIntegrationFieldsFromArgs(existing);
+    return sentKeys.every((key) => stored[key] === shown[key]);
+  });
+  return showingSentValues.length === 1 ? showingSentValues[0] : undefined;
 }
 
 function isJsonObject(
