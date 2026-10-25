@@ -218,6 +218,11 @@ const TRELLO_CARD_ARG: IntegrationArgSpec = {
 const TRELLO_PICKED_IN_EDITOR =
   "The board and other Trello choices are picked in the rule editor after the rule is saved.";
 
+// Comment and move act on the card picked in the editor, not one looked up per
+// email, so the rule writer must not promise a per-email card.
+const TRELLO_ONE_FIXED_CARD =
+  "The card is one specific card the user picks in the rule editor after the rule is saved, and every matching email uses that same card; it can't find a different card for each email.";
+
 const trelloCreateCardSpec: IntegrationToolSpec = {
   integration: "trello",
   tool: "create-card",
@@ -319,7 +324,7 @@ const trelloAddCommentSpec: IntegrationToolSpec = {
   tool: "add-comment",
   actionLabel: "Comment on Trello card",
   displayArgKey: "text",
-  llmDescription: `Add a comment to an existing Trello card for the matching email. Only use this when the user explicitly asks to comment on a Trello card. Fails if Trello isn't connected. ${TRELLO_PICKED_IN_EDITOR}`,
+  llmDescription: `Add a comment about the matching email to one Trello card. ${TRELLO_ONE_FIXED_CARD} Only use this when the user explicitly asks to comment on a Trello card. Fails if Trello isn't connected.`,
   args: [
     TRELLO_BOARD_ARG,
     TRELLO_CARD_ARG,
@@ -346,7 +351,7 @@ const trelloMoveCardSpec: IntegrationToolSpec = {
   tool: "move-card",
   actionLabel: "Move or archive Trello card",
   displayArgKey: "cardName",
-  llmDescription: `Move an existing Trello card to another list, or archive it, for the matching email. Only use this when the user explicitly asks to move or archive a Trello card. Fails if Trello isn't connected. ${TRELLO_PICKED_IN_EDITOR}`,
+  llmDescription: `Move one Trello card to another list, or archive it, when an email matches. ${TRELLO_ONE_FIXED_CARD} The destination list is also picked in the rule editor. Only use this when the user explicitly asks to move or archive a Trello card. Fails if Trello isn't connected.`,
   args: [
     TRELLO_BOARD_ARG,
     TRELLO_CARD_ARG,

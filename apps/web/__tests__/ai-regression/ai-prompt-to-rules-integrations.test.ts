@@ -23,12 +23,13 @@ describe.runIf(isAiTest)("aiPromptToRules integration actions", () => {
     },
     {
       prompt:
-        "* When a customer replies about an order, comment on its Trello card",
+        '* When the weekly status report arrives, comment on my "Weekly status" Trello card',
       integrationName: "trello",
       integrationToolName: "add-comment",
     },
     {
-      prompt: "* Archive the Trello card when a vendor says a job is finished",
+      prompt:
+        '* When the movers confirm the office move is done, archive my "Office move" Trello card',
       integrationName: "trello",
       integrationToolName: "move-card",
     },
