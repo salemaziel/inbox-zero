@@ -38,6 +38,7 @@ import { isMessagingDraftActionType } from "@/utils/actions/draft-reply";
 import { checkHasAccess } from "@/utils/premium/server";
 import { handlePreviousDraftDeletion } from "@/utils/ai/choose-rule/draft-management";
 import { isIntegrationActionEnabledForUserId } from "@/utils/integration-action.server";
+import { getAccountTimezone } from "@/utils/timezone";
 
 const MODULE = "ai-actions";
 
@@ -677,7 +678,9 @@ const integration: ActionFunction<{
     integrationName,
     toolName: integrationToolName,
     integrationConfig,
-    payload: spec.buildPayload(resolvedArgs),
+    payload: spec.buildPayload(resolvedArgs, {
+      timeZone: getAccountTimezone(emailAccount.timezone),
+    }),
     emailAccountId: emailAccount.id,
     messageId: email.id,
     ruleId: executedRule.ruleId,

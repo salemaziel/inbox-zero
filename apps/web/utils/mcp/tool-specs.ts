@@ -22,6 +22,7 @@
  * the editor and history can show a human label, and are never sent to the tool.
  */
 
+import { TZDate } from "@date-fns/tz";
 import type { IntegrationKey } from "@/utils/mcp/integrations";
 
 export type IntegrationArgOption = {
@@ -76,7 +77,10 @@ export type IntegrationToolSpec = {
   displayArgKey?: string;
   llmDescription: string; // describes the action to the rule-writing LLM
   args: readonly IntegrationArgSpec[];
-  buildPayload: (resolved: Record<string, string>) => Record<string, unknown>;
+  buildPayload: (
+    resolved: Record<string, string>,
+    context: { timeZone: string }, // the account's IANA time zone
+  ) => Record<string, unknown>;
 };
 
 // Todoist's virtual inbox: always selectable, even before projects load.
@@ -300,11 +304,11 @@ const trelloCreateCardSpec: IntegrationToolSpec = {
       defaultValue: "yes",
     },
   ],
-  buildPayload: (resolved) => {
+  buildPayload: (resolved, { timeZone }) => {
     const name = resolved.name?.trim() ?? "";
     const desc = resolved.description?.trim() ?? "";
     const labelId = resolved.labelId?.trim() ?? "";
-    const due = resolveTrelloDueDate(resolved.due);
+    const due = resolveTrelloDueDate(resolved.due, timeZone);
     const urlSource = getSafeHttpsUrl(resolved.attachLink);
 
     return {
@@ -631,26 +635,69 @@ function resolveSelectPayloadValue(
   return option ? (option.payloadValue ?? "") : trimmed;
 }
 
-// A date-only value is pinned to midday UTC so it lands on the same calendar
-// day for nearly every time zone, instead of the evening before in the Americas.
-function resolveTrelloDueDate(value: string | null | undefined): string {
+// Days and times without a zone mean the user's own, so they are read in the
+// account's time zone. A date-only value is pinned to midday there, which keeps
+// it on that calendar day for anyone viewing the card nearby.
+function resolveTrelloDueDate(
+  value: string | null | undefined,
+  timeZone: string,
+): string {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return "";
 
   if (Object.hasOwn(TRELLO_DUE_PRESET_DAYS, trimmed)) {
-    const date = new Date();
-    date.setUTCDate(date.getUTCDate() + TRELLO_DUE_PRESET_DAYS[trimmed]);
-    return `${date.toISOString().slice(0, 10)}T12:00:00.000Z`;
+    const today = new TZDate(Date.now(), timeZone);
+    return toUtcIsoString(
+      new TZDate(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate() + TRELLO_DUE_PRESET_DAYS[trimmed],
+        12,
+        0,
+        0,
+        0,
+        timeZone,
+      ),
+    );
   }
 
-  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
-  if (!isDateOnly && !/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return "";
+  const local = LOCAL_DATE_TIME_PATTERN.exec(trimmed);
+  if (local) {
+    const [, year, month, day, hour = "12", minute = "00", second = "00"] =
+      local;
+    const date = new TZDate(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+      0,
+      timeZone,
+    );
+    // Rejects dates that roll over, such as 2026-02-31.
+    if (
+      date.getFullYear() !== Number(year) ||
+      date.getMonth() !== Number(month) - 1 ||
+      date.getDate() !== Number(day)
+    ) {
+      return "";
+    }
+    return toUtcIsoString(date);
+  }
 
-  const date = new Date(isDateOnly ? `${trimmed}T12:00:00.000Z` : trimmed);
-  if (Number.isNaN(date.getTime())) return "";
-  // Rejects dates that roll over, such as 2026-02-31.
-  if (isDateOnly && date.toISOString().slice(0, 10) !== trimmed) return "";
-  return date.toISOString();
+  if (!ZONED_DATE_TIME_PATTERN.test(trimmed)) return "";
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+// YYYY-MM-DD, optionally with a time of day and no zone.
+const LOCAL_DATE_TIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})(?:T([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d+)?)?)?$/;
+const ZONED_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+function toUtcIsoString(date: Date) {
+  return new Date(date.getTime()).toISOString();
 }
 
 function getSafeHttpsUrl(value: string | null | undefined): string {

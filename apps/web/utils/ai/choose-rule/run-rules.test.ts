@@ -1654,6 +1654,33 @@ describe("runRules cold email pattern learning", () => {
     expect(saveLearnedPattern).not.toHaveBeenCalled();
   });
 
+  it("passes the account's time zone to the actions it runs", async () => {
+    vi.mocked(getActionItemsWithAiArgs).mockResolvedValue(
+      coldEmailRule.actions,
+    );
+    mockExecutedRuleCreate({
+      rule: coldEmailRule,
+      actionItems: coldEmailRule.actions,
+    });
+    vi.mocked(executeAct).mockResolvedValue(ExecutedRuleStatus.APPLIED);
+    mockMatchingRules([
+      { rule: coldEmailRule, matchReasons: [{ type: ConditionType.AI }] },
+    ]);
+
+    await runRulesWithDefaults({
+      rules: [coldEmailRule],
+      emailAccount: { ...getEmailAccount(), timezone: "America/Los_Angeles" },
+    });
+
+    expect(executeAct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        emailAccount: expect.objectContaining({
+          timezone: "America/Los_Angeles",
+        }),
+      }),
+    );
+  });
+
   it("does not re-save a pattern that was itself the match", async () => {
     mockMatchingRules([
       {

@@ -217,6 +217,32 @@ describe("executor", () => {
       );
     });
 
+    it("passes the account's time zone to the delayed action", async () => {
+      vi.mocked(getEmailAccountWithAiAndTokens).mockResolvedValue({
+        ...mockEmailAccount,
+        timezone: "America/Los_Angeles",
+      } as any);
+      mockScheduledActionUpdate(ScheduledActionStatus.COMPLETED);
+      mockExecutedActionCreate();
+      mockExecutedRuleFind();
+      mockCompletionCounts({ pendingActions: 0, failedActions: 0 });
+      mockExecutedRuleUpdate(ExecutedRuleStatus.APPLIED);
+
+      await executeScheduledAction(
+        mockScheduledAction,
+        await getMockEmailProvider(),
+        logger,
+      );
+
+      expect(runActionFunction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          emailAccount: expect.objectContaining({
+            timezone: "America/Los_Angeles",
+          }),
+        }),
+      );
+    });
+
     it("forwards selectedAttachments into the executed action", async () => {
       const selectedAttachments = [
         {

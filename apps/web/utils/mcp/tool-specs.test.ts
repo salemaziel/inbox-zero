@@ -104,6 +104,8 @@ describe("option sources", () => {
   });
 });
 
+const UTC = { timeZone: "UTC" };
+
 describe("Trello specs", () => {
   const createCard = getIntegrationToolSpec("trello", "create-card")!;
   const addComment = getIntegrationToolSpec("trello", "add-comment")!;
@@ -130,7 +132,7 @@ describe("Trello specs", () => {
     };
 
     it("sends the list and trimmed title, and nothing for empty choices", () => {
-      expect(createCard.buildPayload(base)).toEqual({
+      expect(createCard.buildPayload(base, UTC)).toEqual({
         idList: "list-1",
         name: "Pay invoice",
       });
@@ -138,11 +140,14 @@ describe("Trello specs", () => {
 
     it("sends the description and a chosen label", () => {
       expect(
-        createCard.buildPayload({
-          ...base,
-          description: "From Acme",
-          labelId: "label-1",
-        }),
+        createCard.buildPayload(
+          {
+            ...base,
+            description: "From Acme",
+            labelId: "label-1",
+          },
+          UTC,
+        ),
       ).toMatchObject({ desc: "From Acme", idLabels: ["label-1"] });
     });
 
@@ -151,42 +156,110 @@ describe("Trello specs", () => {
       ["tomorrow", "2026-10-25T12:00:00.000Z"],
       ["in-7-days", "2026-10-31T12:00:00.000Z"],
     ])("turns the %s due option into a date", (due, expected) => {
-      expect(createCard.buildPayload({ ...base, due }).due).toBe(expected);
+      expect(createCard.buildPayload({ ...base, due }, UTC).due).toBe(expected);
     });
 
     it("uses a valid AI-written date and drops an invalid one", () => {
-      expect(createCard.buildPayload({ ...base, due: "2026-11-03" }).due).toBe(
-        "2026-11-03T12:00:00.000Z",
-      );
       expect(
-        createCard.buildPayload({ ...base, due: "2026-11-03T09:15:00Z" }).due,
+        createCard.buildPayload({ ...base, due: "2026-11-03" }, UTC).due,
+      ).toBe("2026-11-03T12:00:00.000Z");
+      expect(
+        createCard.buildPayload({ ...base, due: "2026-11-03T09:15:00Z" }, UTC)
+          .due,
       ).toBe("2026-11-03T09:15:00.000Z");
       expect(
-        createCard.buildPayload({ ...base, due: "next Friday" }),
+        createCard.buildPayload({ ...base, due: "next Friday" }, UTC),
       ).not.toHaveProperty("due");
       expect(
-        createCard.buildPayload({ ...base, due: "2026-02-31" }),
+        createCard.buildPayload({ ...base, due: "2026-02-31" }, UTC),
       ).not.toHaveProperty("due");
       expect(
-        createCard.buildPayload({ ...base, due: "2026-13-01" }),
+        createCard.buildPayload({ ...base, due: "2026-13-01" }, UTC),
       ).not.toHaveProperty("due");
       expect(
-        createCard.buildPayload({ ...base, due: "ai" }),
+        createCard.buildPayload({ ...base, due: "ai" }, UTC),
       ).not.toHaveProperty("due");
+    });
+
+    describe("in the user's time zone", () => {
+      const losAngeles = { timeZone: "America/Los_Angeles" };
+
+      beforeEach(() => {
+        // 20:00 on Oct 24 in Los Angeles, already Oct 25 in UTC.
+        vi.setSystemTime(new Date("2026-10-25T03:00:00.000Z"));
+      });
+
+      it.each([
+        ["today", "2026-10-24T19:00:00.000Z"],
+        ["tomorrow", "2026-10-25T19:00:00.000Z"],
+        ["in-7-days", "2026-10-31T19:00:00.000Z"],
+      ])("counts the %s due option from the user's day", (due, expected) => {
+        expect(createCard.buildPayload({ ...base, due }, losAngeles).due).toBe(
+          expected,
+        );
+      });
+
+      it("reads an AI date or time without a zone as the user's local time", () => {
+        expect(
+          createCard.buildPayload({ ...base, due: "2026-11-03" }, losAngeles)
+            .due,
+        ).toBe("2026-11-03T20:00:00.000Z");
+        expect(
+          createCard.buildPayload(
+            { ...base, due: "2026-11-03T17:00" },
+            losAngeles,
+          ).due,
+        ).toBe("2026-11-04T01:00:00.000Z");
+        expect(
+          createCard.buildPayload(
+            { ...base, due: "2026-11-03T17:00:00" },
+            losAngeles,
+          ).due,
+        ).toBe("2026-11-04T01:00:00.000Z");
+      });
+
+      it("keeps an AI time that names its own zone", () => {
+        expect(
+          createCard.buildPayload(
+            { ...base, due: "2026-11-03T17:00:00+02:00" },
+            losAngeles,
+          ).due,
+        ).toBe("2026-11-03T15:00:00.000Z");
+      });
+
+      it("drops an AI time without a zone that rolls over", () => {
+        expect(
+          createCard.buildPayload(
+            { ...base, due: "2026-02-31T10:00" },
+            losAngeles,
+          ),
+        ).not.toHaveProperty("due");
+        expect(
+          createCard.buildPayload(
+            { ...base, due: "2026-11-03T24:30" },
+            losAngeles,
+          ),
+        ).not.toHaveProperty("due");
+      });
     });
 
     it("attaches the email link only when it resolved to an https URL", () => {
       const link = "https://mail.google.com/mail/u/0/#all/abc";
 
       expect(
-        createCard.buildPayload({ ...base, attachLink: link }).urlSource,
+        createCard.buildPayload({ ...base, attachLink: link }, UTC).urlSource,
       ).toBe(link);
-      expect(createCard.buildPayload(base)).not.toHaveProperty("urlSource");
+      expect(createCard.buildPayload(base, UTC)).not.toHaveProperty(
+        "urlSource",
+      );
       expect(
-        createCard.buildPayload({ ...base, attachLink: "yes" }),
+        createCard.buildPayload({ ...base, attachLink: "yes" }, UTC),
       ).not.toHaveProperty("urlSource");
       expect(
-        createCard.buildPayload({ ...base, attachLink: "javascript:alert(1)" }),
+        createCard.buildPayload(
+          { ...base, attachLink: "javascript:alert(1)" },
+          UTC,
+        ),
       ).not.toHaveProperty("urlSource");
     });
 
@@ -204,32 +277,41 @@ describe("Trello specs", () => {
 
   it("add-comment sends the card and trimmed text", () => {
     expect(
-      addComment.buildPayload({
-        boardId: "board-1",
-        cardId: "card-1",
-        text: " Customer replied ",
-      }),
+      addComment.buildPayload(
+        {
+          boardId: "board-1",
+          cardId: "card-1",
+          text: " Customer replied ",
+        },
+        UTC,
+      ),
     ).toEqual({ cardId: "card-1", text: "Customer replied" });
   });
 
   describe("move-card", () => {
     it("moves the card to the chosen list", () => {
       expect(
-        moveCard.buildPayload({
-          boardId: "board-1",
-          cardId: "card-1",
-          destination: "list-2",
-        }),
+        moveCard.buildPayload(
+          {
+            boardId: "board-1",
+            cardId: "card-1",
+            destination: "list-2",
+          },
+          UTC,
+        ),
       ).toEqual({ cardId: "card-1", idList: "list-2" });
     });
 
     it("archives the card when Archive is chosen", () => {
       expect(
-        moveCard.buildPayload({
-          boardId: "board-1",
-          cardId: "card-1",
-          destination: "archive",
-        }),
+        moveCard.buildPayload(
+          {
+            boardId: "board-1",
+            cardId: "card-1",
+            destination: "archive",
+          },
+          UTC,
+        ),
       ).toEqual({ cardId: "card-1", closed: true });
     });
 
