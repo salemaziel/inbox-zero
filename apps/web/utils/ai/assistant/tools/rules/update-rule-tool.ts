@@ -9,6 +9,7 @@ import {
   type RuleAction,
 } from "@/utils/ai/rule/create-rule-schema";
 import { isDuplicateError } from "@/utils/prisma-helpers";
+import { getIntegrationFieldsFromArgs } from "@/utils/mcp/tool-specs";
 import { SafeError } from "@/utils/error";
 import {
   getIntegrationSetupMessage,
@@ -149,6 +150,7 @@ export const updateRuleTool = ({
                 delayInMinutes: true,
                 integrationName: true,
                 integrationToolName: true,
+                integrationArgs: true,
               },
             },
           },
@@ -206,6 +208,7 @@ export const updateRuleTool = ({
                 subject: action.subject,
                 webhookUrl: action.url,
                 folderName: action.folderName,
+                ...getIntegrationFieldsFromArgs(action),
               },
             }),
           ),

@@ -5,6 +5,7 @@ import {
   MessagingRoutePurpose,
 } from "@/generated/prisma/enums";
 import { filterNullProperties } from "@/utils";
+import { getIntegrationFieldsFromArgs } from "@/utils/mcp/tool-specs";
 import { getMessagingProviderName } from "@/utils/messaging/platforms";
 import prisma from "@/utils/prisma";
 
@@ -31,16 +32,9 @@ export type AssistantRuleSnapshot = {
     };
     actions: Array<{
       type: ActionType;
-      fields: Partial<{
-        label: string | null;
-        content: string | null;
-        to: string | null;
-        cc: string | null;
-        bcc: string | null;
-        subject: string | null;
-        webhookUrl: string | null;
-        folderName: string | null;
-      }>;
+      // Email actions use label, content, to, cc, bcc, subject, webhookUrl
+      // and folderName; integration actions use their tool's field keys.
+      fields: Partial<Record<string, string | null>>;
       integrationName?: string;
       integrationToolName?: string | null;
       delayInMinutes?: number | null;
@@ -86,6 +80,7 @@ export async function loadAssistantRuleSnapshot({
               delayInMinutes: true,
               integrationName: true,
               integrationToolName: true,
+              integrationArgs: true,
             },
           },
         },
@@ -150,6 +145,7 @@ export async function loadAssistantRuleSnapshot({
             subject: action.subject,
             webhookUrl: action.url,
             folderName: action.folderName,
+            ...getIntegrationFieldsFromArgs(action),
           }),
           ...(action.integrationName && {
             integrationName: action.integrationName,
