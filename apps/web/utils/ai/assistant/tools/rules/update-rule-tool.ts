@@ -59,6 +59,9 @@ export const updateRuleTool = ({
   hasPendingRuleDeletion?: (ruleName: string) => boolean;
 }) => {
   let updateQueue = Promise.resolve();
+  const integrationFieldsOnEdit = integrationActionsEnabled
+    ? " For an integration action, resend the field values shown in the current rule to keep them, and send an empty string for a field only when the user wants the AI to write it again."
+    : "";
 
   return tool({
     description:
@@ -88,7 +91,7 @@ export const updateRuleTool = ({
               .min(1, "Rules must have at least one action.")
               .optional()
               .describe(
-                "The full replacement list of actions. Use only when the user explicitly asks to change actions/outcomes. Omit for condition-only, name-only, or enabled-state-only edits; omitted actions are preserved. To remove one action, include every action that should remain and omit the action being removed. Empty action lists are invalid.",
+                `The full replacement list of actions. Use only when the user explicitly asks to change actions/outcomes. Omit for condition-only, name-only, or enabled-state-only edits; omitted actions are preserved. To remove one action, include every action that should remain and omit the action being removed. Empty action lists are invalid.${integrationFieldsOnEdit}`,
               ),
           })
           .refine((updates) => Object.keys(updates).length > 0, {
