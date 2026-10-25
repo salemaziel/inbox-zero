@@ -63,6 +63,7 @@ import {
   createRule,
   createRuleWithResolvedActions,
   deleteRule,
+  getIntegrationSetupMessage,
   partialUpdateRule,
   replaceRuleWithResolvedActions,
   setRuleEnabled,
@@ -1128,6 +1129,119 @@ describe("explicit rule creation", () => {
       logger,
     });
     expect(rule.enabled).toBe(true);
+  });
+
+  describe("an integration action missing a choice only the editor can make", () => {
+    beforeEach(() => {
+      mockIsIntegrationActionEnabledForEmailAccountId.mockResolvedValue(true);
+      prisma.rule.create.mockImplementation(
+        async ({ data }) =>
+          ({ ...data, id: RULE_ID, actions: [], group: null }) as any,
+      );
+      prisma.mcpConnection.findMany.mockResolvedValue([
+        { integration: { name: "trello" } },
+        { integration: { name: "todoist" } },
+      ] as never);
+    });
+
+    it("saves the rule turned off", async () => {
+      const rule = await createRule({
+        result: createRuleResult({
+          actions: [
+            {
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: { name: "Pay invoice" } as any,
+              delayInMinutes: null,
+            } as RuleAction,
+          ],
+        }),
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        provider: "gmail",
+        runOnThreads: true,
+        logger,
+      });
+      expect(rule.enabled).toBe(false);
+    });
+
+    it("keeps a rule whose integration needs no editor choice turned on", async () => {
+      const rule = await createRule({
+        result: createRuleResult({ actions: [integrationAction()] }),
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        provider: "gmail",
+        runOnThreads: true,
+        logger,
+      });
+      expect(rule.enabled).toBe(true);
+    });
+
+    it("turns a rule off when chat adds such an action to it", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [{ type: ActionType.ARCHIVE }],
+      } as never);
+      prisma.rule.update.mockResolvedValue({
+        id: RULE_ID,
+        actions: [],
+        group: null,
+      } as never);
+
+      await updateRuleActions({
+        ruleId: RULE_ID,
+        actions: [
+          archiveAction(),
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "add-comment",
+            fields: {} as any,
+            delayInMinutes: null,
+          } as RuleAction,
+        ],
+        provider: "gmail",
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        logger,
+      });
+
+      expect(prisma.rule.update.mock.calls[0][0].data.enabled).toBe(false);
+    });
+
+    it("tells the user in plain words what to pick before turning the rule on", () => {
+      expect(
+        getIntegrationSetupMessage([
+          { type: ActionType.ARCHIVE },
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "create-card",
+            integrationArgs: { boardId: "", name: "" },
+          },
+        ]),
+      ).toBe(
+        "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+      );
+      expect(
+        getIntegrationSetupMessage([
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "move-card",
+            integrationArgs: { boardId: "board-1" },
+          },
+        ]),
+      ).toContain("pick the Trello card and destination,");
+      expect(
+        getIntegrationSetupMessage([
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: { content: "", projectId: "inbox" },
+          },
+        ]),
+      ).toBeNull();
+    });
   });
 
   it("does not silently disable a submitted rule based on example text", async () => {

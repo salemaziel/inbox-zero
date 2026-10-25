@@ -919,7 +919,9 @@ export function PendingCreateRuleToolCard({
       }
 
       setRuleIdOverride(createdId);
-      toastSuccess({ description: "Rule created and enabled." });
+      toastSuccess({
+        description: result.data?.message ?? "Rule created and enabled.",
+      });
     } catch {
       toastError({ description: "Could not create this rule." });
     } finally {

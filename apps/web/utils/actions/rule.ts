@@ -68,6 +68,7 @@ export const createRuleAction = actionClient
       ctx: { emailAccountId, userId, logger, provider },
       parsedInput: {
         name,
+        enabled,
         runOnThreads,
         actions,
         conditions: conditionsInput,
@@ -103,6 +104,7 @@ export const createRuleAction = actionClient
           emailAccountId,
           provider,
           runOnThreads: runOnThreads ?? true,
+          enabled,
           logger,
         });
 

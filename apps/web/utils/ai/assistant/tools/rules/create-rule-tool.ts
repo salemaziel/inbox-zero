@@ -1,7 +1,11 @@
 import { type InferUITool, tool } from "ai";
 import type { Logger } from "@/utils/logger";
 import { createRuleSchema } from "@/utils/ai/rule/create-rule-schema";
-import { actionsNeedChatRiskConfirmation, createRule } from "@/utils/rule/rule";
+import {
+  actionsNeedChatRiskConfirmation,
+  createRule,
+  getIntegrationSetupMessage,
+} from "@/utils/rule/rule";
 import {
   findSenderOnlyOverlapConflict,
   formatSenderOnlyOverlapError,
@@ -93,10 +97,13 @@ export const createRuleTool = ({
           (snapshotRule) => snapshotRule.name === resultPayload.name,
         );
 
+        const setupMessage = getIntegrationSetupMessage(rule.actions);
+
         return {
           success: true,
           ruleId: rule.id,
           currentRule,
+          ...(setupMessage && { message: setupMessage }),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

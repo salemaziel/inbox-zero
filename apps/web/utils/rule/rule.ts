@@ -34,6 +34,7 @@ import { findIntegration } from "@/utils/mcp/integrations";
 import {
   buildIntegrationArgsFromFields,
   getIntegrationToolSpec,
+  getMissingEditorPicks,
   MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { assertNoSenderOnlyOverlap } from "@/utils/rule/sender-scope-overlap";
@@ -336,6 +337,7 @@ export async function createRule({
   systemType,
   provider,
   runOnThreads,
+  enabled = true,
   logger,
 }: {
   result: CreateOrUpdateRuleSchema;
@@ -343,6 +345,7 @@ export async function createRule({
   systemType?: SystemType | null;
   provider: string;
   runOnThreads: boolean;
+  enabled?: boolean;
   logger: Logger;
 }) {
   try {
@@ -378,7 +381,8 @@ export async function createRule({
       data: {
         name: result.name,
         systemType,
-        enabled: true,
+        // A rule the editor still has to finish would fail on every email.
+        enabled: enabled && !getIntegrationSetupMessage(mappedActions),
         runOnThreads,
         conditionalOperator: result.condition.conditionalOperator ?? undefined,
         instructions: result.condition.aiInstructions,
@@ -599,6 +603,7 @@ export async function updateRuleActions({
   const rule = await prisma.rule.update({
     where: { id: ruleId, emailAccountId },
     data: {
+      ...(getIntegrationSetupMessage(mappedActions) && { enabled: false }),
       actions: {
         deleteMany: getReplaceableRuleActionsWhere(),
         createMany: {
@@ -816,6 +821,44 @@ function getIntegrationCreateFields(action: MappableAction) {
         fields: action.fields,
       })) as Prisma.InputJsonValue,
   };
+}
+
+/**
+ * Plain-words next step for a rule whose integration actions still need a
+ * choice only the rule editor can make; null when nothing is missing.
+ */
+export function getIntegrationSetupMessage(
+  actions: readonly {
+    type: ActionType;
+    integrationName?: string | null;
+    integrationToolName?: string | null;
+    integrationArgs?: unknown;
+  }[],
+): string | null {
+  const picks = new Set<string>();
+  for (const action of actions) {
+    if (action.type !== ActionType.INTEGRATION) continue;
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    if (!spec) continue;
+
+    const missing = getMissingEditorPicks(spec, action.integrationArgs);
+    if (!missing.length) continue;
+    const appName = findIntegration(spec.integration)?.displayName ?? "";
+    picks.add(
+      `the ${appName} ${joinWords(missing.map((arg) => arg.label.toLowerCase()))}`,
+    );
+  }
+
+  if (!picks.size) return null;
+  return `This rule was saved turned off. To finish it, open it in the rule editor, pick ${joinWords([...picks])}, then turn the rule on.`;
+}
+
+function joinWords(words: string[]) {
+  if (words.length <= 1) return words.join("");
+  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
 // The rule writer resends whole action lists but can only set an integration's

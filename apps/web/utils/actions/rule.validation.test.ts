@@ -490,6 +490,54 @@ describe("INTEGRATION action validation", () => {
     }
   });
 
+  describe("choices only the rule editor can make", () => {
+    const trelloAction = {
+      type: ActionType.INTEGRATION,
+      integrationName: "trello",
+      integrationToolName: "create-card",
+      integrationArgs: { name: "", labelId: "none", due: "none" },
+    };
+
+    it("asks for them on a rule saved turned on", () => {
+      const result = createRuleBody.safeParse({
+        ...validRule,
+        actions: [trelloAction],
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toEqual([
+          expect.objectContaining({
+            message: "Please enter a value for board",
+            path: ["actions", 0, "integrationArgs", "boardId"],
+          }),
+          expect.objectContaining({
+            message: "Please enter a value for list",
+            path: ["actions", 0, "integrationArgs", "listId"],
+          }),
+        ]);
+      }
+    });
+
+    it("leaves them for later on a new rule saved turned off", () => {
+      const result = createRuleBody.safeParse({
+        ...validRule,
+        enabled: false,
+        actions: [trelloAction],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("still asks for them when an existing rule is saved", () => {
+      const result = createRuleBody.safeParse({
+        ...validRule,
+        id: "rule-1",
+        enabled: false,
+        actions: [trelloAction],
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
   it("rejects unknown integration names", () => {
     const result = createRuleBody.safeParse({
       ...validRule,

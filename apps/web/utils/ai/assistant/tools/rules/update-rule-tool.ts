@@ -10,6 +10,7 @@ import {
 } from "@/utils/ai/rule/create-rule-schema";
 import { isDuplicateError } from "@/utils/prisma-helpers";
 import {
+  getIntegrationSetupMessage,
   partialUpdateRule,
   setRuleEnabled,
   updateRuleActions,
@@ -262,8 +263,9 @@ export const updateRuleTool = ({
           });
         }
 
+        let setupMessage: string | null = null;
         if (effectiveUpdates.actions) {
-          await updateRuleActions({
+          const updatedRule = await updateRuleActions({
             ruleId: rule.id,
             actions: effectiveUpdates.actions.map((action) => ({
               type: action.type,
@@ -279,16 +281,19 @@ export const updateRuleTool = ({
             emailAccountId,
             logger,
           });
+          // updateRuleActions turned the rule off; it stays off until the
+          // user finishes the action in the rule editor.
+          setupMessage = getIntegrationSetupMessage(updatedRule.actions);
         }
+        const updatedEnabled = setupMessage
+          ? false
+          : (effectiveUpdates.enabled ?? rule.enabled);
 
-        if (
-          effectiveUpdates.enabled !== undefined &&
-          effectiveUpdates.enabled !== rule.enabled
-        ) {
+        if (!setupMessage && updatedEnabled !== rule.enabled) {
           await setRuleEnabled({
             ruleId: rule.id,
             emailAccountId,
-            enabled: effectiveUpdates.enabled,
+            enabled: updatedEnabled,
           });
         }
 
@@ -309,12 +314,13 @@ export const updateRuleTool = ({
           originalName: rule.name,
           updatedName: effectiveUpdates.name ?? rule.name,
           originalEnabled: rule.enabled,
-          updatedEnabled: effectiveUpdates.enabled ?? rule.enabled,
+          updatedEnabled,
           originalConditions,
           updatedConditions: effectiveUpdates.condition,
           originalActions,
           updatedActions: effectiveUpdates.actions,
           currentRule,
+          ...(setupMessage && { message: setupMessage }),
         };
       } catch (error) {
         logger.error("Failed to update rule", { error, ruleName });

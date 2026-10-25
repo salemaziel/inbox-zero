@@ -27,7 +27,7 @@ import {
   buildCreateRuleSchemaFromChatToolInput,
   type ChatCreateRuleToolInvocation,
 } from "@/utils/ai/assistant/tools/rules/shared";
-import { createRule } from "@/utils/rule/rule";
+import { createRule, getIntegrationSetupMessage } from "@/utils/rule/rule";
 
 const CONFIRMATION_IN_PROGRESS_ERROR =
   "Email action confirmation already in progress";
@@ -322,11 +322,14 @@ export async function confirmAssistantCreateRuleForAccount({
     );
   }
 
+  const setupMessage = getIntegrationSetupMessage(rule.actions);
+
   return {
     success: true,
     confirmationState: "confirmed" as const,
     ruleId: rule.id,
     confirmationResult: { ruleId: rule.id, confirmedAt },
+    ...(setupMessage && { message: setupMessage }),
   };
 }
 

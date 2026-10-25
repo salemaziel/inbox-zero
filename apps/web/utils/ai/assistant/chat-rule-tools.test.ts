@@ -68,7 +68,7 @@ describe("createRuleTool overlap guard", () => {
       needsConfirmation: false,
       riskMessages: [],
     });
-    mockCreateRule.mockResolvedValue({ id: "new-rule-id" });
+    mockCreateRule.mockResolvedValue({ id: "new-rule-id", actions: [] });
     mockAssistantRuleSnapshot([
       {
         name: "Urgent Action Mail",
@@ -174,6 +174,51 @@ describe("createRuleTool overlap guard", () => {
     );
   });
 
+  it("says the rule is off until the user picks what only the editor can", async () => {
+    mockCreateRule.mockResolvedValue({
+      id: "new-rule-id",
+      enabled: false,
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { name: "Pay invoice" },
+        },
+      ],
+    });
+
+    const result = await createRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+    }).execute({
+      name: "Invoices",
+      condition: {
+        aiInstructions: "Invoices",
+        static: null,
+        conditionalOperator: null,
+      },
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" },
+          delayInMinutes: null,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      message:
+        "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+    });
+  });
+
   it("waits for confirmation instead of creating a risky rule", async () => {
     mockActionsNeedChatRiskConfirmation.mockReturnValue({
       needsConfirmation: true,
@@ -260,6 +305,7 @@ describe("updateRuleTool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPartialUpdateRule.mockResolvedValue({ id: "rule-id" });
+    mockUpdateRuleActions.mockResolvedValue({ id: "rule-id", actions: [] });
     mockAssistantRuleSnapshot([
       {
         name: "Vendor Billing",
@@ -765,6 +811,66 @@ describe("updateRuleTool", () => {
         ],
       }),
     );
+  });
+});
+
+describe("updateRuleTool with an unfinished integration action", () => {
+  it("keeps the rule off and says what to pick, even when asked to enable it", async () => {
+    vi.clearAllMocks();
+    mockAssistantRuleSnapshot([]);
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      enabled: false,
+    });
+    mockUpdateRuleActions.mockResolvedValue({
+      id: "new-rule-id",
+      enabled: false,
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { name: "Pay invoice" },
+        },
+      ],
+    });
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: {
+        enabled: true,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "create-card",
+            fields: {},
+            delayInMinutes: null,
+          },
+        ],
+      },
+    });
+
+    expect(mockSetRuleEnabled).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      updatedEnabled: false,
+      message:
+        "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+    });
   });
 });
 

@@ -9,6 +9,8 @@ import { withEmailAccount } from "@/utils/middleware";
 import { aiPromptToRules } from "@/utils/ai/rule/prompt-to-rules";
 import { getEmailAccountWithAi } from "@/utils/user/get";
 import { toCreateRuleBodyFromAiRule } from "@/utils/rule/mobile-rule";
+import { getIntegrationSetupMessage } from "@/utils/rule/rule";
+import { getActionErrorMessage } from "@/utils/error";
 
 export const maxDuration = 120;
 
@@ -57,6 +59,12 @@ export const POST = withEmailAccount("mobile/rules/create", async (request) => {
   if (result?.serverError) {
     return NextResponse.json({ error: result.serverError }, { status: 400 });
   }
+  if (result?.validationErrors) {
+    return NextResponse.json(
+      { error: getActionErrorMessage(result, "That rule isn't valid.") },
+      { status: 422 },
+    );
+  }
   if (!result?.data?.rule) {
     return NextResponse.json(
       { error: "Could not create rule" },
@@ -64,5 +72,10 @@ export const POST = withEmailAccount("mobile/rules/create", async (request) => {
     );
   }
 
-  return NextResponse.json({ rule: result.data.rule }, { status: 201 });
+  const { rule } = result.data;
+  const message = getIntegrationSetupMessage(rule.actions);
+  return NextResponse.json(
+    { rule, ...(message && { message }) },
+    { status: 201 },
+  );
 });

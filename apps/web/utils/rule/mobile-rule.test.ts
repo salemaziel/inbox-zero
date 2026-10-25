@@ -135,6 +135,29 @@ describe("toCreateRuleBodyFromAiRule", () => {
     expect(body.actions[0].content).toBeUndefined();
   });
 
+  it("saves a Trello rule turned off, so it passes validation and the user picks the board later", () => {
+    const body = toCreateRuleBodyFromAiRule({
+      name: "Invoices",
+      condition: {
+        aiInstructions: "Invoices",
+        conditionalOperator: null,
+        static: null,
+      },
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: null, description: null },
+          delayInMinutes: null,
+        },
+      ],
+    });
+
+    expect(body.enabled).toBe(false);
+    expect(createRuleBody.safeParse(body).success).toBe(true);
+  });
+
   it("produces an integration rule that passes rule validation", () => {
     const result = createRuleBody.safeParse(
       toCreateRuleBodyFromAiRule({

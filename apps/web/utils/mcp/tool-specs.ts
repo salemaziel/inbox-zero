@@ -571,6 +571,27 @@ export function getSelectArgOptionLabel(
   );
 }
 
+/**
+ * Required args that only the rule editor can set (the AI has no fallback for
+ * them) and that are still empty, such as a Trello board the rule writer
+ * cannot pick.
+ */
+export function getMissingEditorPicks(
+  spec: IntegrationToolSpec,
+  args: unknown,
+): IntegrationArgSpec[] {
+  const values =
+    args && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>)
+      : {};
+
+  return spec.args.filter((arg) => {
+    if (!arg.required || arg.aiPrompt) return false;
+    const value = values[arg.key];
+    return typeof value !== "string" || !value.trim();
+  });
+}
+
 /** Keys the spec owns, including display-only companions. */
 export function getIntegrationArgKeys(spec: IntegrationToolSpec): string[] {
   return spec.args.flatMap((arg) =>

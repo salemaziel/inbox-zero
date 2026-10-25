@@ -17,6 +17,7 @@ import { findIntegration } from "@/utils/mcp/integrations";
 import {
   getIntegrationArgKeys,
   getIntegrationToolSpec,
+  getMissingEditorPicks,
   MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { addMissingRecipientIssue } from "@/utils/rule/recipient-validation";
@@ -221,13 +222,15 @@ const zodAction = z
       integrationName: data.integrationName,
       integrationToolName: data.integrationToolName,
       integrationArgs: data.integrationArgs,
+      checkEditorPicks: false, // checked per rule, see addMissingEditorPickIssues
       ctx,
     });
   });
 
-export const createRuleBody = z.object({
+const ruleBody = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1, "Please enter a name"),
+  enabled: z.boolean().optional(),
   instructions: z.string().nullish(),
   groupId: z.string().nullish(),
   runOnThreads: z.boolean().nullish(),
@@ -289,9 +292,12 @@ export const createRuleBody = z.object({
     .optional(),
   systemType: zodSystemRule.nullish(),
 });
+export const createRuleBody = ruleBody.superRefine(addMissingEditorPickIssues);
 export type CreateRuleBody = z.infer<typeof createRuleBody>;
 
-export const updateRuleBody = createRuleBody.extend({ id: z.string() });
+export const updateRuleBody = ruleBody
+  .extend({ id: z.string() })
+  .superRefine(addMissingEditorPickIssues);
 export type UpdateRuleBody = z.infer<typeof updateRuleBody>;
 
 export const deleteRuleBody = z.object({ id: z.string() });
@@ -485,12 +491,14 @@ function addIntegrationActionIssues({
   integrationName,
   integrationToolName,
   integrationArgs,
+  checkEditorPicks = true,
   ctx,
 }: {
   actionType: ActionType;
   integrationName: string | null | undefined;
   integrationToolName: string | null | undefined;
   integrationArgs: IntegrationActionArgs;
+  checkEditorPicks?: boolean;
   ctx: z.RefinementCtx;
 }) {
   if (actionType !== ActionType.INTEGRATION) return;
@@ -554,19 +562,45 @@ function addIntegrationActionIssues({
     }
   }
 
-  for (const arg of spec.args) {
-    if (!arg.required) continue;
-    const value =
-      typeof args[arg.key] === "string" ? (args[arg.key] as string) : "";
-    // Empty is valid when the AI fills the value at execution time.
-    if (value.trim() || arg.aiPrompt) continue;
-
+  if (!checkEditorPicks) return;
+  for (const arg of getMissingEditorPicks(spec, args)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `Please enter a value for ${arg.label.toLowerCase()}`,
       path: ["integrationArgs", arg.key],
     });
   }
+}
+
+// A new rule saved turned off may leave these for the rule editor, so an
+// AI-written rule (e.g. from the mobile app) can be saved and finished later.
+// Saving an existing rule, or a rule that runs, still needs them.
+function addMissingEditorPickIssues(
+  rule: {
+    id?: string;
+    enabled?: boolean;
+    actions: z.infer<typeof zodAction>[];
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (rule.enabled === false && !rule.id) return;
+
+  rule.actions.forEach((action, index) => {
+    if (action.type !== ActionType.INTEGRATION) return;
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    if (!spec) return;
+
+    for (const arg of getMissingEditorPicks(spec, action.integrationArgs)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Please enter a value for ${arg.label.toLowerCase()}`,
+        path: ["actions", index, "integrationArgs", arg.key],
+      });
+    }
+  });
 }
 
 function addRecipientRequirementIssue({
