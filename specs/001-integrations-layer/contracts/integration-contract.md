@@ -17,6 +17,8 @@ Unchanged contract (`integration`, `tool`, `actionLabel`, `llmDescription`, `arg
 - Native remote-select args set `source: "native"` and omit `optionsTool`/`parseOptions`.
 - MCP remote-select args with parents provide `buildOptionsArgs(parents)`.
 - Text args may contain `[[field]]` markers (see [placeholders.md](./placeholders.md)); `buildPayload` receives resolved strings and never sees markers.
+- `buildPayload(resolved, { timeZone })` also gets the account's IANA time zone (`EmailAccount.timezone`, UTC when unset or invalid), for args such as due dates that depend on the user's day.
+- A required arg with no `aiPrompt` (for example a Trello board) can only be picked in the rule editor. An AI-written rule that leaves one empty (chat, the confirmation card, mobile prompt-to-rule) is saved turned off, and the user is told in plain words which choices to pick before turning it on. Chat edits that resend an action with the same app and tool keep the stored values of the args the rule writer cannot set.
 
 Specs are added to `INTEGRATION_TOOL_SPECS`. App-specific spec files may live in `apps/web/utils/integrations/<app>/` and be listed there (Phase 5 decides).
 
