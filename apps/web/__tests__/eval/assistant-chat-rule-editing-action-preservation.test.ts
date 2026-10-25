@@ -49,6 +49,37 @@ const marketingWithDelayRuleRows = defaultRuleRows.map((rule) => {
   };
 });
 
+const invoicesWithFixedTrelloTitleRuleRows = [
+  ...defaultRuleRows,
+  {
+    ...defaultRuleRows[0],
+    id: "invoices-rule-id",
+    name: "Invoices",
+    instructions: "Invoices and bills I need to pay",
+    systemType: null,
+    actions: [
+      { type: ActionType.LABEL, label: "Invoices" },
+      {
+        type: ActionType.INTEGRATION,
+        integrationName: "trello",
+        integrationToolName: "create-card",
+        integrationArgs: {
+          boardId: "board-1",
+          boardName: "Finance",
+          listId: "list-1",
+          listName: "To pay",
+          name: "Pay invoice",
+          description: "",
+          labelId: "none",
+          labelName: "No label",
+          due: "none",
+          attachLink: "yes",
+        },
+      },
+    ],
+  },
+] as typeof defaultRuleRows;
+
 const {
   mockCreateRule,
   mockPartialUpdateRule,
@@ -58,6 +89,7 @@ const {
   mockPosthogCaptureEvent,
   mockRedis,
   mockUnsubscribeSenderAndMark,
+  mockIsIntegrationActionEnabled,
 } = vi.hoisted(() => ({
   mockCreateRule: vi.fn(),
   mockPartialUpdateRule: vi.fn(),
@@ -76,6 +108,7 @@ const {
     lrange: vi.fn().mockResolvedValue([]),
   },
   mockUnsubscribeSenderAndMark: vi.fn(),
+  mockIsIntegrationActionEnabled: vi.fn(),
 }));
 
 vi.mock("@/utils/rule/rule", async (importOriginal) => {
@@ -112,6 +145,10 @@ vi.mock("@/utils/senders/unsubscribe", () => ({
   unsubscribeSenderAndMark: mockUnsubscribeSenderAndMark,
 }));
 
+vi.mock("@/utils/integration-action.server", () => ({
+  isIntegrationActionEnabledForUserId: mockIsIntegrationActionEnabled,
+}));
+
 vi.mock("@/utils/prisma");
 
 vi.mock("@/env", async () => {
@@ -124,7 +161,11 @@ vi.mock("@/env", async () => {
   };
 });
 
-function setupMocks(ruleRows = defaultRuleRows) {
+function setupMocks(
+  ruleRows = defaultRuleRows,
+  integrationActionsEnabled = false,
+) {
+  mockIsIntegrationActionEnabled.mockResolvedValue(integrationActionsEnabled);
   configureRuleMutationMocks({
     mockCreateRule,
     mockPartialUpdateRule,
@@ -410,6 +451,90 @@ describe.runIf(shouldRunEval)(
       },
     );
 
+    describeEvalMatrix(
+      "assistant-chat rule editing action preservation (fixed Trello card title)",
+      (model, emailAccount) => {
+        beforeEach(() => {
+          vi.clearAllMocks();
+          setupMocks(invoicesWithFixedTrelloTitleRuleRows, true);
+        });
+
+        test(
+          "an unrelated action edit keeps the fixed Trello card title",
+          async () => {
+            const { toolCalls, actual } = await runAssistantChat({
+              emailAccount,
+              messages: [
+                {
+                  role: "user",
+                  content: "make my invoices rule also archive the emails",
+                },
+              ],
+            });
+
+            const updateCall = getLastRuleActionsUpdate(toolCalls);
+            const cardTitle = getTrelloCardTitle(updateCall?.actions);
+
+            // Left out or null also keeps the stored title.
+            const pass =
+              !!updateCall &&
+              updateCall.ruleName === "Invoices" &&
+              hasActionType(updateCall.actions, ActionType.ARCHIVE) &&
+              cardTitle.found &&
+              (cardTitle.value == null || cardTitle.value === "Pay invoice");
+
+            evalReporter.record({
+              testName: "unrelated edit keeps fixed trello title",
+              model: model.label,
+              pass,
+              actual,
+            });
+
+            expect(pass).toBe(true);
+          },
+          TIMEOUT,
+        );
+
+        test(
+          "asking for AI-written titles again clears the fixed Trello card title",
+          async () => {
+            const { toolCalls, actual } = await runAssistantChat({
+              emailAccount,
+              messages: [
+                {
+                  role: "user",
+                  content:
+                    "for my invoices rule, stop using a fixed Trello card title and let the AI write the title from each email again",
+                },
+              ],
+            });
+
+            const updateCall = getLastRuleActionsUpdate(toolCalls);
+            const cardTitle = getTrelloCardTitle(updateCall?.actions);
+
+            // Only an empty string hands the title back to the AI.
+            const pass =
+              !!updateCall &&
+              updateCall.ruleName === "Invoices" &&
+              hasLabelAction(updateCall.actions, "Invoices") &&
+              cardTitle.found &&
+              typeof cardTitle.value === "string" &&
+              cardTitle.value.trim() === "";
+
+            evalReporter.record({
+              testName: "ai title request clears fixed trello title",
+              model: model.label,
+              pass,
+              actual,
+            });
+
+            expect(pass).toBe(true);
+          },
+          TIMEOUT,
+        );
+      },
+    );
+
     afterAll(() => {
       evalReporter.printReport();
     });
@@ -437,4 +562,26 @@ async function runAssistantChat({
       (toolCall) => toolCall.toolName,
     ),
   };
+}
+
+function getTrelloCardTitle(actions: unknown[] | undefined) {
+  const card = actions?.find(
+    (
+      action,
+    ): action is {
+      integrationName?: unknown;
+      integrationToolName?: unknown;
+      fields?: { name?: unknown } | null;
+    } =>
+      !!action &&
+      typeof action === "object" &&
+      "type" in action &&
+      action.type === ActionType.INTEGRATION &&
+      "integrationName" in action &&
+      action.integrationName === "trello" &&
+      "integrationToolName" in action &&
+      action.integrationToolName === "create-card",
+  );
+
+  return { found: !!card, value: card?.fields?.name };
 }
