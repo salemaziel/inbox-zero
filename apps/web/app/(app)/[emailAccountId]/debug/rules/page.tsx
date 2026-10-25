@@ -26,8 +26,10 @@ export default function DebugRulesPage() {
   const { execute, isExecuting } = useAction(
     toggleAllRulesAction.bind(null, emailAccountId),
     {
-      onSuccess: () => {
-        toastSuccess({ description: "Rules updated successfully" });
+      onSuccess: ({ data }) => {
+        toastSuccess({
+          description: data?.message ?? "Rules updated successfully",
+        });
         mutate();
       },
       onError: (result) => {

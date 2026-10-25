@@ -5,6 +5,7 @@ import { createEmailProvider } from "@/utils/email/provider";
 import { DELETE_EMAIL_ACTION_DISABLED_MESSAGE } from "@/utils/delete-email-action";
 import { WEBHOOK_ACTION_DISABLED_MESSAGE } from "@/utils/outbound-webhook/action";
 import { getActionRiskLevel } from "@/utils/risk";
+import { SafeError } from "@/utils/error";
 
 const {
   createRuleHistoryMock,
@@ -694,6 +695,79 @@ describe("rule history snapshots", () => {
       rule: expect.objectContaining({ id: RULE_ID }),
       triggerType,
     });
+  });
+});
+
+describe("turning a rule on", () => {
+  beforeEach(() => {
+    resetRuleMocks();
+    prisma.rule.update.mockResolvedValue({
+      id: RULE_ID,
+      actions: [],
+      group: null,
+    } as never);
+  });
+
+  function enable() {
+    return setRuleEnabled({
+      ruleId: RULE_ID,
+      emailAccountId: EMAIL_ACCOUNT_ID,
+      enabled: true,
+    });
+  }
+
+  it("refuses while an integration action still needs an editor choice", async () => {
+    prisma.rule.findFirst.mockResolvedValue({
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { boardId: "", name: "" },
+        },
+      ],
+    } as never);
+
+    await expect(enable()).rejects.toThrow(
+      new SafeError(
+        "This rule can't be turned on yet. Open it in the rule editor, pick the Trello board and list, then turn it on.",
+      ),
+    );
+    expect(prisma.rule.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "a finished Trello rule",
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { boardId: "board-1", listId: "list-1", name: "" },
+        },
+      ],
+    },
+    {
+      name: "a Todoist rule",
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          integrationArgs: { content: "", projectId: "inbox" },
+        },
+      ],
+    },
+    { name: "a rule with no integration action", actions: [] },
+  ])("turns on $name as before", async ({ actions }) => {
+    prisma.rule.findFirst.mockResolvedValue({ actions } as never);
+
+    await enable();
+
+    expect(prisma.rule.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { enabled: true } }),
+    );
   });
 });
 

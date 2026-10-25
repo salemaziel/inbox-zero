@@ -191,7 +191,7 @@ export function setRuleRunOnThreads({
   });
 }
 
-export function setRuleEnabled({
+export async function setRuleEnabled({
   ruleId,
   emailAccountId,
   enabled,
@@ -200,6 +200,25 @@ export function setRuleEnabled({
   emailAccountId: string;
   enabled: boolean;
 }) {
+  if (enabled) {
+    // An unfinished integration action would fail on every matching email.
+    const rule = await prisma.rule.findFirst({
+      where: { id: ruleId, emailAccountId },
+      select: {
+        actions: {
+          where: { type: ActionType.INTEGRATION },
+          select: INTEGRATION_ACTION_SELECT,
+        },
+      },
+    });
+    const picks = describeMissingEditorPicks(rule?.actions ?? []);
+    if (picks) {
+      throw new SafeError(
+        `This rule can't be turned on yet. Open it in the rule editor, pick ${picks}, then turn it on.`,
+      );
+    }
+  }
+
   return updateRuleAndQueueHistory({
     ruleId,
     emailAccountId,
@@ -828,12 +847,30 @@ function getIntegrationCreateFields(action: MappableAction) {
  * choice only the rule editor can make; null when nothing is missing.
  */
 export function getIntegrationSetupMessage(
-  actions: readonly {
-    type: ActionType;
-    integrationName?: string | null;
-    integrationToolName?: string | null;
-    integrationArgs?: unknown;
-  }[],
+  actions: readonly IntegrationActionArgs[],
+): string | null {
+  const picks = describeMissingEditorPicks(actions);
+  if (!picks) return null;
+  return `This rule was saved turned off. To finish it, open it in the rule editor, pick ${picks}, then turn the rule on.`;
+}
+
+type IntegrationActionArgs = {
+  type: ActionType;
+  integrationName?: string | null;
+  integrationToolName?: string | null;
+  integrationArgs?: unknown;
+};
+
+const INTEGRATION_ACTION_SELECT = {
+  type: true,
+  integrationName: true,
+  integrationToolName: true,
+  integrationArgs: true,
+} as const;
+
+// "the Trello board and list", or null when every editor choice is made.
+function describeMissingEditorPicks(
+  actions: readonly IntegrationActionArgs[],
 ): string | null {
   const picks = new Set<string>();
   for (const action of actions) {
@@ -852,8 +889,7 @@ export function getIntegrationSetupMessage(
     );
   }
 
-  if (!picks.size) return null;
-  return `This rule was saved turned off. To finish it, open it in the rule editor, pick ${joinWords([...picks])}, then turn the rule on.`;
+  return picks.size ? joinWords([...picks]) : null;
 }
 
 function joinWords(words: string[]) {

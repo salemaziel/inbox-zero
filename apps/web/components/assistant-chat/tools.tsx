@@ -1752,7 +1752,7 @@ function RuleEditToggleActions({
             if (result?.serverError) {
               setEnabled(!checked);
               toastError({
-                description: `Failed to ${checked ? "enable" : "disable"} rule.`,
+                description: `Failed to ${checked ? "enable" : "disable"} rule. ${result.serverError}`,
               });
             }
           } catch {
