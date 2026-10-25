@@ -536,7 +536,7 @@ export const toggleAllRulesAction = actionClient
         getIntegrationSetupMessage(rule.actions),
       );
 
-      await prisma.rule.updateMany({
+      const otherRules = await prisma.rule.updateMany({
         where: {
           emailAccountId,
           organizationRuleId: null,
@@ -552,6 +552,7 @@ export const toggleAllRulesAction = actionClient
           success: true,
           message: getUnfinishedRulesLeftOffMessage(
             unfinishedRules.map((rule) => rule.name),
+            otherRules.count > 0,
           ),
         };
       }
@@ -805,13 +806,18 @@ function mapActionToSanitizedFields(action: {
   };
 }
 
-function getUnfinishedRulesLeftOffMessage(ruleNames: string[]) {
+function getUnfinishedRulesLeftOffMessage(
+  ruleNames: string[],
+  hasOtherRules: boolean,
+) {
   const names = new Intl.ListFormat("en", { type: "conjunction" }).format(
     ruleNames,
   );
-  return ruleNames.length === 1
-    ? `Every other rule is on. ${names} stays off until it's finished: open it in the rule editor, pick the board, list or card, then turn it on.`
-    : `Every other rule is on. ${names} stay off until they're finished: open each one in the rule editor, pick the board, list or card, then turn it on.`;
+  const leftOff =
+    ruleNames.length === 1
+      ? `${names} stays off until it's finished: open it in the rule editor, pick the board, list or card, then turn it on.`
+      : `${names} stay off until they're finished: open each one in the rule editor, pick the board, list or card, then turn it on.`;
+  return hasOtherRules ? `Every other rule is on. ${leftOff}` : leftOff;
 }
 
 function handleRuleError(error: unknown, logger: Logger) {

@@ -358,6 +358,7 @@ describe("toggleAllRulesAction", () => {
       email: "owner@example.com",
       account: { userId: "u1", provider: "google" },
     });
+    prisma.rule.updateMany.mockResolvedValue({ count: 2 });
   });
 
   it("turns on every other rule, leaves unfinished ones off and names them", async () => {
@@ -426,6 +427,28 @@ describe("toggleAllRulesAction", () => {
       success: true,
       message:
         "Every other rule is on. Invoices stays off until it's finished: open it in the rule editor, pick the board, list or card, then turn it on.",
+    });
+  });
+
+  it("doesn't say other rules are on when there are none", async () => {
+    prisma.rule.findMany.mockResolvedValue([
+      {
+        id: "invoices-rule",
+        name: "Invoices",
+        actions: [unfinishedTrelloAction()],
+      },
+    ] as never);
+    prisma.rule.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await toggleAllRulesAction(
+      "ea_1" as never,
+      { enabled: true } as never,
+    );
+
+    expect(result?.data).toEqual({
+      success: true,
+      message:
+        "Invoices stays off until it's finished: open it in the rule editor, pick the board, list or card, then turn it on.",
     });
   });
 
