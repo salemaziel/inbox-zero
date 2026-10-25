@@ -546,9 +546,9 @@ export function getIntegrationFieldsFromArgs({
   integrationToolName,
   integrationArgs,
 }: {
-  integrationName: string | null | undefined;
-  integrationToolName: string | null | undefined;
-  integrationArgs: unknown;
+  integrationName?: string | null;
+  integrationToolName?: string | null;
+  integrationArgs?: unknown;
 }): Record<string, string> {
   const spec = getIntegrationToolSpec(integrationName, integrationToolName);
   if (
