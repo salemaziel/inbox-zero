@@ -33,6 +33,7 @@ import {
 import { findIntegration } from "@/utils/mcp/integrations";
 import {
   buildIntegrationArgsFromFields,
+  getIntegrationToolSpec,
   MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { assertNoSenderOnlyOverlap } from "@/utils/rule/sender-scope-overlap";
@@ -564,7 +565,14 @@ export async function updateRuleActions({
     where: { id: ruleId, emailAccountId },
     select: {
       from: true,
-      actions: { select: { type: true } },
+      actions: {
+        select: {
+          type: true,
+          integrationName: true,
+          integrationToolName: true,
+          integrationArgs: true,
+        },
+      },
     },
   });
 
@@ -581,7 +589,7 @@ export async function updateRuleActions({
   });
 
   const mappedActions = await mapActionFields(
-    actions,
+    keepEditorPickedIntegrationArgs(actions, existingRule.actions),
     provider,
     emailAccountId,
     logger,
@@ -808,6 +816,65 @@ function getIntegrationCreateFields(action: MappableAction) {
         fields: action.fields,
       })) as Prisma.InputJsonValue,
   };
+}
+
+// The rule writer resends whole action lists but can only set an integration's
+// AI-settable args, so an edit would otherwise drop what the user picked in the
+// editor (board, list, card, project...). Each existing action with the same
+// app and tool lends its picks to one incoming action, in order.
+function keepEditorPickedIntegrationArgs<T extends MappableAction>(
+  actions: T[],
+  existingActions: {
+    type: ActionType;
+    integrationName: string | null;
+    integrationToolName: string | null;
+    integrationArgs: Prisma.JsonValue | null;
+  }[],
+): T[] {
+  if (!actions.some((action) => action.type === ActionType.INTEGRATION)) {
+    return actions;
+  }
+  const unused = existingActions.filter(
+    (action) => action.type === ActionType.INTEGRATION,
+  );
+
+  return actions.map((action) => {
+    if (action.type !== ActionType.INTEGRATION || action.integrationArgs) {
+      return action;
+    }
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    const matchIndex = unused.findIndex(
+      (existing) =>
+        existing.integrationName === action.integrationName &&
+        existing.integrationToolName === action.integrationToolName,
+    );
+    const existingArgs = unused[matchIndex]?.integrationArgs;
+    if (!spec || !isJsonObject(existingArgs)) return action;
+    unused.splice(matchIndex, 1);
+
+    const args: Record<string, unknown> = buildIntegrationArgsFromFields({
+      integrationName: action.integrationName,
+      integrationToolName: action.integrationToolName,
+      fields: action.fields,
+    });
+    for (const arg of spec.args) {
+      if (arg.llmDescription) continue;
+      for (const key of [arg.key, arg.displayValueKey]) {
+        if (key && key in existingArgs) args[key] = existingArgs[key];
+      }
+    }
+
+    return { ...action, integrationArgs: args as Prisma.JsonValue };
+  });
+}
+
+function isJsonObject(
+  value: Prisma.JsonValue | null | undefined,
+): value is Prisma.JsonObject {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildRiskAction(action: MappableAction): RiskAction {

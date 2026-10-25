@@ -145,6 +145,8 @@ export const updateRuleTool = ({
                 url: true,
                 folderName: true,
                 delayInMinutes: true,
+                integrationName: true,
+                integrationToolName: true,
               },
             },
           },
@@ -205,6 +207,10 @@ export const updateRuleTool = ({
               },
             }),
           ),
+          ...(action.integrationName && {
+            integrationName: action.integrationName,
+            integrationToolName: action.integrationToolName,
+          }),
           delayInMinutes: action.delayInMinutes,
         }));
         const requestedChangesAlreadyMatchRule = !ruleUpdateHasChanges({
@@ -353,6 +359,8 @@ export type UpdateRuleOutput = {
   originalActions?: Array<{
     type: string;
     fields: Record<string, string | null>;
+    integrationName?: string;
+    integrationToolName?: string | null;
     delayInMinutes?: number | null;
   }>;
   updatedActions?: RuleAction[];
@@ -524,10 +532,14 @@ function actionsLookCopiedFromRule(
 function normalizeActionForComparison(action: {
   delayInMinutes?: number | null;
   fields?: Record<string, string | null> | null;
+  integrationName?: string | null;
+  integrationToolName?: string | null;
   type: string;
 }) {
   return {
     type: action.type,
+    integrationName: action.integrationName ?? null,
+    integrationToolName: action.integrationToolName ?? null,
     delayInMinutes: action.delayInMinutes ?? null,
     fields: Object.fromEntries(
       Object.entries(action.fields ?? {})

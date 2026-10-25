@@ -848,6 +848,122 @@ describe("integration action access", () => {
     expect(saved).toContain('"attachLink":"yes"');
   });
 
+  describe("keeps the choices picked in the rule editor", () => {
+    const trelloCreateCard = {
+      type: ActionType.INTEGRATION,
+      integrationName: "trello",
+      integrationToolName: "create-card",
+      integrationArgs: {
+        boardId: "board-1",
+        boardName: "Ops",
+        listId: "list-1",
+        listName: "To do",
+        name: "",
+        labelId: "label-1",
+        labelName: "Finance",
+        due: "tomorrow",
+        attachLink: "no",
+      },
+    };
+
+    async function updateTo(actions: RuleAction[]) {
+      await updateRuleActions({
+        ruleId: RULE_ID,
+        actions,
+        provider: "gmail",
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        logger,
+      });
+      return prisma.rule.update.mock.calls[0][0].data.actions as {
+        createMany: { data: { integrationArgs?: Record<string, string> }[] };
+      };
+    }
+
+    beforeEach(() => {
+      prisma.mcpConnection.findMany.mockResolvedValue([
+        { integration: { name: "trello" } },
+        { integration: { name: "todoist" } },
+      ] as never);
+    });
+
+    it("for an action with the same app and tool", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [{ type: ActionType.ARCHIVE }, trelloCreateCard],
+      } as never);
+
+      const saved = await updateTo([
+        archiveAction(),
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[1].integrationArgs).toEqual({
+        ...trelloCreateCard.integrationArgs,
+        name: "Pay invoice",
+      });
+    });
+
+    it("for Todoist's project", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: {
+              content: "",
+              projectId: "6X7",
+              projectName: "Work",
+              dueString: "ai",
+            },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([integrationAction()]);
+
+      expect(saved.createMany.data[0].integrationArgs).toMatchObject({
+        content: "Create a task",
+        projectId: "6X7",
+        projectName: "Work",
+      });
+    });
+
+    it("but not from an action using a different tool", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            ...trelloCreateCard,
+            integrationToolName: "add-comment",
+            integrationArgs: { boardId: "board-1", cardId: "card-1" },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: {} as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).not.toHaveProperty(
+        "boardId",
+      );
+    });
+  });
+
   it("rejects an integration action that names no app and tool", async () => {
     await expect(
       updateRuleActions({

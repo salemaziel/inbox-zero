@@ -41,6 +41,8 @@ export type AssistantRuleSnapshot = {
         webhookUrl: string | null;
         folderName: string | null;
       }>;
+      integrationName?: string;
+      integrationToolName?: string | null;
       delayInMinutes?: number | null;
     }>;
     enabled: boolean;
@@ -82,6 +84,8 @@ export async function loadAssistantRuleSnapshot({
               url: true,
               folderName: true,
               delayInMinutes: true,
+              integrationName: true,
+              integrationToolName: true,
             },
           },
         },
@@ -146,6 +150,10 @@ export async function loadAssistantRuleSnapshot({
             subject: action.subject,
             webhookUrl: action.url,
             folderName: action.folderName,
+          }),
+          ...(action.integrationName && {
+            integrationName: action.integrationName,
+            integrationToolName: action.integrationToolName,
           }),
           delayInMinutes: action.delayInMinutes,
         })),

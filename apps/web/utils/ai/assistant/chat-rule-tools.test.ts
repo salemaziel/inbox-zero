@@ -8,6 +8,7 @@ import { createTestLogger } from "@/__tests__/helpers";
 import { createRuleTool } from "./tools/rules/create-rule-tool";
 import { updateRuleTool } from "./tools/rules/update-rule-tool";
 import { deleteRuleTool } from "./tools/rules/delete-rule-tool";
+import { loadAssistantRuleSnapshot } from "./chat-rule-state";
 
 const {
   mockCreateRule,
@@ -709,6 +710,106 @@ describe("updateRuleTool", () => {
       mockSetRuleEnabled.mock.calls.map(([input]) => input.ruleId),
     ).toEqual(["marketing-rule-id", "newsletter-rule-id"]);
     expect(rulesRevision).toBe(5);
+  });
+
+  it("treats switching an integration action to another tool as a change", async () => {
+    const trelloAction = {
+      ...vendorBillingRuleWithActions().actions[1],
+      type: ActionType.INTEGRATION,
+      integrationName: "trello",
+      integrationToolName: "create-card",
+    };
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      actions: [trelloAction],
+    });
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: {
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "add-comment",
+            fields: {},
+            delayInMinutes: null,
+          },
+        ],
+      },
+    });
+
+    expect(result.originalActions).toEqual([
+      expect.objectContaining({
+        integrationName: "trello",
+        integrationToolName: "create-card",
+      }),
+    ]);
+    expect(mockUpdateRuleActions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({ integrationToolName: "add-comment" }),
+        ],
+      }),
+    );
+  });
+});
+
+describe("loadAssistantRuleSnapshot", () => {
+  it("names the app and tool of each integration action", async () => {
+    mockPrisma.emailAccount.findUnique.mockResolvedValue({
+      about: null,
+      rulesRevision: 1,
+      rules: [
+        {
+          name: "Invoices",
+          instructions: "Invoices",
+          updatedAt: new Date("2026-04-27T00:01:00.000Z"),
+          from: null,
+          to: null,
+          subject: null,
+          conditionalOperator: null,
+          enabled: true,
+          runOnThreads: true,
+          actions: [
+            {
+              ...vendorBillingRuleWithActions().actions[1],
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+            },
+            vendorBillingRuleWithActions().actions[0],
+          ],
+        },
+      ],
+      messagingChannels: [],
+    });
+
+    const snapshot = await loadAssistantRuleSnapshot({
+      emailAccountId: "email-account-id",
+    });
+
+    expect(snapshot.rules[0].actions).toEqual([
+      expect.objectContaining({
+        type: ActionType.INTEGRATION,
+        integrationName: "trello",
+        integrationToolName: "create-card",
+      }),
+      expect.not.objectContaining({ integrationName: expect.anything() }),
+    ]);
   });
 });
 
