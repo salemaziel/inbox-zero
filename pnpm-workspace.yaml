@@ -13,28 +13,44 @@ minimumReleaseAgeExclude:
 
 overrides:
   "@hono/node-server": "1.19.14"
-  "@tiptap/core": "3.30.2"
+  "@tiptap/core": "3.32.0"
   "@types/react": "19.2.18"
   "@types/react-dom": "19.2.4"
-  "@xmldom/xmldom": "0.8.13"
-  axios: "1.16.1"
+  "@xmldom/xmldom": "0.8.15"
+  axios: "1.20.0"
+  "brace-expansion@<1.1.20": "1.1.21"
+  "brace-expansion@>=2.0.0 <2.1.6": "2.1.7"
+  "brace-expansion@>=5.0.0 <5.0.11": "5.0.12"
+  "browserslist@<4.28.7": "4.29.4"
   dompurify: "3.4.17"
+  "engine.io@>=6.6.0 <6.6.10": "6.6.11"
+  "fast-uri@>=3.0.0 <3.1.7": "3.1.9"
   fast-xml-parser: "5.8.0"
+  "follow-redirects@>=1.16.0 <1.16.1": "1.16.1"
+  "form-data@>=4.0.0 <4.0.6": "4.0.6"
+  "hono@<4.12.25": "4.13.13"
+  "http-cache-semantics@<4.2.1": "4.3.0"
   # One ioredis copy for BullMQ and @chat-adapter/state-ioredis. The adapter
   # still declares ^5.4.1, but v6 keeps legacy reply mapping and closing the
   # ioredis 5 advisory requires a single 6.x.
   ioredis: "6.0.0"
-  js-yaml: "3.14.2"
+  "ip-address@>=10.0.0 <10.3.1": "10.7.4"
+  js-yaml: "3.15.2"
   jws: "4.0.1"
   lodash: "4.18.1"
-  next: "16.4.1"
-  postcss: "8.5.14"
+  "nanoid@<3.3.18": "3.3.20"
+  next: "16.4.2"
+  postcss: "8.5.31"
   # express@5 depends on proxy-addr ^2.0.7. 2.0.7 treats an IPv4-mapped IPv6
   # trust subnet with an IPv4-sized prefix as trusting every IPv4 address
   # (CVE-2026-90711). 2.0.8 rejects those prefixes.
   proxy-addr: "2.0.8"
   prosemirror-model: "1.25.11"
-  prosemirror-view: "1.42.2"
+  prosemirror-view: "1.42.6"
+  "protobufjs@>=7.0.0 <7.6.1": "7.6.6"
+  "smol-toml@<1.7.1": "1.9.1"
+  "socket.io-parser@>=4.0.0 <4.2.7": "4.2.7"
+  "source-map-js@>=1.0.0 <1.2.2": "1.2.2"
   svelte: "5.55.5"
   # @actions/* and node-gyp resolve undici 6. 6.25.0 is outside CVE-2026-84961,
   # which is already covered by 7.29.1 and the direct 8.10.2 pin, but it is
@@ -42,8 +58,9 @@ overrides:
   # 6.x those caret ranges allow.
   "undici@>=6.0.0 <7.0.0": "6.29.0"
   "undici@>=7.0.0 <8.0.0": "7.29.1"
-  vite: "7.3.6"
+  vite: "7.3.7"
   webpack: "5.106.2"
+  "ws@>=8.0.0 <8.21.0": "8.21.3"
 
 packageExtensions:
   # @hookform/resolvers imports zod/v4/core without declaring zod, which breaks

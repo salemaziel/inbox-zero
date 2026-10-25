@@ -87,3 +87,7 @@ See `.claude/skills/fullstack-workflow/SKILL.md` for full examples and templates
 - Loading states: use `LoadingContent` component.
 - Cursor Cloud VM setup: see `.claude/skills/cloud-dev-environment/SKILL.md`.
 - Opening a PR: `.claude/skills/create-pr/SKILL.md`. Watching one to green (CI, review bots, comments): `.claude/skills/pr-watch/SKILL.md`. Do not hand-roll `gh api` polling; `pr-digest --watch` already blocks until checks settle and gives up at `PR_DIGEST_DEADLINE` (3600s) with a `WAIT_LIMIT` line rather than hanging.
+
+## Architecture & System Map
+For codebase architecture, domain nouns, key movements, and change-impact boundaries, see the ICM System Map at [map/CLAUDE.md](map/CLAUDE.md) (or [map/AGENTS.md](map/AGENTS.md)).
+

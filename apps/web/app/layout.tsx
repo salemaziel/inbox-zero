@@ -6,7 +6,6 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 import { AxiomWebVitals } from "next-axiom";
 import { GoogleTagManager } from "@next/third-parties/google";
 import { Analytics as DubAnalytics } from "@dub/analytics/react";
-import { Geist } from "next/font/google";
 import localFont from "next/font/local";
 import type {
   Graph,
@@ -23,6 +22,7 @@ import { GlobalProviders } from "@/providers/GlobalProviders";
 import { UTM } from "@/app/utm";
 import { startupImage } from "@/app/startup-image";
 import { Toaster } from "@/components/Toast";
+import { Tap2Line } from "@/components/Tap2Line";
 import {
   CookieConsentBanner,
   WithCookieConsent,
@@ -42,9 +42,10 @@ const aeonikFont = localFont({
   preload: true,
   display: "swap",
 });
-const geist = Geist({
-  subsets: ["latin"],
+const geist = localFont({
+  src: "../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2",
   variable: "--font-geist",
+  weight: "100 900",
   display: "swap",
 });
 
@@ -251,6 +252,7 @@ export default async function RootLayout({
           ) : null}
         </WithCookieConsent>
         <CookieConsentBanner />
+        {process.env.NODE_ENV === "development" && <Tap2Line />}
       </body>
     </html>
   );

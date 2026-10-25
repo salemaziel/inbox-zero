@@ -45,7 +45,7 @@ export function Header({ className }: HeaderProps) {
             href="/login"
             onClick={() => landingPageAnalytics.getStartedClicked(posthog)}
           >
-            <span className="relative z-10">Get started free</span>
+            <span className="relative z-10">Get Started</span>
           </Link>
         </Button>
       </div>
