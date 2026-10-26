@@ -58,12 +58,31 @@ export function Hero({
         <div className="mb-8 space-y-3">
           <HeroReveal delay={0.125 * 7}>{cta ?? <CallToAction />}</HeroReveal>
           <HeroReveal delay={0.125 * 8}>
-            <div className="mb-12 flex items-center justify-center gap-2">
+            <div className="mb-8 flex items-center justify-center gap-2">
               <Paragraph color="light" size="sm">
                 Works with
               </Paragraph>
               <Outlook />
               <Gmail />
+            </div>
+          </HeroReveal>
+          <HeroReveal delay={0.125 * 8}>
+            <div className="mb-12 flex flex-col items-center gap-3">
+              <Paragraph color="light" size="sm">
+                Integrates with:
+              </Paragraph>
+              <div className="flex flex-wrap items-center justify-center gap-4">
+                {INTEGRATION_LOGOS.map((logo) => (
+                  <Image
+                    key={logo.slug}
+                    src={`/images/integrations/${logo.slug}.svg`}
+                    alt={logo.name}
+                    title={logo.name}
+                    width={22}
+                    height={22}
+                  />
+                ))}
+              </div>
             </div>
           </HeroReveal>
         </div>
@@ -107,6 +126,15 @@ export function HeroContent() {
     </>
   );
 }
+
+const INTEGRATION_LOGOS = [
+  { slug: "trello", name: "Trello" },
+  { slug: "todoist", name: "Todoist" },
+  { slug: "notion", name: "Notion" },
+  { slug: "linear", name: "Linear" },
+  { slug: "stripe", name: "Stripe" },
+  { slug: "intercom", name: "Intercom" },
+];
 
 type HeroVideo = {
   muxPlaybackId: string;

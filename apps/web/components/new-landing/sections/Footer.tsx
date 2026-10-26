@@ -14,25 +14,7 @@ interface FooterProps {
 }
 
 export function Footer({ className, variant = "default" }: FooterProps) {
-  if (env.NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS) {
-    return (
-      <footer className="border-t border-[#E7E7E7A3] bg-cover bg-center bg-no-repeat overflow-hidden">
-        <div className={cn("overflow-hidden px-6 py-12 lg:px-8", className)}>
-          <p className="text-center text-xs leading-5 text-gray-500">
-            Powered by{" "}
-            <Link
-              href="https://getinboxzero.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-gray-900"
-            >
-              Inbox Zero
-            </Link>
-          </p>
-        </div>
-      </footer>
-    );
-  }
+  if (env.NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS) return null;
 
   return (
     <footer

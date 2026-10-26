@@ -4,7 +4,7 @@
 
 1. Create a Trello Power-Up at https://trello.com/power-ups/admin, open its API key section, and copy the API key into `TRELLO_API_KEY` in `apps/web/.env`. The key is not a secret in Trello's model, but it is shared by every user of the deployment and counts against one rate limit (300 requests per 10 seconds per key).
 2. On the Power-Up's Auth tab, add each origin the app runs on to the key's allowed origins, for example `http://localhost:3000` and the production domain. Without this, Trello's authorize page refuses to redirect back.
-3. Turn on integration actions (`NEXT_PUBLIC_INTEGRATION_ACTION_ENABLED=true`, or the PostHog flag). Trello then appears on the Integrations page.
+3. Turn on the Integrations page (`NEXT_PUBLIC_INTEGRATIONS_ENABLED=true`, or the `integrations` PostHog flag) and integration actions (`NEXT_PUBLIC_INTEGRATION_ACTION_ENABLED=true`, or its PostHog flag). Without the first, the page and its sidebar link are hidden; without the second, Trello can't be used in rules. Restart the dev server after changing either, since both are built into the client.
 
 The return URL is `/<emailAccountId>/integrations/connect/trello`. Trello puts the token in the URL fragment; the app moves it out of the URL before any telemetry runs and never logs it.
 
