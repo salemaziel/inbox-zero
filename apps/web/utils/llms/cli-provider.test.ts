@@ -1,4 +1,5 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Provider } from "./config";
@@ -236,6 +237,7 @@ describe("createCliLanguageModel", () => {
     vi.stubEnv("DATABASE_URL", "postgres://fake-host-db");
     vi.stubEnv("EMAIL_ENCRYPT_SECRET", "fake-host-secret");
     vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
+    vi.stubEnv("CODEX_API_KEY", "fake-host-codex-key");
     vi.stubEnv("LANG", "en_US.UTF-8");
     let authSeenByCli: string | null = null;
     const codexExec = vi.fn((_model: string, settings: any) => ({
@@ -360,10 +362,27 @@ describe("createCliLanguageModel", () => {
   });
 
   it("uses the server login for an owner who has not connected an account", async () => {
+    const hostCodexHome = await mkdtemp(
+      path.join(os.tmpdir(), "inbox-zero-test-host-codex-"),
+    );
+    await writeFile(path.join(hostCodexHome, "auth.json"), FAKE_CODEX_AUTH);
+    await writeFile(
+      path.join(hostCodexHome, "config.toml"),
+      '[mcp_servers.host]\ncommand = "host-mcp"\n',
+    );
+    vi.stubEnv("CODEX_HOME", hostCodexHome);
     vi.stubEnv("DATABASE_URL", "postgres://fake-host-db");
     vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
-    const codexExec = vi.fn(() => ({
-      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+    let seenByCli: { auth: string; config: string } | null = null;
+    const codexExec = vi.fn((_model: string, settings: any) => ({
+      doGenerate: vi.fn(async () => {
+        const runHome = settings.env.CODEX_HOME;
+        seenByCli = {
+          auth: await readFile(path.join(runHome, "auth.json"), "utf8"),
+          config: await readFile(path.join(runHome, "config.toml"), "utf8"),
+        };
+        return { text: "ok" };
+      }),
       doStream: vi.fn(),
     }));
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue(null);
@@ -378,10 +397,59 @@ describe("createCliLanguageModel", () => {
     }) as any;
     await model.doGenerate("request");
 
-    expect(getSettings(codexExec).env).toMatchObject({
+    const childEnv = getSettings(codexExec).env as Record<string, string>;
+    expect(childEnv).toMatchObject({
       DATABASE_URL: "",
       OPENAI_API_KEY: "fake-host-openai-key",
     });
+    expect(childEnv.CODEX_HOME).not.toBe(hostCodexHome);
+    expect(seenByCli).toEqual({
+      auth: FAKE_CODEX_AUTH,
+      config: expect.not.stringContaining("mcp_servers"),
+    });
+    await expect(access(childEnv.CODEX_HOME)).rejects.toThrow();
+    await rm(hostCodexHome, { recursive: true, force: true });
+  });
+
+  it("gives every Codex run a config with its built-in tools turned off", async () => {
+    let configSeenByCli = "";
+    const codexExec = vi.fn((_model: string, settings: any) => ({
+      doGenerate: vi.fn(async () => {
+        configSeenByCli = await readFile(
+          path.join(settings.env.CODEX_HOME, "config.toml"),
+          "utf8",
+        );
+        return { text: "ok" };
+      }),
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+    await model.doGenerate("request");
+
+    for (const line of [
+      'web_search = "disabled"',
+      "shell_tool = false",
+      "view_image = false",
+      "multi_agent = false",
+      "apps = false",
+      "plugins = false",
+    ]) {
+      expect(configSeenByCli).toContain(line);
+    }
+    expect(configSeenByCli).toMatch(/\[agents\]\nenabled = false/);
   });
 
   it("asks a user without the server login to connect or reconnect", async () => {

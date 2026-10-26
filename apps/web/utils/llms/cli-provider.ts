@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
@@ -58,7 +65,26 @@ const logger = createScopedLogger("llms/cli-provider");
 const CLAUDE_CODE_PACKAGE = "ai-sdk-provider-claude-code";
 const CODEX_CLI_PACKAGE = "ai-sdk-provider-codex-cli";
 const CLAUDE_CODE_MCP_SERVER_NAME = "inboxzero";
-const CODEX_CONFIG_TOML = 'cli_auth_credentials_store = "file"\n';
+// Every Codex run gets only this config, never the host's: no shell, file,
+// image, web or sub-agent tools and no MCP servers, plugins or apps. Inbox
+// Zero does not bridge its own tools to Codex, so a run only generates text.
+// Checked with `codex debug prompt-input` on Codex CLI 0.164.0.
+const CODEX_CONFIG_TOML = `cli_auth_credentials_store = "file"
+web_search = "disabled"
+
+[features]
+shell_tool = false
+view_image = false
+multi_agent = false
+image_generation = false
+apps = false
+plugins = false
+computer_use = false
+browser_use = false
+
+[agents]
+enabled = false
+`;
 
 // Host variables a Codex run may inherit. ai-sdk-provider-codex-cli spreads
 // the whole server env into the child, so every other key is blanked.
@@ -67,11 +93,7 @@ const CODEX_SAFE_ENV_RE =
 const CODEX_AUTH_FAILURE_RE =
   /\b401\b|unauthorized|not logged in|refresh token|log in again|sign in again/i;
 // The server's own Codex login, kept only for runs that use it.
-const CODEX_SERVER_LOGIN_ENV = [
-  "CODEX_HOME",
-  "OPENAI_API_KEY",
-  "CODEX_API_KEY",
-];
+const CODEX_SERVER_LOGIN_ENV = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 
 export const CLI_SUBSCRIPTION_PROVIDERS = [
   Provider.CLAUDE_CODE,
@@ -167,27 +189,26 @@ export function buildClaudeUserEnv({
   };
 }
 
-// The Codex child env. Without `codexHome` the run uses the server's own
-// login; with it, the user's login in that folder and no host credentials.
-export function buildCodexEnv(
-  user: { codexHome: string; home: string } | null,
-): Record<string, string> {
+// The Codex child env for a run's own Codex home. Only a server-login run
+// keeps the server's API key variables.
+export function buildCodexEnv({
+  codexHome,
+  home,
+  serverLogin,
+}: {
+  codexHome: string;
+  home: string;
+  serverLogin: boolean;
+}): Record<string, string> {
   const childEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     const keep =
       CODEX_SAFE_ENV_RE.test(key) ||
-      (!user && CODEX_SERVER_LOGIN_ENV.includes(key));
+      (serverLogin && CODEX_SERVER_LOGIN_ENV.includes(key));
     childEnv[key] = keep ? (value ?? "") : "";
   }
-  if (!user) return childEnv;
 
-  return {
-    ...childEnv,
-    HOME: user.home,
-    CODEX_HOME: user.codexHome,
-    OPENAI_API_KEY: "",
-    CODEX_API_KEY: "",
-  };
+  return { ...childEnv, HOME: home, CODEX_HOME: codexHome };
 }
 
 export function createCliLanguageModel({
@@ -520,15 +541,26 @@ async function startCliRun(
     await mkdir(cwd, { mode: 0o700 });
 
     if (provider === Provider.CODEX_CLI) {
-      if (!login) {
-        return { cwd, env: buildCodexEnv(null), finish: removeRunDir };
-      }
       const codexHome = path.join(runDir, "codex");
       await mkdir(codexHome, { mode: 0o700 });
+      if (!login) {
+        // The server's login is linked, not copied: Codex rewrites auth.json
+        // in place when it refreshes, so the refresh lands in the host file.
+        await writeCodexHome(codexHome);
+        await symlink(
+          path.join(getHostCodexHome(), "auth.json"),
+          path.join(codexHome, "auth.json"),
+        );
+        return {
+          cwd,
+          env: buildCodexEnv({ codexHome, home: runDir, serverLogin: true }),
+          finish: removeRunDir,
+        };
+      }
       await writeCodexHome(codexHome, login.credential);
       return {
         cwd,
-        env: buildCodexEnv({ codexHome, home: runDir }),
+        env: buildCodexEnv({ codexHome, home: runDir, serverLogin: false }),
         finish: async () => {
           await saveRefreshedCodexLogin(codexHome, login).catch(() => {
             logger.error("Could not save refreshed Codex login");
@@ -613,6 +645,10 @@ async function markNeedsReconnect(login: UserCliLogin) {
       lastError: "The sign-in was rejected or has expired.",
     },
   });
+}
+
+function getHostCodexHome() {
+  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 }
 
 function isCliAuthenticationError(
