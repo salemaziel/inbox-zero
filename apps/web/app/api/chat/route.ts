@@ -17,7 +17,7 @@ import type { Logger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { convertToUIMessages } from "@/components/assistant-chat/helpers";
-import { captureException } from "@/utils/error";
+import { SafeError, captureException } from "@/utils/error";
 import {
   shouldCompact,
   compactMessages,
@@ -465,6 +465,12 @@ export const POST = withEmailAccount("chat", async (request) => {
       action: "assistant-chat",
       flushReason: "chat-error",
     });
+    if (error instanceof SafeError && error.safeMessage) {
+      return NextResponse.json(
+        { error: error.safeMessage },
+        { status: error.statusCode ?? 400 },
+      );
+    }
     return NextResponse.json(
       { error: "Error in assistant chat" },
       { status: 500 },

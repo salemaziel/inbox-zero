@@ -409,6 +409,40 @@ describe("ChatProvider", () => {
     expect(mockCaptureException).toHaveBeenCalledWith(error);
   });
 
+  it("shows the server's message when the chat route rejects the request", async () => {
+    const error = Object.assign(
+      new Error(JSON.stringify({ error: "Connect your account first." })),
+      { statusCode: 400 },
+    );
+    mockSendMessage.mockRejectedValueOnce(error);
+
+    let latestContext: ReturnType<typeof useChat> | undefined;
+
+    function Consumer() {
+      latestContext = useChat();
+      return null;
+    }
+
+    renderWithProvider(<Consumer />);
+
+    act(() => {
+      latestContext?.setInput("Hello");
+    });
+    await waitFor(() => {
+      expect(latestContext?.input).toBe("Hello");
+    });
+
+    act(() => {
+      latestContext?.handleSubmit();
+    });
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith({
+        description: "Connect your account first.",
+      });
+    });
+  });
+
   it("rejects oversized drafts before sending and keeps their content", async () => {
     const draft = "a".repeat(ASSISTANT_CHAT_MAX_TEXT_LENGTH + 1);
     let latestContext: ReturnType<typeof useChat> | undefined;

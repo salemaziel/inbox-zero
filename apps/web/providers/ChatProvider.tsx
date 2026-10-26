@@ -554,10 +554,35 @@ function reportChatRequestError({
   });
   logger.flush().catch(() => undefined);
   toastError({
-    description: "We couldn't send your message. Please try again.",
+    description:
+      getClientErrorMessage(error) ??
+      "We couldn't send your message. Please try again.",
   });
   console.error(error);
   captureException(error);
+}
+
+// The chat route only returns its own message on 4xx, where it is safe to show
+// (for example, asking the user to connect an AI subscription).
+function getClientErrorMessage(error: unknown) {
+  const statusCode = getErrorStatusCode(error);
+  if (!statusCode || statusCode < 400 || statusCode >= 500) return null;
+  if (!(error instanceof Error)) return null;
+
+  try {
+    const body: unknown = JSON.parse(error.message);
+    if (
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof body.error === "string"
+    ) {
+      return body.error;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function getErrorStatusCode(error: unknown) {
