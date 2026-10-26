@@ -36,6 +36,8 @@ export async function judgeBinary(options: {
 }): Promise<JudgeResult> {
   const { model, providerOptions } = getModel(
     options.judgeUserAi ?? {
+      id: "eval-judge",
+      email: "eval-judge@test.com",
       aiProvider: null,
       aiModel: null,
       aiApiKey: null,

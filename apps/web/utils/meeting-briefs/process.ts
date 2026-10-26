@@ -101,6 +101,8 @@ export async function processMeetingBriefings({
       calendarBookingLink: true,
       user: {
         select: {
+          id: true,
+          email: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,

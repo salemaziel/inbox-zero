@@ -25,6 +25,8 @@ export async function validateUserAndAiAccess({
       calendarBookingLink: true,
       user: {
         select: {
+          id: true,
+          email: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,

@@ -64,7 +64,10 @@ import {
   shouldForceNanoModel,
 } from "@/utils/llms/model-usage-guard";
 import { Provider } from "@/utils/llms/config";
-import { createClaudeCodeLanguageModelWithBridgedTools } from "@/utils/llms/cli-provider";
+import {
+  type CliLoginScope,
+  createClaudeCodeLanguageModelWithBridgedTools,
+} from "@/utils/llms/cli-provider";
 import {
   appendOllamaOnlySystemGuidance,
   OLLAMA_STRUCTURED_OUTPUT_GUIDANCE,
@@ -101,12 +104,14 @@ async function bridgeClaudeCodeToolsIfNeeded<T extends Record<string, Tool>>({
   provider,
   modelName,
   model,
+  cliLogin,
   tools,
   activeTools,
 }: {
   provider: string;
   modelName: string;
   model: LanguageModelV4;
+  cliLogin?: CliLoginScope;
   tools: T | undefined;
   activeTools?: Array<string>;
 }): Promise<{
@@ -135,6 +140,7 @@ async function bridgeClaudeCodeToolsIfNeeded<T extends Record<string, Tool>>({
 
   const bridged = await createClaudeCodeLanguageModelWithBridgedTools({
     modelName,
+    cliLogin,
     tools: toolsToBridge as unknown as Record<
       string,
       {
@@ -159,6 +165,8 @@ function prepareOptionsForToolBridge<TOptions extends { tools?: unknown }>({
 }
 
 const NO_USER_AI_FIELDS: UserAIFields = {
+  id: "",
+  email: "",
   aiProvider: null,
   aiModel: null,
   aiApiKey: null,
@@ -344,6 +352,7 @@ export function createGenerateText({
         provider: candidate.provider,
         modelName: candidate.modelName,
         model: candidate.model,
+        cliLogin: candidate.cliLogin,
         tools: protectedTools,
       });
       const protectedRequestOptions = prepareOptionsForToolBridge({
@@ -794,6 +803,7 @@ export async function chatCompletionStream(
       provider: candidate.provider,
       modelName: candidate.modelName,
       model: candidate.model,
+      cliLogin: candidate.cliLogin,
       tools: protectedChatTools,
     });
     try {
@@ -950,6 +960,7 @@ export async function toolCallAgentStream(options: ToolCallAgentStreamOptions) {
       provider: candidate.provider,
       modelName: candidate.modelName,
       model: candidate.model,
+      cliLogin: candidate.cliLogin,
       tools: candidateTools,
       activeTools,
     });

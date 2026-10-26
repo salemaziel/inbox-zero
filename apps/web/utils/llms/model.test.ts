@@ -15,6 +15,9 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
+import { CONNECT_SUBSCRIPTION_MESSAGE } from "./cli-provider";
+
+vi.mock("@/utils/prisma");
 
 const TEST_AZURE_FOUNDRY_API_KEY = "test-azure-foundry-key";
 const TEST_AZURE_FOUNDRY_BASE_URL = "https://foundry.example.com/openai/v1";
@@ -107,6 +110,8 @@ vi.mock("@/env", () => ({
     CLI_LLM_ENABLED: false,
     CODEX_CLI_ALLOW_NPX: false,
     CODEX_CLI_PATH: undefined,
+    CLI_LLM_OWNER_EMAILS: undefined,
+    CLI_LLM_USER_HOMES_DIR: "./.data/cli-homes",
     BEDROCK_REGION: "us-west-2",
     BEDROCK_ACCESS_KEY: "",
     BEDROCK_SECRET_KEY: "",
@@ -159,6 +164,7 @@ describe("Models", () => {
     vi.mocked(env).CLI_LLM_ENABLED = false;
     vi.mocked(env).CODEX_CLI_ALLOW_NPX = false;
     vi.mocked(env).CODEX_CLI_PATH = undefined;
+    vi.mocked(env).CLI_LLM_OWNER_EMAILS = undefined;
     vi.mocked(env).BEDROCK_ACCESS_KEY = "";
     vi.mocked(env).BEDROCK_SECRET_KEY = "";
   });
@@ -1460,10 +1466,94 @@ describe("Models", () => {
       expect(result.fallbackModels).toEqual([]);
     });
   });
+
+  describe("CLI subscription logins", () => {
+    beforeEach(() => {
+      vi.mocked(env).CLI_LLM_ENABLED = true;
+      vi.mocked(env).CLI_LLM_OWNER_EMAILS =
+        "owner@example.com, Second@Example.com";
+    });
+
+    it("lets an owner use the server's own CLI login", () => {
+      setDefaultLlms(Provider.CODEX_CLI, "gpt-5.3-codex");
+
+      const result = getModel(defaultUserAi({ email: "second@example.com" }));
+
+      expect(result.provider).toBe(Provider.CODEX_CLI);
+      expect(result.cliLogin).toBeUndefined();
+      expect(result.hasUserApiKey).toBe(false);
+    });
+
+    it("lets everyone use the server login when no owners are configured", () => {
+      vi.mocked(env).CLI_LLM_OWNER_EMAILS = undefined;
+      setDefaultLlms(Provider.CLAUDE_CODE, "sonnet");
+
+      const result = getModel(defaultUserAi());
+
+      expect(result.provider).toBe(Provider.CLAUDE_CODE);
+      expect(result.cliLogin).toBeUndefined();
+    });
+
+    it("asks a non-owner without their own login to connect one", () => {
+      setDefaultLlms(Provider.CODEX_CLI, "gpt-5.3-codex");
+
+      expect(() => getModel(defaultUserAi())).toThrow(
+        CONNECT_SUBSCRIPTION_MESSAGE,
+      );
+    });
+
+    it("runs a non-owner's chosen subscription provider with their own login", () => {
+      setDefaultLlms(Provider.CODEX_CLI, "gpt-5.3-codex");
+
+      const result = getModel(
+        defaultUserAi({ aiProvider: Provider.CLAUDE_CODE }),
+      );
+
+      expect(result.provider).toBe(Provider.CLAUDE_CODE);
+      expect(result.modelName).toBe("sonnet");
+      expect(result.cliLogin).toEqual({
+        userId: "user-1",
+        allowServerLogin: false,
+      });
+      expect(result.fallbackModels).toEqual([]);
+      expect(result.hasUserApiKey).toBe(true);
+    });
+
+    it("lets an owner's chosen subscription provider fall back to the server login", () => {
+      const result = getModel(
+        defaultUserAi({
+          email: "owner@example.com",
+          aiProvider: Provider.CODEX_CLI,
+        }),
+      );
+
+      expect(result.cliLogin).toEqual({
+        userId: "user-1",
+        allowServerLogin: true,
+      });
+    });
+
+    it("skips CLI deployment fallbacks for non-owners only", () => {
+      setDefaultLlms(Provider.OPEN_AI, "gpt-5.4-mini", [
+        "codex-cli:gpt-5.3-codex",
+      ]);
+
+      const nonOwner = getModel(defaultUserAi());
+      const owner = getModel(defaultUserAi({ email: "owner@example.com" }));
+
+      expect(nonOwner.provider).toBe(Provider.OPEN_AI);
+      expect(nonOwner.fallbackModels).toEqual([]);
+      expect(owner.fallbackModels.map((model) => model.provider)).toEqual([
+        Provider.CODEX_CLI,
+      ]);
+    });
+  });
 });
 
 function defaultUserAi(overrides: Partial<UserAIFields> = {}): UserAIFields {
   return {
+    id: "user-1",
+    email: "user@example.com",
     aiApiKey: null,
     aiProvider: null,
     aiModel: null,

@@ -1,5 +1,12 @@
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Provider } from "./config";
+
+const homesDir = path.join(os.tmpdir(), "inbox-zero-cli-provider-test");
+const prismaMock = vi.hoisted(() => ({
+  aiSubscriptionLogin: { findUnique: vi.fn(), updateMany: vi.fn() },
+}));
 
 describe("createCliLanguageModel", () => {
   beforeEach(() => {
@@ -11,6 +18,8 @@ describe("createCliLanguageModel", () => {
     vi.doUnmock("@/env");
     vi.doUnmock("ai-sdk-provider-codex-cli");
     vi.doUnmock("ai-sdk-provider-claude-code");
+    vi.doUnmock("@/utils/prisma");
+    vi.unstubAllEnvs();
   });
 
   it("loads the Codex provider lazily once and forwards calls", async () => {
@@ -207,6 +216,199 @@ describe("createCliLanguageModel", () => {
       'CLI LLM provider "codex-cli" returned a model without doStream. Check the installed package version.',
     );
   });
+
+  it("runs Codex with the user's own CLI home and blanks host API keys", async () => {
+    const codexExec = vi.fn(() => ({
+      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: null,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    await expect(model.doGenerate("request")).resolves.toEqual({ text: "ok" });
+    expect(codexExec).toHaveBeenCalledWith(
+      "gpt-5.3-codex",
+      expect.objectContaining({
+        env: {
+          CODEX_HOME: path.join(homesDir, "user1", "codex"),
+          OPENAI_API_KEY: "",
+          CODEX_API_KEY: "",
+        },
+      }),
+    );
+  });
+
+  it("runs Claude Code with the user's token and blanks every inherited host credential", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "fake-host-api-key");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "fake-host-auth-token");
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "fake-host-oauth-token");
+    const claudeCode = vi.fn(() => ({
+      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: "fake-user-oauth-token",
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      claudeModule: { claudeCode, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CLAUDE_CODE,
+      modelName: "sonnet",
+      cliLogin: { userId: "user1", allowServerLogin: true },
+    }) as any;
+    await model.doGenerate("request");
+
+    const settings = (claudeCode.mock.calls[0] as unknown[])[1] as {
+      env: Record<string, string>;
+    };
+    expect(settings.env).toMatchObject({
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "",
+      CLAUDE_CODE_OAUTH_TOKEN: "fake-user-oauth-token",
+      CLAUDE_CONFIG_DIR: path.join(homesDir, "user1", "claude"),
+    });
+  });
+
+  it("uses the server login for an owner who has not connected an account", async () => {
+    const codexExec = vi.fn(() => ({
+      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue(null);
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: true },
+    }) as any;
+    await model.doGenerate("request");
+
+    expect(codexExec).toHaveBeenCalledWith(
+      "gpt-5.3-codex",
+      expect.not.objectContaining({ env: expect.anything() }),
+    );
+  });
+
+  it("asks a user without the server login to connect or reconnect", async () => {
+    const codexExec = vi.fn();
+    const {
+      createCliLanguageModel,
+      CONNECT_SUBSCRIPTION_MESSAGE,
+      RECONNECT_SUBSCRIPTION_MESSAGE,
+    } = await loadCliProviderModule({ codexModule: { codexExec } });
+    const scope = { userId: "user1", allowServerLogin: false };
+
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValueOnce(null);
+    const notConnected = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: scope,
+    }) as any;
+    await expect(notConnected.doGenerate("request")).rejects.toThrow(
+      CONNECT_SUBSCRIPTION_MESSAGE,
+    );
+
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValueOnce({
+      status: "needs-reconnect",
+      credential: null,
+    });
+    const signedOut = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: scope,
+    }) as any;
+    await expect(signedOut.doGenerate("request")).rejects.toThrow(
+      RECONNECT_SUBSCRIPTION_MESSAGE,
+    );
+    expect(codexExec).not.toHaveBeenCalled();
+  });
+
+  it("marks a rejected user login for reconnect", async () => {
+    const authError = new Error("unauthorized");
+    const codexExec = vi.fn(() => ({
+      doGenerate: vi.fn().mockRejectedValue(authError),
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: null,
+    });
+
+    const { createCliLanguageModel, RECONNECT_SUBSCRIPTION_MESSAGE } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          isAuthenticationError: (error: unknown) => error === authError,
+        },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    await expect(model.doGenerate("request")).rejects.toThrow(
+      RECONNECT_SUBSCRIPTION_MESSAGE,
+    );
+    expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user1", provider: Provider.CODEX_CLI },
+      data: expect.objectContaining({ status: "needs-reconnect" }),
+    });
+  });
+
+  it("runs one Codex call at a time per user", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const doGenerate = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ text: "second" });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: null,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    const first = model.doGenerate("first");
+    const second = model.doGenerate("second");
+    await vi.waitFor(() => expect(doGenerate).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(doGenerate).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ text: "first" });
+    await expect(first).resolves.toEqual({ text: "first" });
+    await expect(second).resolves.toEqual({ text: "second" });
+  });
 });
 
 async function loadCliProviderModule({
@@ -227,9 +429,11 @@ async function loadCliProviderModule({
       CLI_LLM_ENABLED: true,
       CODEX_CLI_ALLOW_NPX: false,
       CODEX_CLI_PATH: undefined,
+      CLI_LLM_USER_HOMES_DIR: homesDir,
       ...envOverrides,
     },
   }));
+  vi.doMock("@/utils/prisma", () => ({ default: prismaMock }));
 
   if (codexModule) {
     vi.doMock("ai-sdk-provider-codex-cli", () => codexModule);

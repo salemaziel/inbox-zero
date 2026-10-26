@@ -30,6 +30,8 @@ describe.runIf(isAiTest)(
         multiRuleSelectionEnabled: false,
         sensitiveDataPolicy: "ALLOW",
         user: {
+          id: "test-user-id",
+          email: "user@test.com",
           aiModel: null,
           aiProvider: null,
           aiApiKey: null,
