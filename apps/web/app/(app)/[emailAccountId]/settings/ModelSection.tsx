@@ -27,6 +27,7 @@ import { useUser } from "@/hooks/useUser";
 import { useAccount } from "@/providers/EmailAccountProvider";
 import { prefixPath } from "@/utils/path";
 import { updateAiSettingsAction } from "@/utils/actions/settings";
+import { SubscriptionLoginSection } from "@/app/(app)/[emailAccountId]/settings/SubscriptionLoginCard";
 
 export function ModelSection() {
   const { emailAccountId } = useAccount();
@@ -44,6 +45,7 @@ export function ModelSection() {
       <LoadingContent loading={isLoading || isLoadingModels} error={error}>
         {data && (
           <ModelSectionForm
+            key={data.aiProvider ?? DEFAULT_PROVIDER}
             aiProvider={data.aiProvider}
             aiModel={data.aiModel}
             hasAiApiKey={data.hasAiApiKey}
@@ -53,6 +55,7 @@ export function ModelSection() {
           />
         )}
       </LoadingContent>
+      <SubscriptionLoginSection refetchUser={mutate} />
     </SettingsSection>
   );
 }
@@ -165,6 +168,13 @@ function ModelSectionForm(props: {
         </>
       )}
 
+      {isCliSubscriptionProvider(props.aiProvider) && (
+        <AlertBasic
+          title="Using your connected subscription"
+          description="The assistant runs on the subscription marked In use below. Pick another provider and save to switch."
+        />
+      )}
+
       {globalError?.message && (
         <AlertError title="Error saving" description={globalError.message} />
       )}
@@ -197,4 +207,8 @@ function ModelSectionForm(props: {
       </div>
     </form>
   );
+}
+
+function isCliSubscriptionProvider(provider: string | null) {
+  return provider === Provider.CLAUDE_CODE || provider === Provider.CODEX_CLI;
 }
