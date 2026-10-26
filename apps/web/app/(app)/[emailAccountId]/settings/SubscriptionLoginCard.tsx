@@ -1,116 +1,44 @@
 "use client";
 
 import { useState } from "react";
-import useSWR from "swr";
 import { useAction } from "next-safe-action/hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { LoadingContent } from "@/components/LoadingContent";
 import { toastError, toastSuccess } from "@/components/Toast";
 import type { GetAiSubscriptionResponse } from "@/app/api/user/ai-subscription/route";
 import {
   cancelAiSubscriptionLoginAction,
   disconnectAiSubscriptionAction,
-  selectAiSubscriptionAction,
   startAiSubscriptionLoginAction,
   submitAiSubscriptionLoginCodeAction,
 } from "@/utils/actions/ai-subscription";
-import {
-  getSubscriptionModelLabel,
-  Provider,
-  SUBSCRIPTION_MODELS,
-} from "@/utils/llms/config";
+import { Provider } from "@/utils/llms/config";
 import { getActionErrorMessage } from "@/utils/error";
 
-type SubscriptionEntry = GetAiSubscriptionResponse["providers"][number];
+export type SubscriptionEntry = GetAiSubscriptionResponse["providers"][number];
 
 const ACTIVE_SESSION_STATUSES = ["starting", "waiting", "verifying"];
 
-const PROVIDER_LABELS: Record<string, { title: string; account: string }> = {
-  [Provider.CODEX_CLI]: {
-    title: "Your ChatGPT subscription",
-    account: "ChatGPT",
-  },
-  [Provider.CLAUDE_CODE]: {
-    title: "Your Claude subscription",
-    account: "Claude",
-  },
+const ACCOUNT_LABELS: Record<string, string> = {
+  [Provider.CODEX_CLI]: "ChatGPT",
+  [Provider.CLAUDE_CODE]: "Claude",
 };
 
-export function SubscriptionLoginSection({
-  refetchUser,
-}: {
-  refetchUser: () => void;
-}) {
-  const { data, isLoading, error, mutate } = useSWR<GetAiSubscriptionResponse>(
-    "/api/user/ai-subscription",
-    {
-      refreshInterval: (latest) =>
-        latest?.providers.some((entry) => isSessionActive(entry)) ? 3000 : 0,
-    },
-  );
-
-  if (data && !data.enabled) return null;
-
-  return (
-    <LoadingContent loading={isLoading} error={error}>
-      {data && (
-        <div className="space-y-3 border-t pt-4">
-          <div className="space-y-1">
-            <h3 className="font-medium">Use your own AI subscription</h3>
-            <p className="text-sm text-muted-foreground">
-              {data.canUseServerLogin
-                ? "Optional: connect your own ChatGPT or Claude plan instead of the server's."
-                : "Connect your ChatGPT or Claude plan. The assistant runs on your own subscription, used only for you."}
-            </p>
-          </div>
-          {data.providers.map((entry) => (
-            <SubscriptionLoginCard
-              key={entry.provider}
-              entry={entry}
-              isActiveProvider={data.activeProvider === entry.provider}
-              activeModel={data.activeModel}
-              refetch={() => {
-                mutate();
-                refetchUser();
-              }}
-            />
-          ))}
-        </div>
-      )}
-    </LoadingContent>
-  );
-}
-
-function SubscriptionLoginCard({
+// Stands in for the API key field when the provider is the user's own
+// ChatGPT or Claude subscription.
+export function SubscriptionConnection({
   entry,
-  isActiveProvider,
-  activeModel,
+  canUseServerLogin,
   refetch,
 }: {
   entry: SubscriptionEntry;
-  isActiveProvider: boolean;
-  activeModel: string | null;
+  canUseServerLogin: boolean;
   refetch: () => void;
 }) {
   const { provider, login, session } = entry;
-  const labels = PROVIDER_LABELS[provider];
+  const account = ACCOUNT_LABELS[provider];
   const [code, setCode] = useState("");
-  const [pickedModel, setPickedModel] = useState<string | null>(null);
-  const modelConfig = SUBSCRIPTION_MODELS[provider];
-  const savedModel = isActiveProvider ? activeModel : null;
-  const selectedModel =
-    [pickedModel, savedModel].find((value) =>
-      modelConfig.models.some((model) => model.value === value),
-    ) ?? modelConfig.defaultModel;
 
   const onError = ({
     error,
@@ -138,115 +66,64 @@ function SubscriptionLoginCard({
   });
   const disconnect = useAction(disconnectAiSubscriptionAction, {
     onSuccess: () => {
-      toastSuccess({ description: `${labels.account} account disconnected.` });
-      refetch();
-    },
-    onError,
-  });
-  const select = useAction(selectAiSubscriptionAction, {
-    onSuccess: () => {
-      toastSuccess({
-        description: `The assistant now uses your ${labels.account} subscription.`,
-      });
+      toastSuccess({ description: `${account} account disconnected.` });
       refetch();
     },
     onError,
   });
 
-  const changeModel = useAction(selectAiSubscriptionAction, {
-    onSuccess: () => {
-      toastSuccess({ description: "Model updated." });
-      refetch();
-    },
-    onError,
-  });
-
-  const sessionActive = isSessionActive(entry);
+  const sessionActive = isSubscriptionSessionActive(entry);
   const isConnected = login?.status === "connected";
 
   return (
-    <div className="space-y-3 rounded-md border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">{labels.title}</span>
-          {isConnected && <Badge variant="success">Connected</Badge>}
-          {login?.status === "needs-reconnect" && (
-            <Badge variant="red">Needs reconnect</Badge>
-          )}
-          {isActiveProvider && isConnected && (
-            <Badge variant="secondary">In use</Badge>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {sessionActive ? (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{account} account</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {isConnected && <Badge variant="success">Connected</Badge>}
+        {login?.status === "needs-reconnect" && (
+          <Badge variant="red">Needs reconnect</Badge>
+        )}
+        {sessionActive ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            loading={cancel.isExecuting}
+            onClick={() => cancel.execute({ provider })}
+          >
+            Cancel
+          </Button>
+        ) : (
+          !isConnected && (
             <Button
+              type="button"
               size="sm"
-              variant="outline"
-              loading={cancel.isExecuting}
-              onClick={() => cancel.execute({ provider })}
-            >
-              Cancel
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant={isConnected ? "outline" : "default"}
               loading={start.isExecuting}
               onClick={() => start.execute({ provider })}
             >
               {login ? "Reconnect" : "Connect"}
             </Button>
-          )}
-          {isConnected && !isActiveProvider && (
-            <Button
-              size="sm"
-              loading={select.isExecuting}
-              onClick={() => select.execute({ provider, model: selectedModel })}
-            >
-              Use this
-            </Button>
-          )}
-          {login && (
-            <Button
-              size="sm"
-              variant="ghost"
-              loading={disconnect.isExecuting}
-              onClick={() => disconnect.execute({ provider })}
-            >
-              Disconnect
-            </Button>
-          )}
-        </div>
+          )
+        )}
+        {login && !sessionActive && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            loading={disconnect.isExecuting}
+            onClick={() => disconnect.execute({ provider })}
+          >
+            Disconnect
+          </Button>
+        )}
       </div>
 
-      {isConnected && (
-        <div className="space-y-1">
-          <Select
-            value={selectedModel}
-            disabled={changeModel.isExecuting}
-            onValueChange={(model) => {
-              setPickedModel(model);
-              if (isActiveProvider) changeModel.execute({ provider, model });
-            }}
-          >
-            <SelectTrigger className="h-8 w-48" aria-label="Model">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {modelConfig.models.map((model) => (
-                <SelectItem key={model.value} value={model.value}>
-                  {model.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Background tasks like sorting use{" "}
-            {getSubscriptionModelLabel(provider, modelConfig.fastModel)} to save
-            your plan's limits.
-          </p>
-        </div>
+      {!login && !sessionActive && (
+        <p className="text-sm text-muted-foreground">
+          {canUseServerLogin
+            ? `Optional: connect your own ${account} plan instead of the server's.`
+            : `Connect your ${account} plan. The assistant runs on your own subscription, used only for you.`}
+        </p>
       )}
 
       {sessionActive && (
@@ -262,7 +139,7 @@ function SubscriptionLoginCard({
                 rel="noopener noreferrer"
                 className="font-medium underline"
               >
-                Open the {labels.account} sign-in page
+                Open the {account} sign-in page
               </a>{" "}
               and sign in with your own account.
             </p>
@@ -285,13 +162,7 @@ function SubscriptionLoginCard({
           )}
 
           {session?.needsCode && (
-            <form
-              className="flex gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                submitCode.execute({ code });
-              }}
-            >
+            <div className="flex gap-2">
               <Input
                 type="text"
                 name="subscriptionLoginCode"
@@ -299,16 +170,24 @@ function SubscriptionLoginCard({
                 autoComplete="off"
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
+                onKeyDown={(event) => {
+                  // This sits inside the settings form; Enter must submit
+                  // the code, not the form.
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (code.trim()) submitCode.execute({ code });
+                }}
               />
               <Button
-                type="submit"
+                type="button"
                 size="sm"
                 loading={submitCode.isExecuting}
                 disabled={!code.trim()}
+                onClick={() => submitCode.execute({ code })}
               >
                 Submit
               </Button>
-            </form>
+            </div>
           )}
 
           {session?.status === "verifying" && <p>Finishing sign-in…</p>}
@@ -325,7 +204,7 @@ function SubscriptionLoginCard({
   );
 }
 
-function isSessionActive(entry: SubscriptionEntry) {
+export function isSubscriptionSessionActive(entry: SubscriptionEntry) {
   return (
     !!entry.session && ACTIVE_SESSION_STATUSES.includes(entry.session.status)
   );

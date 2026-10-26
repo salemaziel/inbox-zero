@@ -4,10 +4,11 @@ import { env } from "@/env";
 import { actionClientUser } from "@/utils/actions/safe-action";
 import {
   aiSubscriptionProviderBody,
-  selectAiSubscriptionBody,
   submitAiSubscriptionCodeBody,
 } from "@/utils/actions/ai-subscription.validation";
+import { Prisma } from "@/generated/prisma/client";
 import { SafeError } from "@/utils/error";
+import { aiTaskModelsSchema } from "@/utils/llms/config";
 import {
   cancelSubscriptionLogin,
   disconnectSubscriptionLogin,
@@ -44,30 +45,38 @@ export const disconnectAiSubscriptionAction = actionClientUser
   .inputSchema(aiSubscriptionProviderBody)
   .action(async ({ ctx: { userId }, parsedInput: { provider } }) => {
     await disconnectSubscriptionLogin({ userId, provider });
-    await prisma.user.updateMany({
-      where: { id: userId, aiProvider: provider },
-      data: { aiProvider: null, aiModel: null, aiApiKey: null },
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { aiProvider: true, aiTaskModels: true },
     });
-  });
+    if (!user) return;
 
-export const selectAiSubscriptionAction = actionClientUser
-  .metadata({ name: "selectAiSubscription" })
-  .inputSchema(selectAiSubscriptionBody)
-  .action(async ({ ctx: { userId }, parsedInput: { provider, model } }) => {
-    assertModelSettingsEnabled();
+    const parsed = aiTaskModelsSchema.safeParse(user.aiTaskModels ?? {});
+    const taskModels = parsed.success ? parsed.data : {};
+    const remainingTaskModels = Object.fromEntries(
+      Object.entries(taskModels).filter(
+        ([, entry]) => entry && entry.provider !== provider,
+      ),
+    );
+    const usedProvider = user.aiProvider === provider;
+    const usedInTasks =
+      Object.keys(remainingTaskModels).length !==
+      Object.keys(taskModels).length;
+    if (!usedProvider && !usedInTasks) return;
 
-    const login = await prisma.aiSubscriptionLogin.findUnique({
-      where: { userId_provider: { userId, provider } },
-      select: { status: true },
-    });
-    if (login?.status !== "connected") {
-      throw new SafeError("Connect this account before using it.");
-    }
-
-    // A null model uses the provider's default from utils/llms/config.ts.
     await prisma.user.update({
       where: { id: userId },
-      data: { aiProvider: provider, aiModel: model ?? null, aiApiKey: null },
+      data: {
+        ...(usedProvider && {
+          aiProvider: null,
+          aiModel: null,
+          aiApiKey: null,
+        }),
+        aiTaskModels: Object.keys(remainingTaskModels).length
+          ? remainingTaskModels
+          : Prisma.DbNull,
+      },
     });
   });
 

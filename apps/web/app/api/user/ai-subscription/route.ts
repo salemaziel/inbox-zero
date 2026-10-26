@@ -24,8 +24,6 @@ async function getAiSubscriptions({ userId }: { userId: string }) {
       select: {
         email: true,
         emailVerified: true,
-        aiProvider: true,
-        aiModel: true,
       },
     }),
     prisma.aiSubscriptionLogin.findMany({
@@ -43,8 +41,6 @@ async function getAiSubscriptions({ userId }: { userId: string }) {
   return {
     enabled: env.CLI_LLM_ENABLED,
     canUseServerLogin: isCliLlmOwner(user),
-    activeProvider: user.aiProvider,
-    activeModel: user.aiModel,
     providers: CLI_SUBSCRIPTION_PROVIDERS.map((provider) => ({
       provider,
       login: logins.find((login) => login.provider === provider) ?? null,

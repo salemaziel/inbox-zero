@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Provider, SUBSCRIPTION_MODELS } from "@/utils/llms/config";
+import { Provider } from "@/utils/llms/config";
 
 export const aiSubscriptionProviderBody = z.object({
   provider: z.enum([Provider.CLAUDE_CODE, Provider.CODEX_CLI]),
@@ -7,16 +7,6 @@ export const aiSubscriptionProviderBody = z.object({
 export type AiSubscriptionProviderBody = z.infer<
   typeof aiSubscriptionProviderBody
 >;
-
-export const selectAiSubscriptionBody = aiSubscriptionProviderBody
-  .extend({ model: z.string().optional() })
-  .refine(
-    ({ provider, model }) =>
-      !model ||
-      SUBSCRIPTION_MODELS[provider].models.some((m) => m.value === model),
-    { message: "Pick a model from this account's list", path: ["model"] },
-  );
-export type SelectAiSubscriptionBody = z.infer<typeof selectAiSubscriptionBody>;
 
 export const submitAiSubscriptionCodeBody = z.object({
   code: z
