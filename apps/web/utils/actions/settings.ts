@@ -11,7 +11,11 @@ import {
   toggleDigestBody,
 } from "@/utils/actions/settings.validation";
 import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
-import { isCliSubscriptionProvider } from "@/utils/llms/cli-provider";
+import {
+  CLI_SUBSCRIPTION_PROVIDERS,
+  isCliLlmOwner,
+  isCliSubscriptionProvider,
+} from "@/utils/llms/cli-provider";
 import prisma from "@/utils/prisma";
 import {
   calculateNextScheduleDate,
@@ -75,13 +79,13 @@ export const updateAiSettingsAction = actionClientUser
       if (usesCliProvider && !env.CLI_LLM_ENABLED) {
         throw new SafeError("AI subscriptions aren't enabled on this server.");
       }
-      const connectedProviders = usesCliProvider
-        ? await getConnectedSubscriptionProviders(userId)
+      const usableSubscriptions = usesCliProvider
+        ? await getUsableSubscriptionProviders(userId)
         : [];
 
       if (
         isCliSubscriptionProvider(aiProvider) &&
-        !connectedProviders.includes(aiProvider)
+        !usableSubscriptions.includes(aiProvider)
       ) {
         throw new SafeError("Connect this account before using it.");
       }
@@ -89,7 +93,7 @@ export const updateAiSettingsAction = actionClientUser
       for (const [, entry] of taskEntries) {
         const isMainProvider =
           aiProvider !== DEFAULT_PROVIDER && entry.provider === aiProvider;
-        if (!isMainProvider && !connectedProviders.includes(entry.provider)) {
+        if (!isMainProvider && !usableSubscriptions.includes(entry.provider)) {
           throw new SafeError(
             "Each task can only use your main provider or an AI subscription you've connected.",
           );
@@ -363,10 +367,21 @@ export const toggleDigestAction = actionClient
     },
   );
 
-async function getConnectedSubscriptionProviders(userId: string) {
-  const logins = await prisma.aiSubscriptionLogin.findMany({
-    where: { userId, status: "connected" },
-    select: { provider: true },
-  });
+// The subscriptions the user has connected, or all of them when the user may
+// fall back to the server's own login.
+async function getUsableSubscriptionProviders(
+  userId: string,
+): Promise<string[]> {
+  const [user, logins] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, emailVerified: true },
+    }),
+    prisma.aiSubscriptionLogin.findMany({
+      where: { userId, status: "connected" },
+      select: { provider: true },
+    }),
+  ]);
+  if (user && isCliLlmOwner(user)) return [...CLI_SUBSCRIPTION_PROVIDERS];
   return logins.map((login) => login.provider);
 }

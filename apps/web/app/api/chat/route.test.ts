@@ -441,6 +441,31 @@ describe("chat route rule freshness persistence", () => {
     });
   });
 
+  it("reports a safe error inside the reply stream with its message and keeps others generic", async () => {
+    let toUIMessageStreamOptions: { onError?: (error: unknown) => string } = {};
+    mockAiProcessAssistantChat.mockResolvedValueOnce({
+      toUIMessageStream: (options: typeof toUIMessageStreamOptions) => {
+        toUIMessageStreamOptions = options;
+        return (async function* () {})();
+      },
+    });
+
+    await POST(createRequest());
+
+    const streamOptions = mockCreateUIMessageStream.mock.calls[0]?.[0];
+    for (const onError of [
+      toUIMessageStreamOptions.onError,
+      streamOptions.onError,
+    ]) {
+      expect(onError?.(new SafeError("Reconnect your account."))).toBe(
+        JSON.stringify({ error: "Reconnect your account." }),
+      );
+      expect(onError?.(new Error("secret internal detail"))).toBe(
+        "An error occurred.",
+      );
+    }
+  });
+
   it("clears the active stream when the run fails to start", async () => {
     mockAiProcessAssistantChat.mockRejectedValueOnce(new Error("model down"));
 

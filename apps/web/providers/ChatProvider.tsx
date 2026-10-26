@@ -152,6 +152,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       ]);
     },
     onError: (error) => {
+      // The server's own message from inside the reply, such as asking the
+      // user to reconnect their AI subscription. The run has ended, so there
+      // is nothing to reattach to.
+      const streamErrorMessage = getStreamErrorMessage(error);
+      if (streamErrorMessage) {
+        pendingInlineActionsRef.current = null;
+        pendingRequestRef.current = null;
+        pendingRequestContextRef.current = null;
+        setRequestError(streamErrorMessage);
+        return;
+      }
+
       if (resumingRef.current) {
         interruptedRef.current = true;
         logger.warn("Assistant chat resume failed", {
@@ -579,6 +591,17 @@ function reportChatRequestError({
 function getClientErrorMessage(error: unknown) {
   const statusCode = getErrorStatusCode(error);
   if (!statusCode || statusCode < 400 || statusCode >= 500) return null;
+  return getErrorBodyMessage(error);
+}
+
+// Inside the reply stream (no status code), the route sends JSON only for a
+// message that is safe to show; other failures arrive as plain text.
+function getStreamErrorMessage(error: unknown) {
+  if (getErrorStatusCode(error) !== null) return null;
+  return getErrorBodyMessage(error);
+}
+
+function getErrorBodyMessage(error: unknown) {
   if (!(error instanceof Error)) return null;
 
   try {

@@ -1,7 +1,16 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { asSchema } from "ai";
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
 import { Provider } from "@/utils/llms/config";
@@ -45,10 +54,36 @@ type CliRunSettings = { cwd: string; env?: Record<string, string> };
 
 type CliRun = CliRunSettings & { finish: () => Promise<void> };
 
+type BuiltCliModel = {
+  model: LanguageModelV4;
+  // Rewrites each response part before the caller sees it.
+  mapPart?: (part: unknown) => unknown;
+  // Runs once the CLI has exited; the run is freed when it settles.
+  close?: () => Promise<void>;
+};
+
 type BuildCliModel = (
   module: CliProviderModule,
-  run: CliRunSettings,
-) => LanguageModelV4;
+  // `abortSignal` aborts when the run is stopped.
+  run: CliRunSettings & { abortSignal: AbortSignal },
+) => BuiltCliModel | Promise<BuiltCliModel>;
+
+// The tools served to Codex over the bridge, as the local MCP server in
+// ai-sdk-provider-codex-cli expects them.
+type CodexMcpTool = {
+  name: string;
+  description?: string;
+  inputSchema: unknown;
+  execute: (input: unknown) => Promise<unknown>;
+};
+
+type CodexMcpServerFactory = (options: {
+  name: string;
+  tools: CodexMcpTool[];
+}) => Promise<{
+  config: { transport: "http"; url: string; bearerToken: string };
+  stop: () => Promise<void>;
+}>;
 
 const runtimeImport = (specifier: string): Promise<CliProviderModule> =>
   import(/* webpackIgnore: true */ specifier);
@@ -57,8 +92,28 @@ const logger = createScopedLogger("llms/cli-provider");
 
 const CLAUDE_CODE_PACKAGE = "ai-sdk-provider-claude-code";
 const CODEX_CLI_PACKAGE = "ai-sdk-provider-codex-cli";
-const CLAUDE_CODE_MCP_SERVER_NAME = "inboxzero";
-const CODEX_CONFIG_TOML = 'cli_auth_credentials_store = "file"\n';
+// The MCP server that serves Inbox Zero's own tools to a CLI run.
+const CLI_TOOLS_MCP_SERVER_NAME = "inboxzero";
+// Every Codex run gets only this config, never the host's: no shell, file,
+// image, web or sub-agent tools and no MCP servers, plugins or apps. The only
+// tools a run can get are Inbox Zero's own, added per run over MCP.
+// Checked with `codex debug prompt-input` on Codex CLI 0.164.0.
+const CODEX_CONFIG_TOML = `cli_auth_credentials_store = "file"
+web_search = "disabled"
+
+[features]
+shell_tool = false
+view_image = false
+multi_agent = false
+image_generation = false
+apps = false
+plugins = false
+computer_use = false
+browser_use = false
+
+[agents]
+enabled = false
+`;
 
 // Host variables a Codex run may inherit. ai-sdk-provider-codex-cli spreads
 // the whole server env into the child, so every other key is blanked.
@@ -67,11 +122,7 @@ const CODEX_SAFE_ENV_RE =
 const CODEX_AUTH_FAILURE_RE =
   /\b401\b|unauthorized|not logged in|refresh token|log in again|sign in again/i;
 // The server's own Codex login, kept only for runs that use it.
-const CODEX_SERVER_LOGIN_ENV = [
-  "CODEX_HOME",
-  "OPENAI_API_KEY",
-  "CODEX_API_KEY",
-];
+const CODEX_SERVER_LOGIN_ENV = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 
 export const CLI_SUBSCRIPTION_PROVIDERS = [
   Provider.CLAUDE_CODE,
@@ -82,6 +133,8 @@ export const CONNECT_SUBSCRIPTION_MESSAGE =
   "Connect your ChatGPT or Claude account in Settings to use the AI assistant.";
 export const RECONNECT_SUBSCRIPTION_MESSAGE =
   "Your connected ChatGPT or Claude account was signed out. Reconnect it in Settings to use the AI assistant.";
+export const CODEX_TOOL_BLOCKED_MESSAGE =
+  "The AI model tried to run a command, so the request was stopped.";
 
 // Concurrent Codex runs for one user would race on its rotating refresh token.
 // Kept on globalThis because route handlers and server actions can load
@@ -92,9 +145,12 @@ const globalForCodexRuns = globalThis as unknown as {
 globalForCodexRuns.inboxZeroCodexRunQueues ??= new Map();
 const codexRunQueues = globalForCodexRuns.inboxZeroCodexRunQueues;
 
-// A call that is never finished (a stream nobody reads or cancels) gives up
-// its run slot and folder after this long.
+// A call still running after this long is stopped. A stopped CLI that still
+// hasn't exited this long after that has its run slot and folder freed anyway.
 export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
+// How long a stopped CLI gets to exit before that is logged as an error, and
+// how long a CLI tool server gets to close.
+export const CLI_STOP_WAIT_MS = 10 * 1000;
 
 export function assertCliLlmEnabled(provider: CliProvider) {
   if (env.CLI_LLM_ENABLED) return;
@@ -110,14 +166,16 @@ export function isCliSubscriptionProvider(
   return CLI_SUBSCRIPTION_PROVIDERS.some((value) => value === provider);
 }
 
-// Who may use the server's own CLI login. Unset: everyone, so single-user
-// installs keep working. Set but empty: nobody. "*": everyone. Otherwise only
-// the listed addresses, and only once the address is verified, since some
-// sign-in providers let a user claim any email.
+// Who may use the server's own CLI login. Only users with a verified address,
+// since some sign-in providers let a user claim any email. Among those, unset:
+// everyone, so single-user installs keep working. Set but empty: nobody.
+// "*": everyone. Otherwise only the listed addresses.
 export function isCliLlmOwner(user: {
   email: string | null | undefined;
   emailVerified: boolean | null | undefined;
 }): boolean {
+  if (!user.email || user.emailVerified !== true) return false;
+
   const raw = env.CLI_LLM_OWNER_EMAILS;
   if (raw === undefined) return true;
 
@@ -126,7 +184,6 @@ export function isCliLlmOwner(user: {
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
   if (owners.includes("*")) return true;
-  if (!user.email || user.emailVerified !== true) return false;
   return owners.includes(user.email.trim().toLowerCase());
 }
 
@@ -167,27 +224,26 @@ export function buildClaudeUserEnv({
   };
 }
 
-// The Codex child env. Without `codexHome` the run uses the server's own
-// login; with it, the user's login in that folder and no host credentials.
-export function buildCodexEnv(
-  user: { codexHome: string; home: string } | null,
-): Record<string, string> {
+// The Codex child env for a run's own Codex home. Only a server-login run
+// keeps the server's API key variables.
+export function buildCodexEnv({
+  codexHome,
+  home,
+  serverLogin,
+}: {
+  codexHome: string;
+  home: string;
+  serverLogin: boolean;
+}): Record<string, string> {
   const childEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     const keep =
       CODEX_SAFE_ENV_RE.test(key) ||
-      (!user && CODEX_SERVER_LOGIN_ENV.includes(key));
+      (serverLogin && CODEX_SERVER_LOGIN_ENV.includes(key));
     childEnv[key] = keep ? (value ?? "") : "";
   }
-  if (!user) return childEnv;
 
-  return {
-    ...childEnv,
-    HOME: user.home,
-    CODEX_HOME: user.codexHome,
-    OPENAI_API_KEY: "",
-    CODEX_API_KEY: "",
-  };
+  return { ...childEnv, HOME: home, CODEX_HOME: codexHome };
 }
 
 export function createCliLanguageModel({
@@ -207,29 +263,21 @@ export function createCliLanguageModel({
         provider,
         modelName,
         cliLogin,
-        buildModel: (module, run) =>
-          getFactory(
+        buildModel: (module, run) => ({
+          model: getFactory(
             module,
             "codexExec",
             provider,
-          )(modelName, {
-            allowNpx: env.CODEX_CLI_ALLOW_NPX,
-            skipGitRepoCheck: true,
-            approvalMode: "never",
-            sandboxMode: "read-only",
-            ...(env.CODEX_CLI_PATH ? { codexPath: env.CODEX_CLI_PATH } : {}),
-            cwd: run.cwd,
-            env: run.env,
-            logger: false,
-          }),
+          )(modelName, codexRunSettings(run)),
+        }),
       });
     case Provider.CLAUDE_CODE:
       return createCliRunModel({
         provider,
         modelName,
         cliLogin,
-        buildModel: (module, run) =>
-          getFactory(
+        buildModel: (module, run) => ({
+          model: getFactory(
             module,
             "claudeCode",
             provider,
@@ -237,6 +285,7 @@ export function createCliLanguageModel({
             ...claudeCodeRunSettings(run),
             allowedTools: [],
           }),
+        }),
       });
     default:
       throw new SafeError(`Unsupported CLI LLM provider: ${provider}`);
@@ -246,52 +295,285 @@ export function createCliLanguageModel({
 // AI SDK tools cannot be auto-bridged at the LanguageModelV4 layer: by the
 // time the wrapper sees them they have been reduced to JSON schemas with no
 // `execute`. Callers that pass tools must therefore use this helper, which
-// wires the original tool record through `createAiSdkMcpServer` so the
-// Claude Code CLI can invoke them locally over MCP.
-export async function createClaudeCodeLanguageModelWithBridgedTools({
+// serves the original tool record to the CLI as one MCP server in this
+// process, so the CLI calls the tools and Inbox Zero runs them.
+export async function createCliLanguageModelWithBridgedTools({
+  provider,
   modelName,
   tools,
   cliLogin,
 }: {
+  provider: CliProvider;
   modelName: string;
   tools: Record<string, McpBridgedTool>;
   cliLogin?: CliLoginScope;
 }): Promise<LanguageModelV4> {
-  assertCliLlmEnabled(Provider.CLAUDE_CODE);
+  assertCliLlmEnabled(provider);
 
   const toolNames = Object.keys(tools);
   if (toolNames.length === 0) {
-    return createCliLanguageModel({
-      provider: Provider.CLAUDE_CODE,
-      modelName,
-      cliLogin,
-    });
+    return createCliLanguageModel({ provider, modelName, cliLogin });
   }
 
-  const allowedTools = toolNames.map((name) => prefixToolName(name));
+  switch (provider) {
+    case Provider.CODEX_CLI:
+      return createCliRunModel({
+        provider,
+        modelName,
+        cliLogin,
+        bridgedToolNames: toolNames,
+        buildModel: async (module, run) => {
+          const createServer = getFactory(
+            module,
+            "createLocalMcpServer",
+            provider,
+          ) as unknown as CodexMcpServerFactory;
+          const bridge = await toCodexMcpTools(tools, run.abortSignal);
+          const server = await createServer({
+            name: CLI_TOOLS_MCP_SERVER_NAME,
+            tools: bridge.tools,
+          });
+          try {
+            const model = getFactory(
+              module,
+              "codexExec",
+              provider,
+            )(modelName, {
+              ...codexRunSettings(run),
+              mcpServers: {
+                [CLI_TOOLS_MCP_SERVER_NAME]: {
+                  ...server.config,
+                  enabledTools: toolNames,
+                },
+              },
+              // Codex asks before calling an MCP tool that isn't marked
+              // read-only, and with approvals off that ask is declined. Only
+              // this server's tools are approved up front.
+              configOverrides: {
+                [`mcp_servers.${CLI_TOOLS_MCP_SERVER_NAME}.default_tools_approval_mode`]:
+                  "approve",
+              },
+            });
+            return {
+              model,
+              mapPart: toBridgedCodexPart,
+              // Closing the server does not stop a tool call it is running,
+              // so those are waited for in full before the run is freed.
+              close: async () => {
+                await bridge.settle();
+                await Promise.race([server.stop(), sleep(CLI_STOP_WAIT_MS)]);
+              },
+            };
+          } catch (error) {
+            await bridge.settle();
+            await server.stop();
+            throw error;
+          }
+        },
+      });
+    case Provider.CLAUDE_CODE: {
+      const allowedTools = toolNames.map((name) => prefixToolName(name));
+      return createCliRunModel({
+        provider,
+        modelName,
+        cliLogin,
+        buildModel: (module, run) => {
+          const claudeCode = getFactory(module, "claudeCode", provider);
+          const createBridge = getFactory(
+            module,
+            "createAiSdkMcpServer",
+            provider,
+          ) as McpBridgeFactory;
+          const mcpServer = createBridge(CLI_TOOLS_MCP_SERVER_NAME, tools);
 
-  return createCliRunModel({
-    provider: Provider.CLAUDE_CODE,
-    modelName,
-    cliLogin,
-    buildModel: (module, run) => {
-      const claudeCode = getFactory(module, "claudeCode", Provider.CLAUDE_CODE);
-      const createBridge = getFactory(
-        module,
-        "createAiSdkMcpServer",
-        Provider.CLAUDE_CODE,
-      ) as McpBridgeFactory;
-      const mcpServer = createBridge(CLAUDE_CODE_MCP_SERVER_NAME, tools);
+          return {
+            model: claudeCode(modelName, {
+              ...claudeCodeRunSettings(run),
+              allowedTools,
+              mcpServers: { [CLI_TOOLS_MCP_SERVER_NAME]: mcpServer },
+            }),
+            mapPart: unprefixPart,
+          };
+        },
+      });
+    }
+    default:
+      throw new SafeError(`Unsupported CLI LLM provider: ${provider}`);
+  }
+}
 
-      return wrapWithUnprefixedToolNames(
-        claudeCode(modelName, {
-          ...claudeCodeRunSettings(run),
-          allowedTools,
-          mcpServers: { [CLAUDE_CODE_MCP_SERVER_NAME]: mcpServer },
-        }),
+function codexRunSettings(run: CliRunSettings) {
+  return {
+    allowNpx: env.CODEX_CLI_ALLOW_NPX,
+    skipGitRepoCheck: true,
+    approvalMode: "never",
+    sandboxMode: "read-only",
+    ...(env.CODEX_CLI_PATH ? { codexPath: env.CODEX_CLI_PATH } : {}),
+    cwd: run.cwd,
+    env: run.env,
+    logger: false,
+  };
+}
+
+// Inputs are checked against each tool's own schema before it runs, as the
+// AI SDK would; the local MCP server passes arguments through unchecked.
+// Each call gets an abort signal that fires when the run stops or ends, no
+// new call starts after that, and `settle` resolves once every started call
+// has finished.
+async function toCodexMcpTools(
+  tools: Record<string, McpBridgedTool>,
+  runSignal: AbortSignal,
+): Promise<{ tools: CodexMcpTool[]; settle: () => Promise<void> }> {
+  const ended = new AbortController();
+  const abortSignal = AbortSignal.any([runSignal, ended.signal]);
+  const inFlight = new Set<Promise<unknown>>();
+
+  const bridged = await Promise.all(
+    Object.entries(tools).map(async ([name, tool]) => {
+      const execute = tool.execute;
+      if (typeof execute !== "function") {
+        throw new SafeError(
+          `Tool "${name}" has no execute function, so it cannot be bridged to the CLI.`,
+        );
+      }
+      const schema = asSchema(
+        tool.inputSchema as Parameters<typeof asSchema>[0],
       );
+      return {
+        name,
+        description:
+          typeof tool.description === "string" ? tool.description : undefined,
+        inputSchema: await schema.jsonSchema,
+        execute: (input: unknown) => {
+          if (abortSignal.aborted) {
+            return Promise.reject(
+              new Error(`Tool "${name}" was not run: this AI run has stopped.`),
+            );
+          }
+          const call = (async () => {
+            const parsed = schema.validate
+              ? await schema.validate(input ?? {})
+              : { success: true as const, value: input };
+            if (!parsed.success) {
+              throw new Error(
+                `Invalid input for tool "${name}": ${parsed.error.message}`,
+              );
+            }
+            return execute.call(tool, parsed.value as never, {
+              toolCallId: randomUUID(),
+              messages: [],
+              abortSignal,
+            });
+          })();
+          inFlight.add(call);
+          const forget = () => inFlight.delete(call);
+          call.then(forget, forget);
+          return call;
+        },
+      };
+    }),
+  );
+
+  return {
+    tools: bridged,
+    settle: async () => {
+      ended.abort(new Error("The AI run has ended."));
+      if (inFlight.size === 0) return;
+      // Past the hard cap the run is freed anyway so the user's queue is not
+      // stuck behind a tool that never settles.
+      const settled = await Promise.race([
+        Promise.allSettled([...inFlight]).then(() => true),
+        sleep(MAX_CLI_CALL_MS).then(() => false),
+      ]);
+      if (!settled) {
+        logger.error("Bridged tool call never settled; freeing its run anyway");
+      }
     },
-  });
+  };
+}
+
+// Codex reports each MCP call as a provider-executed tool call whose input is
+// `{server, tool, status, arguments}` and whose result wraps the MCP reply.
+// For calls to the Inbox Zero server, callers get the tool's own input and
+// output instead, the same shape the Claude Code bridge produces.
+function toBridgedCodexPart(part: unknown): unknown {
+  if (!part || typeof part !== "object") return part;
+  const record = part as Record<string, unknown>;
+
+  switch (record.type) {
+    case "tool-call": {
+      const call = parseCodexMcpPayload(record.input);
+      if (call?.server !== CLI_TOOLS_MCP_SERVER_NAME) return part;
+      return { ...record, input: JSON.stringify(call.arguments ?? {}) };
+    }
+    case "tool-input-delta": {
+      const call = parseCodexMcpPayload(record.delta);
+      if (call?.server !== CLI_TOOLS_MCP_SERVER_NAME) return part;
+      return { ...record, delta: JSON.stringify(call.arguments ?? {}) };
+    }
+    case "tool-result": {
+      const outcome = record.result as {
+        server?: unknown;
+        result?: { content?: unknown; isError?: unknown };
+        error?: unknown;
+      } | null;
+      if (outcome?.server !== CLI_TOOLS_MCP_SERVER_NAME) return part;
+      if (outcome.error !== undefined && outcome.error !== null) {
+        return {
+          ...record,
+          result: describeMcpError(outcome.error),
+          isError: true,
+        };
+      }
+      return {
+        ...record,
+        result: parseMcpContent(outcome.result?.content) ?? "",
+        ...(outcome.result?.isError === true ? { isError: true } : {}),
+      };
+    }
+    default:
+      return part;
+  }
+}
+
+function parseCodexMcpPayload(
+  value: unknown,
+): { server?: unknown; tool?: unknown; arguments?: unknown } | null {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return parsed && typeof parsed === "object"
+    ? (parsed as { server?: unknown; tool?: unknown; arguments?: unknown })
+    : null;
+}
+
+// The tool's output was sent as one JSON text block; read it back.
+function parseMcpContent(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  const texts = content
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        block?.type === "text" && typeof block.text === "string",
+    )
+    .map((block) => block.text);
+  if (texts.length !== content.length) return content;
+  const text = texts.join("\n");
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function describeMcpError(error: unknown): string {
+  if (typeof error === "string") return error;
+  const message = (error as { message?: unknown } | null)?.message;
+  return typeof message === "string" ? message : JSON.stringify(error);
 }
 
 // No built-in tools (Read/Grep/Bash/...) and no saved transcripts: the model
@@ -308,7 +590,7 @@ function claudeCodeRunSettings(run: CliRunSettings) {
   };
 }
 
-const TOOL_NAME_PREFIX = `mcp__${CLAUDE_CODE_MCP_SERVER_NAME}__`;
+const TOOL_NAME_PREFIX = `mcp__${CLI_TOOLS_MCP_SERVER_NAME}__`;
 
 function prefixToolName(name: string): string {
   return `${TOOL_NAME_PREFIX}${name}`;
@@ -323,48 +605,7 @@ function unprefixToolName(name: string): string {
 // The MCP bridge causes the Claude Code CLI to surface tool calls as
 // `mcp__inboxzero__<name>`. Inbox Zero callers (stop conditions, UI part
 // renderers, validators) match on the original tool names, so the prefix is
-// stripped from every `toolName` field in both the non-streaming and
-// streaming response paths before it reaches the AI SDK consumer.
-function wrapWithUnprefixedToolNames(model: LanguageModelV4): LanguageModelV4 {
-  const wrapped = {
-    specificationVersion: model.specificationVersion,
-    provider: model.provider,
-    modelId: model.modelId,
-    supportedUrls: model.supportedUrls,
-    async doGenerate(...args: unknown[]) {
-      const doGenerate = getModelMethod(
-        model,
-        "doGenerate",
-        Provider.CLAUDE_CODE,
-      );
-      const result = (await doGenerate(...args)) as {
-        content?: unknown[];
-      } & Record<string, unknown>;
-      return {
-        ...result,
-        ...(Array.isArray(result.content)
-          ? { content: result.content.map(unprefixPart) }
-          : {}),
-      };
-    },
-    async doStream(...args: unknown[]) {
-      const doStream = getModelMethod(model, "doStream", Provider.CLAUDE_CODE);
-      const result = (await doStream(...args)) as {
-        stream: ReadableStream<unknown>;
-      } & Record<string, unknown>;
-      const stream = result.stream.pipeThrough(
-        new TransformStream({
-          transform(chunk, controller) {
-            controller.enqueue(unprefixPart(chunk));
-          },
-        }),
-      );
-      return { ...result, stream };
-    },
-  };
-  return wrapped as unknown as LanguageModelV4;
-}
-
+// stripped from every `toolName` field before it reaches the AI SDK consumer.
 function unprefixPart(part: unknown): unknown {
   if (!part || typeof part !== "object") return part;
   const record = part as Record<string, unknown>;
@@ -380,11 +621,14 @@ function createCliRunModel({
   provider,
   modelName,
   cliLogin,
+  bridgedToolNames = [],
   buildModel,
 }: {
   provider: CliProvider;
   modelName: string;
   cliLogin?: CliLoginScope;
+  // Inbox Zero tools served to this run; Codex may call only these.
+  bridgedToolNames?: readonly string[];
   buildModel: BuildCliModel;
 }): LanguageModelV4 {
   let modulePromise: Promise<CliProviderModule> | undefined;
@@ -398,12 +642,11 @@ function createCliRunModel({
 
   const startCall = async (options: unknown) => {
     const module = await getModule();
+    const callerSignal = (options as { abortSignal?: AbortSignal } | undefined)
+      ?.abortSignal;
     const release =
       provider === Provider.CODEX_CLI && cliLogin
-        ? await acquireCodexRun(
-            cliLogin.userId,
-            (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
-          )
+        ? await acquireCodexRun(cliLogin.userId, callerSignal)
         : () => {};
 
     let run: CliRun | undefined;
@@ -411,38 +654,108 @@ function createCliRunModel({
       const login = await resolveUserCliLogin(provider, cliLogin);
       if (!login) release();
       run = await startCliRun(provider, login);
-      const model = buildModel(module, run);
 
-      let ended = false;
-      const end = async () => {
-        if (ended) return;
-        ended = true;
-        clearTimeout(maxCallTimer);
-        await run?.finish();
-        release();
+      // Both providers stop their CLI process when this signal aborts.
+      const stopController = new AbortController();
+      const abortSignal = callerSignal
+        ? AbortSignal.any([callerSignal, stopController.signal])
+        : stopController.signal;
+
+      const {
+        model,
+        mapPart = (part: unknown) => part,
+        close,
+      } = await buildModel(module, { ...run, abortSignal });
+
+      let launched = false;
+      let markExited = () => {};
+      const exited = new Promise<void>((resolve) => {
+        markExited = resolve;
+      });
+
+      // Runs once the CLI has exited, or once a stopped CLI has outlived the
+      // hard cap in `waitForStoppedExit`.
+      let ending: Promise<void> | undefined;
+      const end = () => {
+        ending ??= (async () => {
+          clearTimeout(maxCallTimer);
+          callerSignal?.removeEventListener("abort", onCallerAbort);
+          if (close) {
+            await close().catch(() => {
+              logger.warn("Could not stop the CLI tool server", { provider });
+            });
+          }
+          await run?.finish();
+          release();
+        })();
+        return ending;
       };
+
+      let stopping: Promise<void> | undefined;
+      const call = {
+        model,
+        options: { ...(options as object), abortSignal },
+        // Settles once the CLI process has exited.
+        exited,
+        markExited,
+        // Call right before starting the CLI; a call stopped before this
+        // never starts one.
+        launch: () => {
+          abortSignal.throwIfAborted();
+          launched = true;
+        },
+        mapPart,
+        // Codex's own tools are turned off in its config; if it runs one
+        // anyway, or any tool that isn't a bridged Inbox Zero tool, the run
+        // is stopped.
+        findBlockedTool:
+          provider === Provider.CODEX_CLI
+            ? (part: unknown) => findBlockedCodexTool(part, bridgedToolNames)
+            : () => null,
+        end,
+        // The login folder and run slot are only freed once the CLI has
+        // exited. The provider can only ask it to exit (SIGTERM) and exposes
+        // no way to force it, so a CLI that ignores that holds its slot up to
+        // a hard cap, and is logged as an error.
+        stop: (reason: unknown) => {
+          stopping ??= (async () => {
+            stopController.abort(reason);
+            if (!launched) markExited();
+            await waitForStoppedExit(exited, provider);
+            await end();
+          })();
+          return stopping;
+        },
+        // Returns the reconnect error when the user's login was rejected.
+        checkLoginRejected: async (
+          error: unknown,
+        ): Promise<SafeError | null> => {
+          if (!login || !isCliAuthenticationError(module, provider, error)) {
+            return null;
+          }
+          await markNeedsReconnect(login);
+          return new SafeError(RECONNECT_SUBSCRIPTION_MESSAGE);
+        },
+        handleError: async (error: unknown): Promise<never> => {
+          throw (await call.checkLoginRejected(error)) ?? error;
+        },
+      };
+
       const maxCallTimer = setTimeout(() => {
-        logger.warn("CLI call was never finished; releasing it", { provider });
-        end().catch(() => undefined);
+        logger.warn("CLI call ran too long; stopping it", { provider });
+        call.stop(new Error("CLI call ran too long")).catch(() => undefined);
       }, MAX_CLI_CALL_MS);
       maxCallTimer.unref?.();
 
-      // Returns the reconnect error when the user's login was rejected.
-      const checkLoginRejected = async (
-        error: unknown,
-      ): Promise<SafeError | null> => {
-        if (!login || !isCliAuthenticationError(module, provider, error)) {
-          return null;
-        }
-        await markNeedsReconnect(login);
-        return new SafeError(RECONNECT_SUBSCRIPTION_MESSAGE);
+      // A caller that aborts and then drops the stream still frees the run
+      // once the CLI exits.
+      const onCallerAbort = () => {
+        call.stop(callerSignal?.reason).catch(() => undefined);
       };
+      callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+      if (callerSignal?.aborted) onCallerAbort();
 
-      const handleError = async (error: unknown): Promise<never> => {
-        throw (await checkLoginRejected(error)) ?? error;
-      };
-
-      return { model, end, handleError, checkLoginRejected };
+      return call;
     } catch (error) {
       await run?.finish();
       release();
@@ -459,7 +772,22 @@ function createCliRunModel({
       const call = await startCall(args[0]);
       try {
         const doGenerate = getModelMethod(call.model, "doGenerate", provider);
-        return await doGenerate(...args);
+        call.launch();
+        const pending = Promise.resolve(
+          doGenerate(call.options, ...args.slice(1)),
+        );
+        pending.then(call.markExited, call.markExited);
+        const result = (await pending) as { content?: unknown } & Record<
+          string,
+          unknown
+        >;
+        if (!Array.isArray(result.content)) return result;
+        // The run has already finished here, so its output is dropped.
+        const blockedTool = result.content
+          .map(call.findBlockedTool)
+          .find(Boolean);
+        if (blockedTool) throw blockedToolError(provider, blockedTool);
+        return { ...result, content: result.content.map(call.mapPart) };
       } catch (error) {
         return await call.handleError(error);
       } finally {
@@ -471,32 +799,79 @@ function createCliRunModel({
       let result: { stream: ReadableStream<unknown> } & Record<string, unknown>;
       try {
         const doStream = getModelMethod(call.model, "doStream", provider);
-        result = (await doStream(...args)) as typeof result;
+        call.launch();
+        result = (await doStream(
+          call.options,
+          ...args.slice(1),
+        )) as typeof result;
       } catch (error) {
+        // Neither provider has a CLI running when doStream itself fails.
+        call.markExited();
         await call.end();
         return call.handleError(error);
       }
       // The CLI keeps running while the stream is read, so its folder and the
-      // Codex run slot are kept until the stream ends. Both providers report
-      // a rejected login inside the stream (an error part, or by erroring the
-      // stream), not from doStream itself.
-      const stream = result.stream.pipeThrough(
-        new TransformStream({
-          async transform(chunk, controller) {
-            const part = chunk as { type?: string; error?: unknown };
+      // Codex run slot are kept until it exits. The source stream ends when
+      // the CLI exits, so it is read through here as parts arrive, whether
+      // or not anyone reads this stream, and the run is freed as soon as it
+      // ends. Both providers report a rejected login inside the stream (an
+      // error part, or by erroring the stream), not from doStream itself.
+      const reader = result.stream.getReader();
+      let downstreamOpen = true;
+      let downstream: ReadableStreamDefaultController<unknown> | undefined;
+      const stream = new ReadableStream({
+        start(controller) {
+          downstream = controller;
+        },
+        async cancel(reason: unknown) {
+          downstreamOpen = false;
+          await call.stop(reason);
+          await reader.cancel(reason).catch(() => undefined);
+        },
+      });
+
+      const forward = async () => {
+        let failure: unknown;
+        let failed = false;
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            // After a stop, the rest is read only to see the CLI exit.
+            if (failed || !downstreamOpen) continue;
+            const blockedTool = call.findBlockedTool(next.value);
+            if (blockedTool) {
+              failed = true;
+              failure = blockedToolError(provider, blockedTool);
+              call.stop(failure).catch(() => undefined);
+              continue;
+            }
+            const part = next.value as { type?: string; error?: unknown };
             const rejected =
               part?.type === "error"
                 ? await call.checkLoginRejected(part.error)
                 : null;
-            controller.enqueue(rejected ? { ...part, error: rejected } : chunk);
-          },
-          flush: call.end,
-          async cancel(reason: unknown) {
-            await call.checkLoginRejected(reason);
-            await call.end();
-          },
-        } as Transformer<unknown, unknown>),
-      );
+            if (downstreamOpen) {
+              downstream?.enqueue(
+                rejected ? { ...part, error: rejected } : call.mapPart(part),
+              );
+            }
+          }
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            failure = (await call.checkLoginRejected(error)) ?? error;
+          }
+        }
+        call.markExited();
+        await call.end();
+        if (!downstreamOpen) return;
+        if (failed) downstream?.error(failure);
+        else downstream?.close();
+      };
+      forward().catch(() => {
+        logger.error("Could not finish reading the CLI stream", { provider });
+      });
       return { ...result, stream };
     },
   } as unknown as LanguageModelV4;
@@ -520,15 +895,26 @@ async function startCliRun(
     await mkdir(cwd, { mode: 0o700 });
 
     if (provider === Provider.CODEX_CLI) {
-      if (!login) {
-        return { cwd, env: buildCodexEnv(null), finish: removeRunDir };
-      }
       const codexHome = path.join(runDir, "codex");
       await mkdir(codexHome, { mode: 0o700 });
+      if (!login) {
+        // The server's login is linked, not copied: Codex rewrites auth.json
+        // in place when it refreshes, so the refresh lands in the host file.
+        await writeCodexHome(codexHome);
+        await symlink(
+          path.join(getHostCodexHome(), "auth.json"),
+          path.join(codexHome, "auth.json"),
+        );
+        return {
+          cwd,
+          env: buildCodexEnv({ codexHome, home: runDir, serverLogin: true }),
+          finish: removeRunDir,
+        };
+      }
       await writeCodexHome(codexHome, login.credential);
       return {
         cwd,
-        env: buildCodexEnv({ codexHome, home: runDir }),
+        env: buildCodexEnv({ codexHome, home: runDir, serverLogin: false }),
         finish: async () => {
           await saveRefreshedCodexLogin(codexHome, login).catch(() => {
             logger.error("Could not save refreshed Codex login");
@@ -572,6 +958,22 @@ async function saveRefreshedCodexLogin(codexHome: string, login: UserCliLogin) {
   });
 }
 
+// Run before a call starts: throws the connect or reconnect prompt when the
+// user's own login is required but not usable, and otherwise says whether
+// the call will run on the user's own login rather than the server's.
+export async function checkUserCliLogin(
+  provider: CliProvider,
+  { userId, allowServerLogin }: CliLoginScope,
+): Promise<boolean> {
+  const login = await prisma.aiSubscriptionLogin.findUnique({
+    where: { userId_provider: { userId, provider } },
+    select: { status: true, credential: true },
+  });
+  if (isUsableLogin(login)) return true;
+  if (allowServerLogin) return false;
+  throw missingLoginError(login);
+}
+
 // Returns null when the CLI should run with the server's own login.
 async function resolveUserCliLogin(
   provider: CliProvider,
@@ -585,7 +987,7 @@ async function resolveUserCliLogin(
     select: { status: true, credential: true, connectedAt: true },
   });
 
-  if (login?.status === "connected" && login.credential) {
+  if (isUsableLogin(login)) {
     logger.info("Using user CLI subscription login", {
       provider,
       userLogin: true,
@@ -599,20 +1001,80 @@ async function resolveUserCliLogin(
   }
 
   if (allowServerLogin) return null;
+  throw missingLoginError(login);
+}
 
-  throw new SafeError(
+function missingLoginError(login: unknown) {
+  return new SafeError(
     login ? RECONNECT_SUBSCRIPTION_MESSAGE : CONNECT_SUBSCRIPTION_MESSAGE,
   );
 }
 
+// Only the sign-in this run used: a newer sign-in in the meantime is kept.
 async function markNeedsReconnect(login: UserCliLogin) {
   await prisma.aiSubscriptionLogin.updateMany({
-    where: { userId: login.userId, provider: login.provider },
+    where: {
+      userId: login.userId,
+      provider: login.provider,
+      status: "connected",
+      connectedAt: login.connectedAt,
+    },
     data: {
       status: "needs-reconnect",
       lastError: "The sign-in was rejected or has expired.",
     },
   });
+}
+
+// Codex reports each tool it runs itself (shell, file patch, web search, MCP)
+// as a provider-executed tool call. Only calls to this run's bridged Inbox
+// Zero tools pass; returns the name of any other tool.
+function findBlockedCodexTool(
+  part: unknown,
+  bridgedToolNames: readonly string[],
+): string | null {
+  if (!part || typeof part !== "object") return null;
+  const { type, providerExecuted, toolName, input } = part as {
+    type?: unknown;
+    providerExecuted?: unknown;
+    toolName?: unknown;
+    input?: unknown;
+  };
+  if (type !== "tool-call" || providerExecuted !== true) return null;
+  const call = parseCodexMcpPayload(input);
+  if (
+    call?.server === CLI_TOOLS_MCP_SERVER_NAME &&
+    typeof call.tool === "string" &&
+    bridgedToolNames.includes(call.tool)
+  ) {
+    return null;
+  }
+  return typeof toolName === "string" && toolName ? toolName : "unknown";
+}
+
+// Only the tool name is logged: its input and output may hold email content.
+function blockedToolError(provider: CliProvider, toolName: string) {
+  logger.warn("Stopped a CLI run that used one of its own tools", {
+    provider,
+    toolName,
+  });
+  return new SafeError(CODEX_TOOL_BLOCKED_MESSAGE);
+}
+
+function isUsableLogin<T extends { status: string; credential: string | null }>(
+  login: T | null,
+): login is T & { credential: string } {
+  return login?.status === "connected" && !!login.credential;
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref?.();
+  });
+}
+
+function getHostCodexHome() {
+  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 }
 
 function isCliAuthenticationError(
@@ -641,20 +1103,17 @@ async function acquireCodexRun(
   abortSignal: AbortSignal | undefined,
 ): Promise<() => void> {
   const previous = codexRunQueues.get(userId) ?? Promise.resolve();
-  let releaseCurrent = () => {};
+  let release = () => {};
   const current = new Promise<void>((resolve) => {
-    releaseCurrent = resolve;
+    release = resolve;
   });
+  // The tail settles only once every run ahead has finished too, so the
+  // queue entry is removed then, not when this run releases.
   const tail = previous.then(() => current);
   codexRunQueues.set(userId, tail);
-
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    releaseCurrent();
+  tail.then(() => {
     if (codexRunQueues.get(userId) === tail) codexRunQueues.delete(userId);
-  };
+  });
 
   // A request cancelled while waiting leaves the queue at once; the runs
   // behind it still wait for the ones ahead.
@@ -665,6 +1124,25 @@ async function acquireCodexRun(
     throw error;
   }
   return release;
+}
+
+// Waits for a stopped CLI to exit. Past the grace period it is logged; past
+// the hard cap its run is freed anyway so the user's queue is not stuck.
+async function waitForStoppedExit(
+  exited: Promise<void>,
+  provider: CliProvider,
+) {
+  const exitedWithin = (ms: number) =>
+    Promise.race([exited.then(() => true), sleep(ms).then(() => false)]);
+
+  if (await exitedWithin(CLI_STOP_WAIT_MS)) return;
+  logger.error("Stopped CLI has not exited; keeping its run until it does", {
+    provider,
+  });
+  if (await exitedWithin(MAX_CLI_CALL_MS)) return;
+  logger.error("Stopped CLI never exited; freeing its run anyway", {
+    provider,
+  });
 }
 
 function waitUnlessAborted(
