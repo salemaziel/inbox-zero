@@ -400,6 +400,6 @@ function ModelSectionForm(props: {
 
 function isSubscriptionProvider(
   provider: string,
-): provider is keyof typeof SUBSCRIPTION_MODELS {
+): provider is Extract<keyof typeof SUBSCRIPTION_MODELS, string> {
   return provider in SUBSCRIPTION_MODELS;
 }
