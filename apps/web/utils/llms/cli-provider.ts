@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -9,6 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { asSchema } from "ai";
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
 import { Provider } from "@/utils/llms/config";
@@ -52,10 +54,35 @@ type CliRunSettings = { cwd: string; env?: Record<string, string> };
 
 type CliRun = CliRunSettings & { finish: () => Promise<void> };
 
+type BuiltCliModel = {
+  model: LanguageModelV4;
+  // Rewrites each response part before the caller sees it.
+  mapPart?: (part: unknown) => unknown;
+  // Runs once the CLI has exited.
+  close?: () => Promise<void>;
+};
+
 type BuildCliModel = (
   module: CliProviderModule,
   run: CliRunSettings,
-) => LanguageModelV4;
+) => BuiltCliModel | Promise<BuiltCliModel>;
+
+// The tools served to Codex over the bridge, as the local MCP server in
+// ai-sdk-provider-codex-cli expects them.
+type CodexMcpTool = {
+  name: string;
+  description?: string;
+  inputSchema: unknown;
+  execute: (input: unknown) => Promise<unknown>;
+};
+
+type CodexMcpServerFactory = (options: {
+  name: string;
+  tools: CodexMcpTool[];
+}) => Promise<{
+  config: { transport: "http"; url: string; bearerToken: string };
+  stop: () => Promise<void>;
+}>;
 
 const runtimeImport = (specifier: string): Promise<CliProviderModule> =>
   import(/* webpackIgnore: true */ specifier);
@@ -64,10 +91,11 @@ const logger = createScopedLogger("llms/cli-provider");
 
 const CLAUDE_CODE_PACKAGE = "ai-sdk-provider-claude-code";
 const CODEX_CLI_PACKAGE = "ai-sdk-provider-codex-cli";
-const CLAUDE_CODE_MCP_SERVER_NAME = "inboxzero";
+// The MCP server that serves Inbox Zero's own tools to a CLI run.
+const CLI_TOOLS_MCP_SERVER_NAME = "inboxzero";
 // Every Codex run gets only this config, never the host's: no shell, file,
-// image, web or sub-agent tools and no MCP servers, plugins or apps. Inbox
-// Zero does not bridge its own tools to Codex, so a run only generates text.
+// image, web or sub-agent tools and no MCP servers, plugins or apps. The only
+// tools a run can get are Inbox Zero's own, added per run over MCP.
 // Checked with `codex debug prompt-input` on Codex CLI 0.164.0.
 const CODEX_CONFIG_TOML = `cli_auth_credentials_store = "file"
 web_search = "disabled"
@@ -106,10 +134,6 @@ export const RECONNECT_SUBSCRIPTION_MESSAGE =
   "Your connected ChatGPT or Claude account was signed out. Reconnect it in Settings to use the AI assistant.";
 export const CODEX_TOOL_BLOCKED_MESSAGE =
   "The AI model tried to run a command, so the request was stopped.";
-
-// MCP servers whose tools a Codex run may call. Codex runs get no Inbox Zero
-// tools yet, so this is empty and every tool Codex runs stops the run.
-export const CODEX_ALLOWED_MCP_SERVERS: readonly string[] = [];
 
 // Concurrent Codex runs for one user would race on its rotating refresh token.
 // Kept on globalThis because route handlers and server actions can load
@@ -237,29 +261,21 @@ export function createCliLanguageModel({
         provider,
         modelName,
         cliLogin,
-        buildModel: (module, run) =>
-          getFactory(
+        buildModel: (module, run) => ({
+          model: getFactory(
             module,
             "codexExec",
             provider,
-          )(modelName, {
-            allowNpx: env.CODEX_CLI_ALLOW_NPX,
-            skipGitRepoCheck: true,
-            approvalMode: "never",
-            sandboxMode: "read-only",
-            ...(env.CODEX_CLI_PATH ? { codexPath: env.CODEX_CLI_PATH } : {}),
-            cwd: run.cwd,
-            env: run.env,
-            logger: false,
-          }),
+          )(modelName, codexRunSettings(run)),
+        }),
       });
     case Provider.CLAUDE_CODE:
       return createCliRunModel({
         provider,
         modelName,
         cliLogin,
-        buildModel: (module, run) =>
-          getFactory(
+        buildModel: (module, run) => ({
+          model: getFactory(
             module,
             "claudeCode",
             provider,
@@ -267,6 +283,7 @@ export function createCliLanguageModel({
             ...claudeCodeRunSettings(run),
             allowedTools: [],
           }),
+        }),
       });
     default:
       throw new SafeError(`Unsupported CLI LLM provider: ${provider}`);
@@ -276,52 +293,241 @@ export function createCliLanguageModel({
 // AI SDK tools cannot be auto-bridged at the LanguageModelV4 layer: by the
 // time the wrapper sees them they have been reduced to JSON schemas with no
 // `execute`. Callers that pass tools must therefore use this helper, which
-// wires the original tool record through `createAiSdkMcpServer` so the
-// Claude Code CLI can invoke them locally over MCP.
-export async function createClaudeCodeLanguageModelWithBridgedTools({
+// serves the original tool record to the CLI as one MCP server in this
+// process, so the CLI calls the tools and Inbox Zero runs them.
+export async function createCliLanguageModelWithBridgedTools({
+  provider,
   modelName,
   tools,
   cliLogin,
 }: {
+  provider: CliProvider;
   modelName: string;
   tools: Record<string, McpBridgedTool>;
   cliLogin?: CliLoginScope;
 }): Promise<LanguageModelV4> {
-  assertCliLlmEnabled(Provider.CLAUDE_CODE);
+  assertCliLlmEnabled(provider);
 
   const toolNames = Object.keys(tools);
   if (toolNames.length === 0) {
-    return createCliLanguageModel({
-      provider: Provider.CLAUDE_CODE,
-      modelName,
-      cliLogin,
-    });
+    return createCliLanguageModel({ provider, modelName, cliLogin });
   }
 
-  const allowedTools = toolNames.map((name) => prefixToolName(name));
+  switch (provider) {
+    case Provider.CODEX_CLI:
+      return createCliRunModel({
+        provider,
+        modelName,
+        cliLogin,
+        bridgedToolNames: toolNames,
+        buildModel: async (module, run) => {
+          const createServer = getFactory(
+            module,
+            "createLocalMcpServer",
+            provider,
+          ) as unknown as CodexMcpServerFactory;
+          const server = await createServer({
+            name: CLI_TOOLS_MCP_SERVER_NAME,
+            tools: await toCodexMcpTools(tools),
+          });
+          try {
+            const model = getFactory(
+              module,
+              "codexExec",
+              provider,
+            )(modelName, {
+              ...codexRunSettings(run),
+              mcpServers: {
+                [CLI_TOOLS_MCP_SERVER_NAME]: {
+                  ...server.config,
+                  enabledTools: toolNames,
+                },
+              },
+              // Codex asks before calling an MCP tool that isn't marked
+              // read-only, and with approvals off that ask is declined. Only
+              // this server's tools are approved up front.
+              configOverrides: {
+                [`mcp_servers.${CLI_TOOLS_MCP_SERVER_NAME}.default_tools_approval_mode`]:
+                  "approve",
+              },
+            });
+            return {
+              model,
+              mapPart: toBridgedCodexPart,
+              close: () => server.stop(),
+            };
+          } catch (error) {
+            await server.stop();
+            throw error;
+          }
+        },
+      });
+    case Provider.CLAUDE_CODE: {
+      const allowedTools = toolNames.map((name) => prefixToolName(name));
+      return createCliRunModel({
+        provider,
+        modelName,
+        cliLogin,
+        buildModel: (module, run) => {
+          const claudeCode = getFactory(module, "claudeCode", provider);
+          const createBridge = getFactory(
+            module,
+            "createAiSdkMcpServer",
+            provider,
+          ) as McpBridgeFactory;
+          const mcpServer = createBridge(CLI_TOOLS_MCP_SERVER_NAME, tools);
 
-  return createCliRunModel({
-    provider: Provider.CLAUDE_CODE,
-    modelName,
-    cliLogin,
-    buildModel: (module, run) => {
-      const claudeCode = getFactory(module, "claudeCode", Provider.CLAUDE_CODE);
-      const createBridge = getFactory(
-        module,
-        "createAiSdkMcpServer",
-        Provider.CLAUDE_CODE,
-      ) as McpBridgeFactory;
-      const mcpServer = createBridge(CLAUDE_CODE_MCP_SERVER_NAME, tools);
+          return {
+            model: claudeCode(modelName, {
+              ...claudeCodeRunSettings(run),
+              allowedTools,
+              mcpServers: { [CLI_TOOLS_MCP_SERVER_NAME]: mcpServer },
+            }),
+            mapPart: unprefixPart,
+          };
+        },
+      });
+    }
+    default:
+      throw new SafeError(`Unsupported CLI LLM provider: ${provider}`);
+  }
+}
 
-      return wrapWithUnprefixedToolNames(
-        claudeCode(modelName, {
-          ...claudeCodeRunSettings(run),
-          allowedTools,
-          mcpServers: { [CLAUDE_CODE_MCP_SERVER_NAME]: mcpServer },
-        }),
+function codexRunSettings(run: CliRunSettings) {
+  return {
+    allowNpx: env.CODEX_CLI_ALLOW_NPX,
+    skipGitRepoCheck: true,
+    approvalMode: "never",
+    sandboxMode: "read-only",
+    ...(env.CODEX_CLI_PATH ? { codexPath: env.CODEX_CLI_PATH } : {}),
+    cwd: run.cwd,
+    env: run.env,
+    logger: false,
+  };
+}
+
+// Inputs are checked against each tool's own schema before it runs, as the
+// AI SDK would; the local MCP server passes arguments through unchecked.
+async function toCodexMcpTools(
+  tools: Record<string, McpBridgedTool>,
+): Promise<CodexMcpTool[]> {
+  return Promise.all(
+    Object.entries(tools).map(async ([name, tool]) => {
+      const execute = tool.execute;
+      if (typeof execute !== "function") {
+        throw new SafeError(
+          `Tool "${name}" has no execute function, so it cannot be bridged to the CLI.`,
+        );
+      }
+      const schema = asSchema(
+        tool.inputSchema as Parameters<typeof asSchema>[0],
       );
-    },
-  });
+      return {
+        name,
+        description:
+          typeof tool.description === "string" ? tool.description : undefined,
+        inputSchema: await schema.jsonSchema,
+        execute: async (input: unknown) => {
+          const parsed = schema.validate
+            ? await schema.validate(input ?? {})
+            : { success: true as const, value: input };
+          if (!parsed.success) {
+            throw new Error(
+              `Invalid input for tool "${name}": ${parsed.error.message}`,
+            );
+          }
+          return execute.call(tool, parsed.value as never, {
+            toolCallId: randomUUID(),
+            messages: [],
+          });
+        },
+      };
+    }),
+  );
+}
+
+// Codex reports each MCP call as a provider-executed tool call whose input is
+// `{server, tool, status, arguments}` and whose result wraps the MCP reply.
+// For calls to the Inbox Zero server, callers get the tool's own input and
+// output instead, the same shape the Claude Code bridge produces.
+function toBridgedCodexPart(part: unknown): unknown {
+  if (!part || typeof part !== "object") return part;
+  const record = part as Record<string, unknown>;
+
+  switch (record.type) {
+    case "tool-call": {
+      const call = parseCodexMcpPayload(record.input);
+      if (call?.server !== CLI_TOOLS_MCP_SERVER_NAME) return part;
+      return { ...record, input: JSON.stringify(call.arguments ?? {}) };
+    }
+    case "tool-input-delta": {
+      const call = parseCodexMcpPayload(record.delta);
+      if (call?.server !== CLI_TOOLS_MCP_SERVER_NAME) return part;
+      return { ...record, delta: JSON.stringify(call.arguments ?? {}) };
+    }
+    case "tool-result": {
+      const outcome = record.result as {
+        server?: unknown;
+        result?: { content?: unknown; isError?: unknown };
+        error?: unknown;
+      } | null;
+      if (outcome?.server !== CLI_TOOLS_MCP_SERVER_NAME) return part;
+      if (outcome.error !== undefined && outcome.error !== null) {
+        return {
+          ...record,
+          result: describeMcpError(outcome.error),
+          isError: true,
+        };
+      }
+      return {
+        ...record,
+        result: parseMcpContent(outcome.result?.content) ?? "",
+        ...(outcome.result?.isError === true ? { isError: true } : {}),
+      };
+    }
+    default:
+      return part;
+  }
+}
+
+function parseCodexMcpPayload(
+  value: unknown,
+): { server?: unknown; tool?: unknown; arguments?: unknown } | null {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return parsed && typeof parsed === "object"
+    ? (parsed as { server?: unknown; tool?: unknown; arguments?: unknown })
+    : null;
+}
+
+// The tool's output was sent as one JSON text block; read it back.
+function parseMcpContent(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  const texts = content
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        block?.type === "text" && typeof block.text === "string",
+    )
+    .map((block) => block.text);
+  if (texts.length !== content.length) return content;
+  const text = texts.join("\n");
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function describeMcpError(error: unknown): string {
+  if (typeof error === "string") return error;
+  const message = (error as { message?: unknown } | null)?.message;
+  return typeof message === "string" ? message : JSON.stringify(error);
 }
 
 // No built-in tools (Read/Grep/Bash/...) and no saved transcripts: the model
@@ -338,7 +544,7 @@ function claudeCodeRunSettings(run: CliRunSettings) {
   };
 }
 
-const TOOL_NAME_PREFIX = `mcp__${CLAUDE_CODE_MCP_SERVER_NAME}__`;
+const TOOL_NAME_PREFIX = `mcp__${CLI_TOOLS_MCP_SERVER_NAME}__`;
 
 function prefixToolName(name: string): string {
   return `${TOOL_NAME_PREFIX}${name}`;
@@ -353,48 +559,7 @@ function unprefixToolName(name: string): string {
 // The MCP bridge causes the Claude Code CLI to surface tool calls as
 // `mcp__inboxzero__<name>`. Inbox Zero callers (stop conditions, UI part
 // renderers, validators) match on the original tool names, so the prefix is
-// stripped from every `toolName` field in both the non-streaming and
-// streaming response paths before it reaches the AI SDK consumer.
-function wrapWithUnprefixedToolNames(model: LanguageModelV4): LanguageModelV4 {
-  const wrapped = {
-    specificationVersion: model.specificationVersion,
-    provider: model.provider,
-    modelId: model.modelId,
-    supportedUrls: model.supportedUrls,
-    async doGenerate(...args: unknown[]) {
-      const doGenerate = getModelMethod(
-        model,
-        "doGenerate",
-        Provider.CLAUDE_CODE,
-      );
-      const result = (await doGenerate(...args)) as {
-        content?: unknown[];
-      } & Record<string, unknown>;
-      return {
-        ...result,
-        ...(Array.isArray(result.content)
-          ? { content: result.content.map(unprefixPart) }
-          : {}),
-      };
-    },
-    async doStream(...args: unknown[]) {
-      const doStream = getModelMethod(model, "doStream", Provider.CLAUDE_CODE);
-      const result = (await doStream(...args)) as {
-        stream: ReadableStream<unknown>;
-      } & Record<string, unknown>;
-      const stream = result.stream.pipeThrough(
-        new TransformStream({
-          transform(chunk, controller) {
-            controller.enqueue(unprefixPart(chunk));
-          },
-        }),
-      );
-      return { ...result, stream };
-    },
-  };
-  return wrapped as unknown as LanguageModelV4;
-}
-
+// stripped from every `toolName` field before it reaches the AI SDK consumer.
 function unprefixPart(part: unknown): unknown {
   if (!part || typeof part !== "object") return part;
   const record = part as Record<string, unknown>;
@@ -410,11 +575,14 @@ function createCliRunModel({
   provider,
   modelName,
   cliLogin,
+  bridgedToolNames = [],
   buildModel,
 }: {
   provider: CliProvider;
   modelName: string;
   cliLogin?: CliLoginScope;
+  // Inbox Zero tools served to this run; Codex may call only these.
+  bridgedToolNames?: readonly string[];
   buildModel: BuildCliModel;
 }): LanguageModelV4 {
   let modulePromise: Promise<CliProviderModule> | undefined;
@@ -440,7 +608,11 @@ function createCliRunModel({
       const login = await resolveUserCliLogin(provider, cliLogin);
       if (!login) release();
       run = await startCliRun(provider, login);
-      const model = buildModel(module, run);
+      const {
+        model,
+        mapPart = (part: unknown) => part,
+        close,
+      } = await buildModel(module, run);
 
       // Both providers stop their CLI process when this signal aborts.
       const stopController = new AbortController();
@@ -452,6 +624,14 @@ function createCliRunModel({
       const end = () => {
         ending ??= (async () => {
           clearTimeout(maxCallTimer);
+          if (close) {
+            await Promise.race([
+              close().catch(() => {
+                logger.warn("Could not stop the CLI tool server", { provider });
+              }),
+              sleep(CLI_STOP_WAIT_MS),
+            ]);
+          }
           await run?.finish();
           release();
         })();
@@ -463,10 +643,14 @@ function createCliRunModel({
         options: { ...(options as object), abortSignal },
         // Settles once the CLI process has exited.
         exited: Promise.resolve() as Promise<unknown>,
+        mapPart,
         // Codex's own tools are turned off in its config; if it runs one
-        // anyway, the run is stopped.
+        // anyway, or any tool that isn't a bridged Inbox Zero tool, the run
+        // is stopped.
         findBlockedTool:
-          provider === Provider.CODEX_CLI ? findBlockedCodexTool : () => null,
+          provider === Provider.CODEX_CLI
+            ? (part: unknown) => findBlockedCodexTool(part, bridgedToolNames)
+            : () => null,
         end,
         // The login folder and run slot are only freed once the CLI has
         // exited, or after a bounded wait if it ignores the abort.
@@ -517,13 +701,17 @@ function createCliRunModel({
           doGenerate(call.options, ...args.slice(1)),
         );
         call.exited = pending.catch(() => undefined);
-        const result = await pending;
+        const result = (await pending) as { content?: unknown } & Record<
+          string,
+          unknown
+        >;
+        if (!Array.isArray(result.content)) return result;
         // The run has already finished here, so its output is dropped.
-        const blockedTool = ((result as { content?: unknown[] }).content ?? [])
+        const blockedTool = result.content
           .map(call.findBlockedTool)
           .find(Boolean);
         if (blockedTool) throw blockedToolError(provider, blockedTool);
-        return result;
+        return { ...result, content: result.content.map(call.mapPart) };
       } catch (error) {
         return await call.handleError(error);
       } finally {
@@ -579,7 +767,9 @@ function createCliRunModel({
             part?.type === "error"
               ? await call.checkLoginRejected(part.error)
               : null;
-          controller.enqueue(rejected ? { ...part, error: rejected } : part);
+          controller.enqueue(
+            rejected ? { ...part, error: rejected } : call.mapPart(part),
+          );
         },
         async cancel(reason: unknown) {
           await call.stop(reason);
@@ -741,9 +931,12 @@ async function markNeedsReconnect(login: UserCliLogin) {
 }
 
 // Codex reports each tool it runs itself (shell, file patch, web search, MCP)
-// as a provider-executed tool call. Only calls to an allowed MCP server pass;
-// returns the name of any other tool.
-function findBlockedCodexTool(part: unknown): string | null {
+// as a provider-executed tool call. Only calls to this run's bridged Inbox
+// Zero tools pass; returns the name of any other tool.
+function findBlockedCodexTool(
+  part: unknown,
+  bridgedToolNames: readonly string[],
+): string | null {
   if (!part || typeof part !== "object") return null;
   const { type, providerExecuted, toolName, input } = part as {
     type?: unknown;
@@ -752,22 +945,15 @@ function findBlockedCodexTool(part: unknown): string | null {
     input?: unknown;
   };
   if (type !== "tool-call" || providerExecuted !== true) return null;
-  const server = getMcpServerName(input);
-  if (server && CODEX_ALLOWED_MCP_SERVERS.includes(server)) return null;
-  return typeof toolName === "string" && toolName ? toolName : "unknown";
-}
-
-function getMcpServerName(input: unknown): string | null {
-  let parsed: unknown = input;
-  if (typeof input === "string") {
-    try {
-      parsed = JSON.parse(input);
-    } catch {
-      return null;
-    }
+  const call = parseCodexMcpPayload(input);
+  if (
+    call?.server === CLI_TOOLS_MCP_SERVER_NAME &&
+    typeof call.tool === "string" &&
+    bridgedToolNames.includes(call.tool)
+  ) {
+    return null;
   }
-  const server = (parsed as { server?: unknown } | null)?.server;
-  return typeof server === "string" ? server : null;
+  return typeof toolName === "string" && toolName ? toolName : "unknown";
 }
 
 // Only the tool name is logged: its input and output may hold email content.

@@ -2,6 +2,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { Provider } from "./config";
 
 const prismaMock = vi.hoisted(() => ({
@@ -160,12 +161,13 @@ describe("createCliLanguageModel", () => {
       execute: vi.fn(),
     };
 
-    const { createClaudeCodeLanguageModelWithBridgedTools } =
+    const { createCliLanguageModelWithBridgedTools } =
       await loadCliProviderModule({
         claudeModule: { claudeCode, createAiSdkMcpServer },
       });
 
-    const model = (await createClaudeCodeLanguageModelWithBridgedTools({
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CLAUDE_CODE,
       modelName: "sonnet",
       tools: { searchInbox, createRule },
     })) as any;
@@ -857,15 +859,7 @@ describe("createCliLanguageModel", () => {
     await expect(access(cwd)).rejects.toThrow();
   });
 
-  it("blocks Codex calls to MCP servers that aren't allowed, and leaves other tool calls alone", async () => {
-    const mcpCall = {
-      type: "tool-call",
-      toolCallId: "item-1",
-      toolName: "read_file",
-      input: '{"server":"filesystem","tool":"read_file"}',
-      providerExecuted: true,
-      dynamic: true,
-    };
+  it("blocks every Codex MCP call when no tools are bridged, and leaves app tool calls alone", async () => {
     const appToolCall = {
       type: "tool-call",
       toolCallId: "call-1",
@@ -876,29 +870,196 @@ describe("createCliLanguageModel", () => {
       .fn()
       .mockResolvedValueOnce({ content: [appToolCall] })
       .mockResolvedValueOnce({
-        content: [{ type: "text", text: "fake secret" }, mcpCall],
+        content: [
+          { type: "text", text: "fake secret" },
+          codexMcpCall("filesystem", "read_file"),
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: [codexMcpCall("inboxzero", "archive")],
       });
     const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
 
-    const {
-      createCliLanguageModel,
-      CODEX_ALLOWED_MCP_SERVERS,
-      CODEX_TOOL_BLOCKED_MESSAGE,
-    } = await loadCliProviderModule({
-      codexModule: { codexExec, isAuthenticationError: () => false },
-    });
+    const { createCliLanguageModel, CODEX_TOOL_BLOCKED_MESSAGE } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
     const model = createCliLanguageModel({
       provider: Provider.CODEX_CLI,
       modelName: "gpt-5.3-codex",
     }) as any;
 
-    expect(CODEX_ALLOWED_MCP_SERVERS).not.toContain("filesystem");
     await expect(model.doGenerate({})).resolves.toEqual({
       content: [appToolCall],
     });
     await expect(model.doGenerate({})).rejects.toThrow(
       CODEX_TOOL_BLOCKED_MESSAGE,
     );
+    await expect(model.doGenerate({})).rejects.toThrow(
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    );
+  });
+
+  it("lets a bridged Codex run call only its own Inbox Zero tools", async () => {
+    const doGenerate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: [
+          codexMcpCall("inboxzero", "archive", { ids: ["m1"] }),
+          codexMcpResult("inboxzero", "archive", {
+            content: [{ type: "text", text: '{"archived":1}' }],
+          }),
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: [codexMcpCall("inboxzero", "deleteAll")],
+      })
+      .mockResolvedValueOnce({
+        content: [codexMcpCall("filesystem", "archive")],
+      })
+      .mockResolvedValueOnce({
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "item-9",
+            toolName: "exec",
+            input: '{"command":"ls"}',
+            providerExecuted: true,
+            dynamic: true,
+          },
+        ],
+      });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    const stop = vi.fn(async () => {});
+    const createLocalMcpServer = vi.fn(async () => ({
+      config: {
+        transport: "http",
+        url: "http://127.0.0.1:1",
+        bearerToken: "t",
+      },
+      stop,
+    }));
+
+    const {
+      createCliLanguageModelWithBridgedTools,
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    } = await loadCliProviderModule({
+      codexModule: {
+        codexExec,
+        createLocalMcpServer,
+        isAuthenticationError: () => false,
+      },
+    });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      tools: {
+        archive: {
+          inputSchema: z.object({ ids: z.array(z.string()) }),
+          execute: vi.fn(),
+        },
+      },
+    })) as any;
+
+    await expect(model.doGenerate({})).resolves.toEqual({
+      content: [
+        {
+          ...codexMcpCall("inboxzero", "archive"),
+          input: '{"ids":["m1"]}',
+        },
+        {
+          ...codexMcpResult("inboxzero", "archive", {}),
+          result: { archived: 1 },
+        },
+      ],
+    });
+    for (let call = 0; call < 3; call++) {
+      await expect(model.doGenerate({})).rejects.toThrow(
+        CODEX_TOOL_BLOCKED_MESSAGE,
+      );
+    }
+    expect(createLocalMcpServer).toHaveBeenCalledTimes(4);
+    expect(stop).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports a failed bridged tool call as an error result", async () => {
+    const doStream = vi.fn().mockResolvedValue({
+      stream: streamOf([
+        codexMcpCall("inboxzero", "archive", { ids: [] }),
+        {
+          ...codexMcpResult("inboxzero", "archive", undefined),
+          result: {
+            server: "inboxzero",
+            tool: "archive",
+            status: "failed",
+            error: { message: "Archive failed" },
+          },
+        },
+      ]),
+    });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    const createLocalMcpServer = vi.fn(async () => ({
+      config: {
+        transport: "http",
+        url: "http://127.0.0.1:1",
+        bearerToken: "t",
+      },
+      stop: async () => {},
+    }));
+
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          createLocalMcpServer,
+          isAuthenticationError: () => false,
+        },
+      });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      tools: {
+        archive: {
+          inputSchema: z.object({ ids: z.array(z.string()) }),
+          execute: vi.fn(),
+        },
+      },
+    })) as any;
+
+    const { stream } = await model.doStream({});
+    const parts = await readAll(stream);
+    expect(parts).toEqual([
+      expect.objectContaining({ type: "tool-call", input: '{"ids":[]}' }),
+      expect.objectContaining({
+        type: "tool-result",
+        result: "Archive failed",
+        isError: true,
+      }),
+    ]);
+  });
+
+  it("does not start a tool server for a Codex run with no tools", async () => {
+    const doGenerate = vi.fn().mockResolvedValue({ content: [] });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    const createLocalMcpServer = vi.fn();
+
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          createLocalMcpServer,
+          isAuthenticationError: () => false,
+        },
+      });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      tools: {},
+    })) as any;
+    await model.doGenerate({});
+
+    expect(createLocalMcpServer).not.toHaveBeenCalled();
+    expect(getSettings(codexExec)).not.toHaveProperty("mcpServers");
   });
 
   it("runs one Codex call at a time per user", async () => {
@@ -1001,4 +1162,30 @@ async function readAll(stream: ReadableStream<unknown>) {
     parts.push(part);
   }
   return parts;
+}
+
+function codexMcpCall(server: string, tool: string, args: unknown = {}) {
+  return {
+    type: "tool-call",
+    toolCallId: "item-1",
+    toolName: tool,
+    input: JSON.stringify({
+      server,
+      tool,
+      status: "in_progress",
+      arguments: args,
+    }),
+    providerExecuted: true,
+    dynamic: true,
+  };
+}
+
+function codexMcpResult(server: string, tool: string, result: unknown) {
+  return {
+    type: "tool-result",
+    toolCallId: "item-1",
+    toolName: tool,
+    result: { server, tool, status: "completed", result },
+    dynamic: true,
+  };
 }

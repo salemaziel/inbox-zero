@@ -54,7 +54,7 @@ vi.mock("@/utils/llms/cli-provider", async () => {
   >("@/utils/llms/cli-provider");
   return {
     ...actual,
-    createClaudeCodeLanguageModelWithBridgedTools:
+    createCliLanguageModelWithBridgedTools:
       mockCreateClaudeCodeLanguageModelWithBridgedTools,
   };
 });
@@ -331,6 +331,7 @@ describe("createGenerateText fallback chain", () => {
     expect(
       mockCreateClaudeCodeLanguageModelWithBridgedTools,
     ).toHaveBeenCalledWith({
+      provider: "claude-code",
       modelName: "sonnet",
       tools,
     });

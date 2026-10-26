@@ -67,7 +67,8 @@ import { Provider } from "@/utils/llms/config";
 import {
   type CliLoginScope,
   checkUserCliLogin,
-  createClaudeCodeLanguageModelWithBridgedTools,
+  createCliLanguageModelWithBridgedTools,
+  isCliSubscriptionProvider,
 } from "@/utils/llms/cli-provider";
 import {
   appendOllamaOnlySystemGuidance,
@@ -97,11 +98,11 @@ const logger = createScopedLogger("llms");
 
 const MAX_LOG_LENGTH = 200;
 
-// The Claude Code CLI provider drops AI SDK tools at the LanguageModelV4
-// boundary. Route tool-bearing calls through the package's MCP bridge so the
-// CLI can execute them locally; clear `tools` so the AI SDK does not also try
+// The CLI subscription providers drop AI SDK tools at the LanguageModelV4
+// boundary. Route tool-bearing calls through an MCP bridge so the CLI can call
+// them and Inbox Zero runs them; clear `tools` so the AI SDK does not also try
 // to drive them. No-op for every other provider and for tool-less calls.
-async function bridgeClaudeCodeToolsIfNeeded<T extends Record<string, Tool>>({
+async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
   provider,
   modelName,
   model,
@@ -120,8 +121,9 @@ async function bridgeClaudeCodeToolsIfNeeded<T extends Record<string, Tool>>({
   tools: T | undefined;
   bridged: boolean;
 }> {
-  if (provider !== Provider.CLAUDE_CODE)
+  if (!isCliSubscriptionProvider(provider)) {
     return { model, tools, bridged: false };
+  }
   if (!tools || Object.keys(tools).length === 0) {
     return { model, tools, bridged: false };
   }
@@ -139,7 +141,8 @@ async function bridgeClaudeCodeToolsIfNeeded<T extends Record<string, Tool>>({
     return { model, tools: undefined, bridged: true };
   }
 
-  const bridged = await createClaudeCodeLanguageModelWithBridgedTools({
+  const bridged = await createCliLanguageModelWithBridgedTools({
+    provider,
     modelName,
     cliLogin,
     tools: toolsToBridge as unknown as Record<
@@ -351,7 +354,7 @@ export function createGenerateText({
         emailAccountId: emailAccount.id,
       });
 
-      const bridged = await bridgeClaudeCodeToolsIfNeeded({
+      const bridged = await bridgeCliToolsIfNeeded({
         provider: candidate.provider,
         modelName: candidate.modelName,
         model: candidate.model,
@@ -802,7 +805,7 @@ export async function chatCompletionStream(
       userId,
       emailAccountId,
     });
-    const bridgedChat = await bridgeClaudeCodeToolsIfNeeded({
+    const bridgedChat = await bridgeCliToolsIfNeeded({
       provider: candidate.provider,
       modelName: candidate.modelName,
       model: candidate.model,
@@ -959,7 +962,7 @@ export async function toolCallAgentStream(options: ToolCallAgentStreamOptions) {
       userId,
       emailAccountId,
     });
-    const bridgedAgent = await bridgeClaudeCodeToolsIfNeeded({
+    const bridgedAgent = await bridgeCliToolsIfNeeded({
       provider: candidate.provider,
       modelName: candidate.modelName,
       model: candidate.model,
