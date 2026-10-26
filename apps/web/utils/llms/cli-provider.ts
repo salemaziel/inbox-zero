@@ -58,13 +58,14 @@ type BuiltCliModel = {
   model: LanguageModelV4;
   // Rewrites each response part before the caller sees it.
   mapPart?: (part: unknown) => unknown;
-  // Runs once the CLI has exited.
+  // Runs once the CLI has exited; the run is freed when it settles.
   close?: () => Promise<void>;
 };
 
 type BuildCliModel = (
   module: CliProviderModule,
-  run: CliRunSettings,
+  // `abortSignal` aborts when the run is stopped.
+  run: CliRunSettings & { abortSignal: AbortSignal },
 ) => BuiltCliModel | Promise<BuiltCliModel>;
 
 // The tools served to Codex over the bridge, as the local MCP server in
@@ -144,10 +145,11 @@ const globalForCodexRuns = globalThis as unknown as {
 globalForCodexRuns.inboxZeroCodexRunQueues ??= new Map();
 const codexRunQueues = globalForCodexRuns.inboxZeroCodexRunQueues;
 
-// A call still running after this long (for example a stream nobody reads or
-// cancels) is stopped, and its run slot and folder are freed.
+// A call still running after this long is stopped. A stopped CLI that still
+// hasn't exited this long after that has its run slot and folder freed anyway.
 export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
-// How long a stopped CLI gets to exit before its folder is removed anyway.
+// How long a stopped CLI gets to exit before that is logged as an error, and
+// how long a CLI tool server gets to close.
 export const CLI_STOP_WAIT_MS = 10 * 1000;
 
 export function assertCliLlmEnabled(provider: CliProvider) {
@@ -326,9 +328,10 @@ export async function createCliLanguageModelWithBridgedTools({
             "createLocalMcpServer",
             provider,
           ) as unknown as CodexMcpServerFactory;
+          const bridge = await toCodexMcpTools(tools, run.abortSignal);
           const server = await createServer({
             name: CLI_TOOLS_MCP_SERVER_NAME,
-            tools: await toCodexMcpTools(tools),
+            tools: bridge.tools,
           });
           try {
             const model = getFactory(
@@ -354,9 +357,15 @@ export async function createCliLanguageModelWithBridgedTools({
             return {
               model,
               mapPart: toBridgedCodexPart,
-              close: () => server.stop(),
+              // Closing the server does not stop a tool call it is running,
+              // so those are waited for in full before the run is freed.
+              close: async () => {
+                await bridge.settle();
+                await Promise.race([server.stop(), sleep(CLI_STOP_WAIT_MS)]);
+              },
             };
           } catch (error) {
+            await bridge.settle();
             await server.stop();
             throw error;
           }
@@ -408,10 +417,18 @@ function codexRunSettings(run: CliRunSettings) {
 
 // Inputs are checked against each tool's own schema before it runs, as the
 // AI SDK would; the local MCP server passes arguments through unchecked.
+// Each call gets an abort signal that fires when the run stops or ends, no
+// new call starts after that, and `settle` resolves once every started call
+// has finished.
 async function toCodexMcpTools(
   tools: Record<string, McpBridgedTool>,
-): Promise<CodexMcpTool[]> {
-  return Promise.all(
+  runSignal: AbortSignal,
+): Promise<{ tools: CodexMcpTool[]; settle: () => Promise<void> }> {
+  const ended = new AbortController();
+  const abortSignal = AbortSignal.any([runSignal, ended.signal]);
+  const inFlight = new Set<Promise<unknown>>();
+
+  const bridged = await Promise.all(
     Object.entries(tools).map(async ([name, tool]) => {
       const execute = tool.execute;
       if (typeof execute !== "function") {
@@ -427,23 +444,43 @@ async function toCodexMcpTools(
         description:
           typeof tool.description === "string" ? tool.description : undefined,
         inputSchema: await schema.jsonSchema,
-        execute: async (input: unknown) => {
-          const parsed = schema.validate
-            ? await schema.validate(input ?? {})
-            : { success: true as const, value: input };
-          if (!parsed.success) {
-            throw new Error(
-              `Invalid input for tool "${name}": ${parsed.error.message}`,
+        execute: (input: unknown) => {
+          if (abortSignal.aborted) {
+            return Promise.reject(
+              new Error(`Tool "${name}" was not run: this AI run has stopped.`),
             );
           }
-          return execute.call(tool, parsed.value as never, {
-            toolCallId: randomUUID(),
-            messages: [],
-          });
+          const call = (async () => {
+            const parsed = schema.validate
+              ? await schema.validate(input ?? {})
+              : { success: true as const, value: input };
+            if (!parsed.success) {
+              throw new Error(
+                `Invalid input for tool "${name}": ${parsed.error.message}`,
+              );
+            }
+            return execute.call(tool, parsed.value as never, {
+              toolCallId: randomUUID(),
+              messages: [],
+              abortSignal,
+            });
+          })();
+          inFlight.add(call);
+          const forget = () => inFlight.delete(call);
+          call.then(forget, forget);
+          return call;
         },
       };
     }),
   );
+
+  return {
+    tools: bridged,
+    settle: async () => {
+      ended.abort(new Error("The AI run has ended."));
+      await Promise.allSettled([...inFlight]);
+    },
+  };
 }
 
 // Codex reports each MCP call as a provider-executed tool call whose input is
@@ -608,11 +645,6 @@ function createCliRunModel({
       const login = await resolveUserCliLogin(provider, cliLogin);
       if (!login) release();
       run = await startCliRun(provider, login);
-      const {
-        model,
-        mapPart = (part: unknown) => part,
-        close,
-      } = await buildModel(module, run);
 
       // Both providers stop their CLI process when this signal aborts.
       const stopController = new AbortController();
@@ -620,17 +652,29 @@ function createCliRunModel({
         ? AbortSignal.any([callerSignal, stopController.signal])
         : stopController.signal;
 
+      const {
+        model,
+        mapPart = (part: unknown) => part,
+        close,
+      } = await buildModel(module, { ...run, abortSignal });
+
+      let launched = false;
+      let markExited = () => {};
+      const exited = new Promise<void>((resolve) => {
+        markExited = resolve;
+      });
+
+      // Runs once the CLI has exited, or once a stopped CLI has outlived the
+      // hard cap in `waitForStoppedExit`.
       let ending: Promise<void> | undefined;
       const end = () => {
         ending ??= (async () => {
           clearTimeout(maxCallTimer);
+          callerSignal?.removeEventListener("abort", onCallerAbort);
           if (close) {
-            await Promise.race([
-              close().catch(() => {
-                logger.warn("Could not stop the CLI tool server", { provider });
-              }),
-              sleep(CLI_STOP_WAIT_MS),
-            ]);
+            await close().catch(() => {
+              logger.warn("Could not stop the CLI tool server", { provider });
+            });
           }
           await run?.finish();
           release();
@@ -638,11 +682,19 @@ function createCliRunModel({
         return ending;
       };
 
+      let stopping: Promise<void> | undefined;
       const call = {
         model,
         options: { ...(options as object), abortSignal },
         // Settles once the CLI process has exited.
-        exited: Promise.resolve() as Promise<unknown>,
+        exited,
+        markExited,
+        // Call right before starting the CLI; a call stopped before this
+        // never starts one.
+        launch: () => {
+          abortSignal.throwIfAborted();
+          launched = true;
+        },
         mapPart,
         // Codex's own tools are turned off in its config; if it runs one
         // anyway, or any tool that isn't a bridged Inbox Zero tool, the run
@@ -653,11 +705,17 @@ function createCliRunModel({
             : () => null,
         end,
         // The login folder and run slot are only freed once the CLI has
-        // exited, or after a bounded wait if it ignores the abort.
-        stop: async (reason: unknown) => {
-          stopController.abort(reason);
-          await Promise.race([call.exited, sleep(CLI_STOP_WAIT_MS)]);
-          await end();
+        // exited. The provider can only ask it to exit (SIGTERM) and exposes
+        // no way to force it, so a CLI that ignores that holds its slot up to
+        // a hard cap, and is logged as an error.
+        stop: (reason: unknown) => {
+          stopping ??= (async () => {
+            stopController.abort(reason);
+            if (!launched) markExited();
+            await waitForStoppedExit(exited, provider);
+            await end();
+          })();
+          return stopping;
         },
         // Returns the reconnect error when the user's login was rejected.
         checkLoginRejected: async (
@@ -680,6 +738,14 @@ function createCliRunModel({
       }, MAX_CLI_CALL_MS);
       maxCallTimer.unref?.();
 
+      // A caller that aborts and then drops the stream still frees the run
+      // once the CLI exits.
+      const onCallerAbort = () => {
+        call.stop(callerSignal?.reason).catch(() => undefined);
+      };
+      callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+      if (callerSignal?.aborted) onCallerAbort();
+
       return call;
     } catch (error) {
       await run?.finish();
@@ -697,10 +763,11 @@ function createCliRunModel({
       const call = await startCall(args[0]);
       try {
         const doGenerate = getModelMethod(call.model, "doGenerate", provider);
+        call.launch();
         const pending = Promise.resolve(
           doGenerate(call.options, ...args.slice(1)),
         );
-        call.exited = pending.catch(() => undefined);
+        pending.then(call.markExited, call.markExited);
         const result = (await pending) as { content?: unknown } & Record<
           string,
           unknown
@@ -723,58 +790,78 @@ function createCliRunModel({
       let result: { stream: ReadableStream<unknown> } & Record<string, unknown>;
       try {
         const doStream = getModelMethod(call.model, "doStream", provider);
+        call.launch();
         result = (await doStream(
           call.options,
           ...args.slice(1),
         )) as typeof result;
       } catch (error) {
+        // Neither provider has a CLI running when doStream itself fails.
+        call.markExited();
         await call.end();
         return call.handleError(error);
       }
       // The CLI keeps running while the stream is read, so its folder and the
-      // Codex run slot are kept until the stream ends. The source stream ends
-      // when the CLI exits, whether or not anyone is reading it. Both
-      // providers report a rejected login inside the stream (an error part,
-      // or by erroring the stream), not from doStream itself.
+      // Codex run slot are kept until it exits. The source stream ends when
+      // the CLI exits, so it is read through here as parts arrive, whether
+      // or not anyone reads this stream, and the run is freed as soon as it
+      // ends. Both providers report a rejected login inside the stream (an
+      // error part, or by erroring the stream), not from doStream itself.
       const reader = result.stream.getReader();
-      call.exited = reader.closed.catch(() => undefined);
+      let downstreamOpen = true;
+      let downstream: ReadableStreamDefaultController<unknown> | undefined;
       const stream = new ReadableStream({
-        async pull(controller) {
-          let next: ReadableStreamReadResult<unknown>;
-          try {
-            next = await reader.read();
-          } catch (error) {
-            const rejected = await call.checkLoginRejected(error);
-            await call.end();
-            controller.error(rejected ?? error);
-            return;
-          }
-          if (next.done) {
-            await call.end();
-            controller.close();
-            return;
-          }
-          const blockedTool = call.findBlockedTool(next.value);
-          if (blockedTool) {
-            const error = blockedToolError(provider, blockedTool);
-            await call.stop(error);
-            await reader.cancel(error).catch(() => undefined);
-            controller.error(error);
-            return;
-          }
-          const part = next.value as { type?: string; error?: unknown };
-          const rejected =
-            part?.type === "error"
-              ? await call.checkLoginRejected(part.error)
-              : null;
-          controller.enqueue(
-            rejected ? { ...part, error: rejected } : call.mapPart(part),
-          );
+        start(controller) {
+          downstream = controller;
         },
         async cancel(reason: unknown) {
+          downstreamOpen = false;
           await call.stop(reason);
           await reader.cancel(reason).catch(() => undefined);
         },
+      });
+
+      const forward = async () => {
+        let failure: unknown;
+        let failed = false;
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            // After a stop, the rest is read only to see the CLI exit.
+            if (failed || !downstreamOpen) continue;
+            const blockedTool = call.findBlockedTool(next.value);
+            if (blockedTool) {
+              failed = true;
+              failure = blockedToolError(provider, blockedTool);
+              call.stop(failure).catch(() => undefined);
+              continue;
+            }
+            const part = next.value as { type?: string; error?: unknown };
+            const rejected =
+              part?.type === "error"
+                ? await call.checkLoginRejected(part.error)
+                : null;
+            if (downstreamOpen) {
+              downstream?.enqueue(
+                rejected ? { ...part, error: rejected } : call.mapPart(part),
+              );
+            }
+          }
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            failure = (await call.checkLoginRejected(error)) ?? error;
+          }
+        }
+        call.markExited();
+        await call.end();
+        if (!downstreamOpen) return;
+        if (failed) downstream?.error(failure);
+        else downstream?.close();
+      };
+      forward().catch(() => {
+        logger.error("Could not finish reading the CLI stream", { provider });
       });
       return { ...result, stream };
     },
@@ -1007,20 +1094,17 @@ async function acquireCodexRun(
   abortSignal: AbortSignal | undefined,
 ): Promise<() => void> {
   const previous = codexRunQueues.get(userId) ?? Promise.resolve();
-  let releaseCurrent = () => {};
+  let release = () => {};
   const current = new Promise<void>((resolve) => {
-    releaseCurrent = resolve;
+    release = resolve;
   });
+  // The tail settles only once every run ahead has finished too, so the
+  // queue entry is removed then, not when this run releases.
   const tail = previous.then(() => current);
   codexRunQueues.set(userId, tail);
-
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    releaseCurrent();
+  tail.then(() => {
     if (codexRunQueues.get(userId) === tail) codexRunQueues.delete(userId);
-  };
+  });
 
   // A request cancelled while waiting leaves the queue at once; the runs
   // behind it still wait for the ones ahead.
@@ -1031,6 +1115,25 @@ async function acquireCodexRun(
     throw error;
   }
   return release;
+}
+
+// Waits for a stopped CLI to exit. Past the grace period it is logged; past
+// the hard cap its run is freed anyway so the user's queue is not stuck.
+async function waitForStoppedExit(
+  exited: Promise<void>,
+  provider: CliProvider,
+) {
+  const exitedWithin = (ms: number) =>
+    Promise.race([exited.then(() => true), sleep(ms).then(() => false)]);
+
+  if (await exitedWithin(CLI_STOP_WAIT_MS)) return;
+  logger.error("Stopped CLI has not exited; keeping its run until it does", {
+    provider,
+  });
+  if (await exitedWithin(MAX_CLI_CALL_MS)) return;
+  logger.error("Stopped CLI never exited; freeing its run anyway", {
+    provider,
+  });
 }
 
 function waitUnlessAborted(

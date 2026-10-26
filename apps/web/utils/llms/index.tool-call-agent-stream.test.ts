@@ -191,7 +191,19 @@ describe("toolCallAgentStream with Codex", () => {
       },
       stop: stopServer,
     });
-    mockCodexExec.mockImplementation(() => createCodexMcpCallModel());
+    // Like Codex, the bridged tool is called while the run is going.
+    const toolOutcomes: PromiseSettledResult<unknown>[] = [];
+    mockCodexExec.mockImplementation(() =>
+      createCodexMcpCallModel(async () => {
+        const [{ tools }] = mockCreateLocalMcpServer.mock.calls[0];
+        toolOutcomes.push(
+          ...(await Promise.allSettled([
+            tools[0].execute({ ids: ["m1"] }),
+            tools[0].execute({ ids: 5 }),
+          ])),
+        );
+      }),
+    );
     mockGetModelForUseCase.mockReturnValue({
       provider: Provider.CODEX_CLI,
       modelName: "gpt-6-luna",
@@ -247,12 +259,19 @@ describe("toolCallAgentStream with Codex", () => {
     const [{ name, tools }] = mockCreateLocalMcpServer.mock.calls[0];
     expect(name).toBe("inboxzero");
     expect(tools.map((t: { name: string }) => t.name)).toEqual(["archive"]);
-    await expect(tools[0].execute({ ids: ["m1"] })).resolves.toEqual({
-      archived: 1,
-    });
-    expect(archive).toHaveBeenCalledWith({ ids: ["m1"] }, expect.anything());
-    await expect(tools[0].execute({ ids: 5 })).rejects.toThrow(
-      'Invalid input for tool "archive"',
+    expect(toolOutcomes).toEqual([
+      { status: "fulfilled", value: { archived: 1 } },
+      {
+        status: "rejected",
+        reason: expect.objectContaining({
+          message: expect.stringContaining('Invalid input for tool "archive"'),
+        }),
+      },
+    ]);
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(archive).toHaveBeenCalledWith(
+      { ids: ["m1"] },
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
     );
     expect(deleteAll).not.toHaveBeenCalled();
 
@@ -435,7 +454,7 @@ function createToolCallingModel() {
 }
 
 // The parts ai-sdk-provider-codex-cli emits when Codex calls an MCP tool.
-function createCodexMcpCallModel() {
+function createCodexMcpCallModel(duringRun: () => Promise<void>) {
   const payload = JSON.stringify({
     server: "inboxzero",
     tool: "archive",
@@ -443,57 +462,60 @@ function createCodexMcpCallModel() {
     arguments: { ids: ["m1"] },
   });
   return new MockLanguageModelV4({
-    doStream: async () => ({
-      stream: simulateReadableStream({
-        chunks: [
-          { type: "stream-start", warnings: [] },
-          {
-            type: "tool-input-start",
-            id: "item_1",
-            toolName: "archive",
-            providerExecuted: true,
-            dynamic: true,
-          },
-          { type: "tool-input-delta", id: "item_1", delta: payload },
-          { type: "tool-input-end", id: "item_1" },
-          {
-            type: "tool-call",
-            toolCallId: "item_1",
-            toolName: "archive",
-            input: payload,
-            providerExecuted: true,
-            dynamic: true,
-          },
-          {
-            type: "tool-result",
-            toolCallId: "item_1",
-            toolName: "archive",
-            result: {
-              server: "inboxzero",
-              tool: "archive",
-              status: "completed",
-              result: { content: [{ type: "text", text: '{"archived":1}' }] },
+    doStream: async () => {
+      await duringRun();
+      return {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "stream-start", warnings: [] },
+            {
+              type: "tool-input-start",
+              id: "item_1",
+              toolName: "archive",
+              providerExecuted: true,
+              dynamic: true,
             },
-            dynamic: true,
-          },
-          { type: "text-start", id: "t1" },
-          { type: "text-delta", id: "t1", delta: "Archived it." },
-          { type: "text-end", id: "t1" },
-          {
-            type: "finish",
-            finishReason: { unified: "stop", raw: undefined },
-            usage: {
-              inputTokens: {
-                total: 1,
-                noCache: 1,
-                cacheRead: undefined,
-                cacheWrite: undefined,
+            { type: "tool-input-delta", id: "item_1", delta: payload },
+            { type: "tool-input-end", id: "item_1" },
+            {
+              type: "tool-call",
+              toolCallId: "item_1",
+              toolName: "archive",
+              input: payload,
+              providerExecuted: true,
+              dynamic: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "item_1",
+              toolName: "archive",
+              result: {
+                server: "inboxzero",
+                tool: "archive",
+                status: "completed",
+                result: { content: [{ type: "text", text: '{"archived":1}' }] },
               },
-              outputTokens: { total: 1, text: 1, reasoning: undefined },
+              dynamic: true,
             },
-          },
-        ],
-      }),
-    }),
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "Archived it." },
+            { type: "text-end", id: "t1" },
+            {
+              type: "finish",
+              finishReason: { unified: "stop", raw: undefined },
+              usage: {
+                inputTokens: {
+                  total: 1,
+                  noCache: 1,
+                  cacheRead: undefined,
+                  cacheWrite: undefined,
+                },
+                outputTokens: { total: 1, text: 1, reasoning: undefined },
+              },
+            },
+          ],
+        }),
+      };
+    },
   });
 }
