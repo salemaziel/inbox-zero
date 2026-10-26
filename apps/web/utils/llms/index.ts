@@ -1424,6 +1424,7 @@ function getModelCandidates(modelOptions: SelectModel): ResolvedModel[] {
     provider: modelOptions.provider,
     modelName: modelOptions.modelName,
     model: modelOptions.model,
+    cliLogin: modelOptions.cliLogin,
     providerOptions: modelOptions.providerOptions,
   };
 
