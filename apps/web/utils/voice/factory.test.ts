@@ -56,9 +56,13 @@ describe("resolveVoiceRuntime", () => {
     const config = resolveVoiceRuntime({
       env: { OPENAI_API_KEY: "sk-deploy" },
       userAi: {
+        id: "user-id",
+        email: "user@test.com",
+        emailVerified: true,
         aiProvider: Provider.OPEN_AI,
         aiModel: "gpt-5.4-mini",
         aiApiKey: "sk-user",
+        aiTaskModels: null,
       },
     });
     expect(config.openaiApiKey).toBe("sk-user");
@@ -68,9 +72,13 @@ describe("resolveVoiceRuntime", () => {
     const config = resolveVoiceRuntime({
       env: { OPENAI_API_KEY: "sk-deploy" },
       userAi: {
+        id: "user-id",
+        email: "user@test.com",
+        emailVerified: true,
         aiProvider: Provider.ANTHROPIC,
         aiModel: "claude",
         aiApiKey: "sk-anth",
+        aiTaskModels: null,
       },
     });
     expect(config.openaiApiKey).toBe("sk-deploy");
