@@ -13,6 +13,9 @@ describe("createCliLanguageModel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    (
+      globalThis as { inboxZeroCodexRunQueues?: Map<string, unknown> }
+    ).inboxZeroCodexRunQueues?.clear();
   });
 
   afterEach(() => {
@@ -21,6 +24,7 @@ describe("createCliLanguageModel", () => {
     vi.doUnmock("ai-sdk-provider-claude-code");
     vi.doUnmock("@/utils/prisma");
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it("builds each Codex call in its own empty folder and removes it afterwards", async () => {
@@ -525,6 +529,86 @@ describe("createCliLanguageModel", () => {
     });
     const second = await model.doStream("second");
     await expect(readAll(second.stream)).resolves.toEqual([]);
+  });
+
+  it("lets a Codex call cancelled while queued leave without blocking later calls", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const doGenerate = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ text: "later" });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    const first = model.doGenerate({});
+    await vi.waitFor(() => expect(doGenerate).toHaveBeenCalledTimes(1));
+    const controller = new AbortController();
+    const cancelled = model.doGenerate({ abortSignal: controller.signal });
+    const third = model.doGenerate({});
+    controller.abort(new Error("stopped"));
+    await expect(cancelled).rejects.toThrow("stopped");
+
+    resolveFirst({ text: "first" });
+    await expect(first).resolves.toEqual({ text: "first" });
+    await expect(third).resolves.toEqual({ text: "later" });
+    expect(doGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it("frees the Codex run slot of a stream nobody finishes after the time limit", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const doStream = vi
+      .fn()
+      .mockResolvedValueOnce({ stream: new ReadableStream() })
+      .mockResolvedValueOnce({ stream: emptyStream() });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel, MAX_CLI_CALL_MS } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    await model.doStream({});
+    const second = model.doStream({});
+    let secondStarted = false;
+    second.then(() => {
+      secondStarted = true;
+    });
+    await vi.advanceTimersByTimeAsync(MAX_CLI_CALL_MS - 1000);
+    expect(secondStarted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.useRealTimers();
+    await expect(second).resolves.toEqual({
+      stream: expect.any(ReadableStream),
+    });
   });
 
   it("runs one Codex call at a time per user", async () => {

@@ -84,7 +84,17 @@ export const RECONNECT_SUBSCRIPTION_MESSAGE =
   "Your connected ChatGPT or Claude account was signed out. Reconnect it in Settings to use the AI assistant.";
 
 // Concurrent Codex runs for one user would race on its rotating refresh token.
-const codexRunQueues = new Map<string, Promise<void>>();
+// Kept on globalThis because route handlers and server actions can load
+// separate module copies. This only serializes runs within one server process.
+const globalForCodexRuns = globalThis as unknown as {
+  inboxZeroCodexRunQueues?: Map<string, Promise<void>>;
+};
+globalForCodexRuns.inboxZeroCodexRunQueues ??= new Map();
+const codexRunQueues = globalForCodexRuns.inboxZeroCodexRunQueues;
+
+// A call that is never finished (a stream nobody reads or cancels) gives up
+// its run slot and folder after this long.
+export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
 
 export function assertCliLlmEnabled(provider: CliProvider) {
   if (env.CLI_LLM_ENABLED) return;
@@ -386,11 +396,14 @@ function createCliRunModel({
     return modulePromise;
   };
 
-  const startCall = async () => {
+  const startCall = async (options: unknown) => {
     const module = await getModule();
     const release =
       provider === Provider.CODEX_CLI && cliLogin
-        ? await acquireCodexRun(cliLogin.userId)
+        ? await acquireCodexRun(
+            cliLogin.userId,
+            (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
+          )
         : () => {};
 
     let run: CliRun | undefined;
@@ -404,9 +417,15 @@ function createCliRunModel({
       const end = async () => {
         if (ended) return;
         ended = true;
+        clearTimeout(maxCallTimer);
         await run?.finish();
         release();
       };
+      const maxCallTimer = setTimeout(() => {
+        logger.warn("CLI call was never finished; releasing it", { provider });
+        end().catch(() => undefined);
+      }, MAX_CLI_CALL_MS);
+      maxCallTimer.unref?.();
 
       // Returns the reconnect error when the user's login was rejected.
       const checkLoginRejected = async (
@@ -437,7 +456,7 @@ function createCliRunModel({
     modelId: modelName,
     supportedUrls: {},
     async doGenerate(...args: unknown[]) {
-      const call = await startCall();
+      const call = await startCall(args[0]);
       try {
         const doGenerate = getModelMethod(call.model, "doGenerate", provider);
         return await doGenerate(...args);
@@ -448,7 +467,7 @@ function createCliRunModel({
       }
     },
     async doStream(...args: unknown[]) {
-      const call = await startCall();
+      const call = await startCall(args[0]);
       let result: { stream: ReadableStream<unknown> } & Record<string, unknown>;
       try {
         const doStream = getModelMethod(call.model, "doStream", provider);
@@ -617,7 +636,10 @@ function isCliAuthenticationError(
   return typeof stderr === "string" && CODEX_AUTH_FAILURE_RE.test(stderr);
 }
 
-async function acquireCodexRun(userId: string): Promise<() => void> {
+async function acquireCodexRun(
+  userId: string,
+  abortSignal: AbortSignal | undefined,
+): Promise<() => void> {
   const previous = codexRunQueues.get(userId) ?? Promise.resolve();
   let releaseCurrent = () => {};
   const current = new Promise<void>((resolve) => {
@@ -625,15 +647,47 @@ async function acquireCodexRun(userId: string): Promise<() => void> {
   });
   const tail = previous.then(() => current);
   codexRunQueues.set(userId, tail);
-  await previous;
 
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
     releaseCurrent();
     if (codexRunQueues.get(userId) === tail) codexRunQueues.delete(userId);
   };
+
+  // A request cancelled while waiting leaves the queue at once; the runs
+  // behind it still wait for the ones ahead.
+  try {
+    await waitUnlessAborted(previous, abortSignal);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  return release;
+}
+
+function waitUnlessAborted(
+  promise: Promise<void>,
+  abortSignal: AbortSignal | undefined,
+): Promise<void> {
+  if (!abortSignal) return promise;
+  if (abortSignal.aborted) return Promise.reject(abortSignal.reason);
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortSignal.reason);
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      () => {
+        abortSignal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      (error) => {
+        abortSignal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 async function importOptionalProviderPackage(
