@@ -154,14 +154,19 @@ function ModelSectionForm(props: {
     ? [...providerOptions, ...SUBSCRIPTION_PROVIDER_OPTIONS]
     : providerOptions;
 
-  const connectedProviders =
+  // Owners may run any subscription on the server's own login.
+  const usableSubscriptions =
     subscriptions?.providers
-      .filter((entry) => entry.login?.status === "connected")
+      .filter(
+        (entry) =>
+          subscriptions.canUseServerLogin ||
+          entry.login?.status === "connected",
+      )
       .map((entry) => entry.provider) ?? [];
   const taskProviderOptions = mainProviderOptions.filter(
     (option) =>
       (option.value === aiProvider && aiProvider !== DEFAULT_PROVIDER) ||
-      connectedProviders.some((provider) => provider === option.value),
+      usableSubscriptions.some((provider) => provider === option.value),
   );
   const isAllowedTaskProvider = (provider: string) =>
     taskProviderOptions.some((option) => option.value === provider);
