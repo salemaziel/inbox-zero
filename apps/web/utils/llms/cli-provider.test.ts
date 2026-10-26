@@ -1,12 +1,13 @@
-import os from "node:os";
+import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Provider } from "./config";
 
-const homesDir = path.join(os.tmpdir(), "inbox-zero-cli-provider-test");
 const prismaMock = vi.hoisted(() => ({
   aiSubscriptionLogin: { findUnique: vi.fn(), updateMany: vi.fn() },
 }));
+const connectedAt = new Date("2026-10-01T00:00:00Z");
+const FAKE_CODEX_AUTH = '{"tokens":{"refresh_token":"fake-refresh-1"}}';
 
 describe("createCliLanguageModel", () => {
   beforeEach(() => {
@@ -22,9 +23,9 @@ describe("createCliLanguageModel", () => {
     vi.unstubAllEnvs();
   });
 
-  it("loads the Codex provider lazily once and forwards calls", async () => {
+  it("builds each Codex call in its own empty folder and removes it afterwards", async () => {
     const doGenerate = vi.fn().mockResolvedValue({ text: "generated" });
-    const doStream = vi.fn().mockResolvedValue({ stream: "chunk" });
+    const doStream = vi.fn().mockResolvedValue({ stream: emptyStream() });
     const codexExec = vi.fn(() => ({
       doGenerate,
       doStream,
@@ -47,24 +48,28 @@ describe("createCliLanguageModel", () => {
       text: "generated",
     });
     await expect(model.doStream("stream-request")).resolves.toEqual({
-      stream: "chunk",
+      stream: expect.any(ReadableStream),
     });
 
-    expect(codexExec).toHaveBeenCalledTimes(1);
+    expect(codexExec).toHaveBeenCalledTimes(2);
     expect(codexExec).toHaveBeenCalledWith("gpt-5.3-codex", {
       allowNpx: true,
       skipGitRepoCheck: true,
       approvalMode: "never",
       sandboxMode: "read-only",
       codexPath: "/usr/local/bin/codex",
+      cwd: expect.stringContaining("inbox-zero-cli-run-"),
+      env: expect.any(Object),
       logger: false,
     });
+    const cwd = getSettings(codexExec).cwd as string;
+    await expect(access(cwd)).rejects.toThrow();
     expect(doGenerate).toHaveBeenCalledWith("generate-request");
     expect(doStream).toHaveBeenCalledWith("stream-request");
   });
 
-  it("passes Claude Code sandbox settings through to the provider package", async () => {
-    const doStream = vi.fn().mockResolvedValue({ stream: "chunk" });
+  it("runs Claude Code with no built-in tools, no saved transcripts and an empty folder", async () => {
+    const doStream = vi.fn().mockResolvedValue({ stream: emptyStream() });
     const claudeCode = vi.fn(() => ({
       doGenerate: vi.fn(),
       doStream,
@@ -80,12 +85,15 @@ describe("createCliLanguageModel", () => {
     }) as any;
 
     await expect(model.doStream("stream-request")).resolves.toEqual({
-      stream: "chunk",
+      stream: expect.any(ReadableStream),
     });
 
     expect(claudeCode).toHaveBeenCalledTimes(1);
     expect(claudeCode).toHaveBeenCalledWith("sonnet", {
       settingSources: [],
+      tools: [],
+      persistSession: false,
+      cwd: expect.stringContaining("inbox-zero-cli-run-"),
       allowedTools: [],
       permissionMode: "default",
       sandbox: { enabled: true },
@@ -171,6 +179,9 @@ describe("createCliLanguageModel", () => {
     });
     expect(claudeCode).toHaveBeenCalledWith("sonnet", {
       settingSources: [],
+      tools: [],
+      persistSession: false,
+      cwd: expect.stringContaining("inbox-zero-cli-run-"),
       allowedTools: [
         "mcp__inboxzero__searchInbox",
         "mcp__inboxzero__createRule",
@@ -217,14 +228,26 @@ describe("createCliLanguageModel", () => {
     );
   });
 
-  it("runs Codex with the user's own CLI home and blanks host API keys", async () => {
-    const codexExec = vi.fn(() => ({
-      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+  it("runs Codex with the user's login in a throwaway home and only safe host variables", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://fake-host-db");
+    vi.stubEnv("EMAIL_ENCRYPT_SECRET", "fake-host-secret");
+    vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
+    vi.stubEnv("LANG", "en_US.UTF-8");
+    let authSeenByCli: string | null = null;
+    const codexExec = vi.fn((_model: string, settings: any) => ({
+      doGenerate: vi.fn(async () => {
+        authSeenByCli = await readFile(
+          path.join(settings.env.CODEX_HOME, "auth.json"),
+          "utf8",
+        );
+        return { text: "ok" };
+      }),
       doStream: vi.fn(),
     }));
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
       status: "connected",
-      credential: null,
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
     });
 
     const { createCliLanguageModel } = await loadCliProviderModule({
@@ -237,16 +260,61 @@ describe("createCliLanguageModel", () => {
     }) as any;
 
     await expect(model.doGenerate("request")).resolves.toEqual({ text: "ok" });
-    expect(codexExec).toHaveBeenCalledWith(
-      "gpt-5.3-codex",
-      expect.objectContaining({
-        env: {
-          CODEX_HOME: path.join(homesDir, "user1", "codex"),
-          OPENAI_API_KEY: "",
-          CODEX_API_KEY: "",
-        },
+    const { env: childEnv, cwd } = getSettings(codexExec) as {
+      env: Record<string, string>;
+      cwd: string;
+    };
+    expect(authSeenByCli).toBe(FAKE_CODEX_AUTH);
+    expect(childEnv).toMatchObject({
+      DATABASE_URL: "",
+      EMAIL_ENCRYPT_SECRET: "",
+      OPENAI_API_KEY: "",
+      CODEX_API_KEY: "",
+      LANG: "en_US.UTF-8",
+      PATH: process.env.PATH,
+    });
+    expect(childEnv.CODEX_HOME.startsWith(path.dirname(cwd))).toBe(true);
+    expect(prismaMock.aiSubscriptionLogin.updateMany).not.toHaveBeenCalled();
+    await expect(access(childEnv.CODEX_HOME)).rejects.toThrow();
+  });
+
+  it("saves a refreshed Codex login back to the sign-in it started from", async () => {
+    const refreshed = '{"tokens":{"refresh_token":"fake-refresh-2"}}';
+    const codexExec = vi.fn((_model: string, settings: any) => ({
+      doGenerate: vi.fn(async () => {
+        await writeFile(
+          path.join(settings.env.CODEX_HOME, "auth.json"),
+          refreshed,
+        );
+        return { text: "ok" };
       }),
-    );
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+    await model.doGenerate("request");
+
+    expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: "user1",
+        provider: Provider.CODEX_CLI,
+        status: "connected",
+        connectedAt,
+      },
+      data: { credential: refreshed },
+    });
   });
 
   it("runs Claude Code with the user's token and blanks every inherited host credential", async () => {
@@ -260,6 +328,7 @@ describe("createCliLanguageModel", () => {
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
       status: "connected",
       credential: "fake-user-oauth-token",
+      connectedAt,
     });
 
     const { createCliLanguageModel } = await loadCliProviderModule({
@@ -272,18 +341,23 @@ describe("createCliLanguageModel", () => {
     }) as any;
     await model.doGenerate("request");
 
-    const settings = (claudeCode.mock.calls[0] as unknown[])[1] as {
+    const settings = getSettings(claudeCode) as {
       env: Record<string, string>;
+      cwd: string;
     };
     expect(settings.env).toMatchObject({
       ANTHROPIC_API_KEY: "",
       ANTHROPIC_AUTH_TOKEN: "",
       CLAUDE_CODE_OAUTH_TOKEN: "fake-user-oauth-token",
-      CLAUDE_CONFIG_DIR: path.join(homesDir, "user1", "claude"),
     });
+    expect(
+      settings.env.CLAUDE_CONFIG_DIR.startsWith(path.dirname(settings.cwd)),
+    ).toBe(true);
   });
 
   it("uses the server login for an owner who has not connected an account", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://fake-host-db");
+    vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
     const codexExec = vi.fn(() => ({
       doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
       doStream: vi.fn(),
@@ -300,10 +374,10 @@ describe("createCliLanguageModel", () => {
     }) as any;
     await model.doGenerate("request");
 
-    expect(codexExec).toHaveBeenCalledWith(
-      "gpt-5.3-codex",
-      expect.not.objectContaining({ env: expect.anything() }),
-    );
+    expect(getSettings(codexExec).env).toMatchObject({
+      DATABASE_URL: "",
+      OPENAI_API_KEY: "fake-host-openai-key",
+    });
   });
 
   it("asks a user without the server login to connect or reconnect", async () => {
@@ -327,7 +401,8 @@ describe("createCliLanguageModel", () => {
 
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValueOnce({
       status: "needs-reconnect",
-      credential: null,
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
     });
     const signedOut = createCliLanguageModel({
       provider: Provider.CODEX_CLI,
@@ -348,7 +423,8 @@ describe("createCliLanguageModel", () => {
     }));
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
       status: "connected",
-      credential: null,
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
     });
 
     const { createCliLanguageModel, RECONNECT_SUBSCRIPTION_MESSAGE } =
@@ -387,7 +463,8 @@ describe("createCliLanguageModel", () => {
     const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
       status: "connected",
-      credential: null,
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
     });
 
     const { createCliLanguageModel } = await loadCliProviderModule({
@@ -429,7 +506,6 @@ async function loadCliProviderModule({
       CLI_LLM_ENABLED: true,
       CODEX_CLI_ALLOW_NPX: false,
       CODEX_CLI_PATH: undefined,
-      CLI_LLM_USER_HOMES_DIR: homesDir,
       ...envOverrides,
     },
   }));
@@ -444,4 +520,16 @@ async function loadCliProviderModule({
   }
 
   return import("./cli-provider");
+}
+
+function getSettings(factory: { mock: { calls: unknown[][] } }) {
+  return factory.mock.calls[0][1] as Record<string, unknown>;
+}
+
+function emptyStream() {
+  return new ReadableStream({
+    start(controller) {
+      controller.close();
+    },
+  });
 }

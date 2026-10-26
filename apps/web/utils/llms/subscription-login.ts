@@ -1,7 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { env } from "@/env";
@@ -10,7 +9,7 @@ import { Provider } from "@/utils/llms/config";
 import {
   assertCliLlmEnabled,
   CLI_SUBSCRIPTION_PROVIDERS,
-  getCliUserHome,
+  writeCodexHome,
 } from "@/utils/llms/cli-provider";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
@@ -190,7 +189,6 @@ export async function disconnectSubscriptionLogin({
 }) {
   await cancelSubscriptionLogin({ userId, provider });
   await prisma.aiSubscriptionLogin.deleteMany({ where: { userId, provider } });
-  await rm(getCliUserHome(userId, provider), { recursive: true, force: true });
 }
 
 export function parseClaudeLoginUrl(text: string): string | null {
@@ -301,25 +299,20 @@ async function prepareLogin(session: LoginSession) {
     BROWSER: "true",
   };
 
+  // A fresh 0700 folder, so the server's own login is never seen. For Codex
+  // the auth.json written here is saved to the database, then the folder is
+  // deleted.
+  session.tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "inbox-zero-cli-login-"),
+  );
+
   if (session.provider === Provider.CLAUDE_CODE) {
-    // A fresh config folder, so the server's own Claude login is never seen.
-    session.tempDir = await mkdtemp(
-      path.join(os.tmpdir(), "inbox-zero-claude-login-"),
-    );
     childEnv.CLAUDE_CONFIG_DIR = session.tempDir;
     return { command: "claude setup-token", childEnv };
   }
 
-  // Codex keeps auth.json in this folder and refreshes it in place later.
-  const home = getCliUserHome(session.userId, session.provider);
-  await mkdir(home, { recursive: true, mode: 0o700 });
-  await chmod(home, 0o700);
-  await writeFile(
-    path.join(home, "config.toml"),
-    'cli_auth_credentials_store = "file"\n',
-    { mode: 0o600 },
-  );
-  childEnv.CODEX_HOME = home;
+  await writeCodexHome(session.tempDir);
+  childEnv.CODEX_HOME = session.tempDir;
   const codex = env.CODEX_CLI_PATH ? shellQuote(env.CODEX_CLI_PATH) : "codex";
   return { command: `${codex} login --device-auth`, childEnv };
 }
@@ -405,23 +398,20 @@ async function completeLogin(session: LoginSession, exitCode: number | null) {
     return finish(session, "connected");
   }
 
-  const authFile = path.join(
-    getCliUserHome(session.userId, session.provider),
-    "auth.json",
-  );
-  const hasAuthFile = await access(authFile, constants.R_OK)
-    .then(() => true)
-    .catch(() => false);
-  if (exitCode !== 0 || !hasAuthFile) {
+  const authJson = session.tempDir
+    ? await readFile(path.join(session.tempDir, "auth.json"), "utf8").catch(
+        () => null,
+      )
+    : null;
+  if (exitCode !== 0 || !authJson || !isJsonObject(authJson)) {
     logger.warn("Codex sign-in did not finish", { exitCode });
     return finish(session, "failed", failMessage);
   }
-  await chmod(authFile, 0o600);
-  await saveLogin(session, null);
+  await saveLogin(session, authJson);
   return finish(session, "connected");
 }
 
-async function saveLogin(session: LoginSession, credential: string | null) {
+async function saveLogin(session: LoginSession, credential: string) {
   const { userId, provider } = session;
   const data = {
     credential,
@@ -476,6 +466,15 @@ function isClaudeLoginUrl(candidate: string): boolean {
       url.searchParams.has("code_challenge") &&
       url.searchParams.has("state")
     );
+  } catch {
+    return false;
+  }
+}
+
+function isJsonObject(text: string): boolean {
+  try {
+    const value: unknown = JSON.parse(text);
+    return !!value && typeof value === "object";
   } catch {
     return false;
   }

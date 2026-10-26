@@ -124,6 +124,3 @@ eval-results/
 .omc/
 index.md
 .tap2line/
-
-# Per-user CLI LLM logins (CLI_LLM_USER_HOMES_DIR default)
-.data/

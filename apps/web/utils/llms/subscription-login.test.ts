@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { access, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
@@ -15,7 +14,6 @@ import {
   submitSubscriptionLoginCode,
 } from "./subscription-login";
 
-const homesDir = path.join(os.tmpdir(), "inbox-zero-subscription-login-test");
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 
 vi.mock("@/utils/prisma");
@@ -23,10 +21,6 @@ vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("@/env", () => ({
   env: {
     CLI_LLM_ENABLED: true,
-    CLI_LLM_USER_HOMES_DIR: path.join(
-      os.tmpdir(),
-      "inbox-zero-subscription-login-test",
-    ),
     CODEX_CLI_PATH: undefined,
   },
 }));
@@ -107,16 +101,25 @@ describe("parseCodexDeviceLogin", () => {
 });
 
 describe("subscription login sessions", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
     (
       globalThis as { inboxZeroSubscriptionLogins?: Map<string, unknown> }
     ).inboxZeroSubscriptionLogins?.clear();
-    await rm(homesDir, { recursive: true, force: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    const open = (
+      globalThis as {
+        inboxZeroSubscriptionLogins?: Map<string, { tempDir?: string }>;
+      }
+    ).inboxZeroSubscriptionLogins;
+    for (const session of open?.values() ?? []) {
+      if (session.tempDir) {
+        await rm(session.tempDir, { recursive: true, force: true });
+      }
+    }
   });
 
   it("keeps one active sign-in per user and provider", async () => {
@@ -161,7 +164,7 @@ describe("subscription login sessions", () => {
       CODEX_API_KEY: "",
       BROWSER: "true",
     });
-    expect(options.env.CLAUDE_CONFIG_DIR).toContain("inbox-zero-claude-login-");
+    expect(options.env.CLAUDE_CONFIG_DIR).toContain("inbox-zero-cli-login-");
     vi.unstubAllEnvs();
   });
 
@@ -233,7 +236,7 @@ describe("subscription login sessions", () => {
     );
   });
 
-  it("connects Codex only when the CLI exits cleanly and wrote auth.json", async () => {
+  it("saves Codex's auth.json to the database only when the CLI exits cleanly and wrote it", async () => {
     const failing = mockSpawnedChild();
     await startSubscriptionLogin({
       userId: "user1",
@@ -254,9 +257,10 @@ describe("subscription login sessions", () => {
       userId: "user1",
       provider: Provider.CODEX_CLI,
     });
-    const home = path.join(homesDir, "user1", "codex");
-    await mkdir(home, { recursive: true });
-    await writeFile(path.join(home, "auth.json"), "{}");
+    const home: string = spawnMock.mock.calls[1][2].env.CODEX_HOME;
+    expect((await stat(home)).mode & 0o777).toBe(0o700);
+    const fakeAuthJson = '{"tokens":{"refresh_token":"fake-refresh"}}';
+    await writeFile(path.join(home, "auth.json"), fakeAuthJson);
     child.emit("close", 0);
 
     await vi.waitFor(() =>
@@ -267,9 +271,10 @@ describe("subscription login sessions", () => {
     );
     expect(prisma.aiSubscriptionLogin.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({ credential: null }),
+        create: expect.objectContaining({ credential: fakeAuthJson }),
       }),
     );
+    await expect(access(home)).rejects.toThrow();
   });
 });
 

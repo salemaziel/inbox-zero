@@ -1,5 +1,3 @@
-import os from "node:os";
-import path from "node:path";
 import { simulateReadableStream, tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,11 +17,7 @@ vi.mock("@/utils/prisma");
 vi.mock("@/env", async (importActual) => {
   const actual = await importActual<typeof import("@/env")>();
   return {
-    env: {
-      ...actual.env,
-      CLI_LLM_ENABLED: true,
-      CLI_LLM_USER_HOMES_DIR: path.join(os.tmpdir(), "inbox-zero-index-test"),
-    },
+    env: { ...actual.env, CLI_LLM_ENABLED: true },
   };
 });
 

@@ -111,7 +111,6 @@ vi.mock("@/env", () => ({
     CODEX_CLI_ALLOW_NPX: false,
     CODEX_CLI_PATH: undefined,
     CLI_LLM_OWNER_EMAILS: undefined,
-    CLI_LLM_USER_HOMES_DIR: "./.data/cli-homes",
     BEDROCK_REGION: "us-west-2",
     BEDROCK_ACCESS_KEY: "",
     BEDROCK_SECRET_KEY: "",

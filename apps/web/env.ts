@@ -192,7 +192,6 @@ const parsedEnv = createEnv({
     CODEX_CLI_ALLOW_NPX: booleanString.optional().default(false),
     CODEX_CLI_PATH: z.string().optional(),
     CLI_LLM_OWNER_EMAILS: z.string().optional(),
-    CLI_LLM_USER_HOMES_DIR: z.string().optional().default("./.data/cli-homes"),
 
     OPENAI_ZERO_DATA_RETENTION: booleanString.optional().default(false),
     VOICE_PROVIDER: z.enum(["openai", "groq"]).optional(),
