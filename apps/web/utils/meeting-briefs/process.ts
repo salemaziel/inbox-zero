@@ -10,6 +10,7 @@ import { aiGenerateMeetingBriefing } from "@/utils/ai/meeting-briefs/generate-br
 import { sendBriefing } from "./send-briefing";
 import type { Logger } from "@/utils/logger";
 import type { CalendarEvent } from "@/utils/calendar/event-types";
+import type { UserAIFields } from "@/utils/llms/types";
 import { partitionAttendeesForBriefing } from "./attendees";
 
 export type EmailAccountForBrief = {
@@ -21,11 +22,7 @@ export type EmailAccountForBrief = {
   sensitiveDataPolicy: string | null;
   timezone: string | null;
   calendarBookingLink: string | null;
-  user: {
-    aiProvider: string | null;
-    aiModel: string | null;
-    aiApiKey: string | null;
-  };
+  user: UserAIFields;
   account: {
     provider: string;
   };
