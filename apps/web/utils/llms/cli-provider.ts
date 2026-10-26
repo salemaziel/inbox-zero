@@ -478,7 +478,16 @@ async function toCodexMcpTools(
     tools: bridged,
     settle: async () => {
       ended.abort(new Error("The AI run has ended."));
-      await Promise.allSettled([...inFlight]);
+      if (inFlight.size === 0) return;
+      // Past the hard cap the run is freed anyway so the user's queue is not
+      // stuck behind a tool that never settles.
+      const settled = await Promise.race([
+        Promise.allSettled([...inFlight]).then(() => true),
+        sleep(MAX_CLI_CALL_MS).then(() => false),
+      ]);
+      if (!settled) {
+        logger.error("Bridged tool call never settled; freeing its run anyway");
+      }
     },
   };
 }
