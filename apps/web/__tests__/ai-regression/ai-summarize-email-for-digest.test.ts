@@ -25,9 +25,13 @@ function getEmailAccount(overrides = {}): EmailAccountForDigest {
       provider: "gmail",
     },
     user: {
+      id: "test-user-id",
+      email: "user@test.com",
+      emailVerified: true,
       aiModel: "gpt-4",
       aiProvider: "openai",
       aiApiKey: process.env.OPENAI_API_KEY || null,
+      aiTaskModels: null,
     },
     ...overrides,
   };

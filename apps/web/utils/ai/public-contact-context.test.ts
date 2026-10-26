@@ -375,9 +375,13 @@ function getEmailAccount(): EmailAccountWithAI {
     timezone: "America/New_York",
     calendarBookingLink: null,
     user: {
+      id: "user-id",
+      email: "user@test.com",
+      emailVerified: true,
       aiProvider: null,
       aiModel: null,
       aiApiKey: null,
+      aiTaskModels: null,
     },
     account: { provider: "google" },
   };

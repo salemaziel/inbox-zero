@@ -20,9 +20,13 @@ const emailAccount: AutomationCheckInEmailAccount = {
     email: "user@example.com",
     about: "Founder managing a high-volume inbox",
     user: {
+      id: "user-id",
+      email: "user@example.com",
+      emailVerified: true,
       aiProvider: "openai",
       aiModel: "gpt-5.1",
       aiApiKey: null,
+      aiTaskModels: null,
     },
   }),
   name: "Test User",

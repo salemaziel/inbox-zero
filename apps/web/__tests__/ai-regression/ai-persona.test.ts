@@ -36,6 +36,7 @@ describe.runIf(isAiTest)(
           aiModel: null,
           aiProvider: null,
           aiApiKey: null,
+          aiTaskModels: null,
         },
         account: {
           provider: "google",

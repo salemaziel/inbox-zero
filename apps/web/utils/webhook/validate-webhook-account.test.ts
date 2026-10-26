@@ -86,9 +86,13 @@ describe("validateWebhookAccount", () => {
         },
       ],
       user: {
+        id: "user-id",
+        email: "user@test.com",
+        emailVerified: true,
         aiProvider: null,
         aiModel: null,
         aiApiKey: null,
+        aiTaskModels: null,
         premium: {
           appleExpiresAt: null,
           appleRevokedAt: null,
@@ -122,9 +126,13 @@ describe("validateWebhookAccount", () => {
     it("unwatches non-premium accounts even while rate-limited", async () => {
       const emailAccount = createMockEmailAccount({
         user: {
+          id: "user-id",
+          email: "user@test.com",
+          emailVerified: true,
           aiProvider: null,
           aiModel: null,
           aiApiKey: null,
+          aiTaskModels: null,
           premium: null,
         },
       });
@@ -172,9 +180,13 @@ describe("validateWebhookAccount", () => {
     it("should unwatch emails and return failure", async () => {
       const emailAccount = createMockEmailAccount({
         user: {
+          id: "user-id",
+          email: "user@test.com",
+          emailVerified: true,
           aiProvider: null,
           aiModel: null,
           aiApiKey: null,
+          aiTaskModels: null,
           premium: null,
         },
       });
