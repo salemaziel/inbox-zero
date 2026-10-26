@@ -132,14 +132,16 @@ export function isCliSubscriptionProvider(
   return CLI_SUBSCRIPTION_PROVIDERS.some((value) => value === provider);
 }
 
-// Who may use the server's own CLI login. Unset: everyone, so single-user
-// installs keep working. Set but empty: nobody. "*": everyone. Otherwise only
-// the listed addresses, and only once the address is verified, since some
-// sign-in providers let a user claim any email.
+// Who may use the server's own CLI login. Only users with a verified address,
+// since some sign-in providers let a user claim any email. Among those, unset:
+// everyone, so single-user installs keep working. Set but empty: nobody.
+// "*": everyone. Otherwise only the listed addresses.
 export function isCliLlmOwner(user: {
   email: string | null | undefined;
   emailVerified: boolean | null | undefined;
 }): boolean {
+  if (!user.email || user.emailVerified !== true) return false;
+
   const raw = env.CLI_LLM_OWNER_EMAILS;
   if (raw === undefined) return true;
 
@@ -148,7 +150,6 @@ export function isCliLlmOwner(user: {
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
   if (owners.includes("*")) return true;
-  if (!user.email || user.emailVerified !== true) return false;
   return owners.includes(user.email.trim().toLowerCase());
 }
 
