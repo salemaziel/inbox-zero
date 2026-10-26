@@ -1,6 +1,8 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { Provider } from "./config";
 
 const prismaMock = vi.hoisted(() => ({
@@ -48,12 +50,16 @@ describe("createCliLanguageModel", () => {
       modelName: "gpt-5.3-codex",
     }) as any;
 
-    await expect(model.doGenerate("generate-request")).resolves.toEqual({
+    await expect(
+      model.doGenerate({ prompt: "generate-request" }),
+    ).resolves.toEqual({
       text: "generated",
     });
-    await expect(model.doStream("stream-request")).resolves.toEqual({
-      stream: expect.any(ReadableStream),
-    });
+    await expect(model.doStream({ prompt: "stream-request" })).resolves.toEqual(
+      {
+        stream: expect.any(ReadableStream),
+      },
+    );
 
     expect(codexExec).toHaveBeenCalledTimes(2);
     expect(codexExec).toHaveBeenCalledWith("gpt-5.3-codex", {
@@ -68,8 +74,14 @@ describe("createCliLanguageModel", () => {
     });
     const cwd = getSettings(codexExec).cwd as string;
     await expect(access(cwd)).rejects.toThrow();
-    expect(doGenerate).toHaveBeenCalledWith("generate-request");
-    expect(doStream).toHaveBeenCalledWith("stream-request");
+    expect(doGenerate).toHaveBeenCalledWith({
+      prompt: "generate-request",
+      abortSignal: expect.any(AbortSignal),
+    });
+    expect(doStream).toHaveBeenCalledWith({
+      prompt: "stream-request",
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("runs Claude Code with no built-in tools, no saved transcripts and an empty folder", async () => {
@@ -88,9 +100,11 @@ describe("createCliLanguageModel", () => {
       modelName: "sonnet",
     }) as any;
 
-    await expect(model.doStream("stream-request")).resolves.toEqual({
-      stream: expect.any(ReadableStream),
-    });
+    await expect(model.doStream({ prompt: "stream-request" })).resolves.toEqual(
+      {
+        stream: expect.any(ReadableStream),
+      },
+    );
 
     expect(claudeCode).toHaveBeenCalledTimes(1);
     expect(claudeCode).toHaveBeenCalledWith("sonnet", {
@@ -147,17 +161,20 @@ describe("createCliLanguageModel", () => {
       execute: vi.fn(),
     };
 
-    const { createClaudeCodeLanguageModelWithBridgedTools } =
+    const { createCliLanguageModelWithBridgedTools } =
       await loadCliProviderModule({
         claudeModule: { claudeCode, createAiSdkMcpServer },
       });
 
-    const model = (await createClaudeCodeLanguageModelWithBridgedTools({
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CLAUDE_CODE,
       modelName: "sonnet",
       tools: { searchInbox, createRule },
     })) as any;
 
-    await expect(model.doGenerate("generate-request")).resolves.toEqual({
+    await expect(
+      model.doGenerate({ prompt: "generate-request" }),
+    ).resolves.toEqual({
       content: [
         {
           type: "tool-call",
@@ -166,7 +183,7 @@ describe("createCliLanguageModel", () => {
         },
       ],
     });
-    const streamResult = await model.doStream("stream-request");
+    const streamResult = await model.doStream({ prompt: "stream-request" });
     const reader = streamResult.stream.getReader();
     await expect(reader.read()).resolves.toEqual({
       done: false,
@@ -194,8 +211,14 @@ describe("createCliLanguageModel", () => {
       permissionMode: "default",
       sandbox: { enabled: true },
     });
-    expect(doGenerate).toHaveBeenCalledWith("generate-request");
-    expect(doStream).toHaveBeenCalledWith("stream-request");
+    expect(doGenerate).toHaveBeenCalledWith({
+      prompt: "generate-request",
+      abortSignal: expect.any(AbortSignal),
+    });
+    expect(doStream).toHaveBeenCalledWith({
+      prompt: "stream-request",
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("surfaces a clear error when the provider package is missing its factory export", async () => {
@@ -208,7 +231,9 @@ describe("createCliLanguageModel", () => {
       modelName: "gpt-5.3-codex",
     }) as any;
 
-    await expect(model.doGenerate("generate-request")).rejects.toThrow(
+    await expect(
+      model.doGenerate({ prompt: "generate-request" }),
+    ).rejects.toThrow(
       'CLI LLM provider "codex-cli" package does not export "codexExec". Check the installed package version.',
     );
   });
@@ -227,7 +252,7 @@ describe("createCliLanguageModel", () => {
       modelName: "gpt-5.3-codex",
     }) as any;
 
-    await expect(model.doStream("stream-request")).rejects.toThrow(
+    await expect(model.doStream({ prompt: "stream-request" })).rejects.toThrow(
       'CLI LLM provider "codex-cli" returned a model without doStream. Check the installed package version.',
     );
   });
@@ -236,6 +261,7 @@ describe("createCliLanguageModel", () => {
     vi.stubEnv("DATABASE_URL", "postgres://fake-host-db");
     vi.stubEnv("EMAIL_ENCRYPT_SECRET", "fake-host-secret");
     vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
+    vi.stubEnv("CODEX_API_KEY", "fake-host-codex-key");
     vi.stubEnv("LANG", "en_US.UTF-8");
     let authSeenByCli: string | null = null;
     const codexExec = vi.fn((_model: string, settings: any) => ({
@@ -360,10 +386,27 @@ describe("createCliLanguageModel", () => {
   });
 
   it("uses the server login for an owner who has not connected an account", async () => {
+    const hostCodexHome = await mkdtemp(
+      path.join(os.tmpdir(), "inbox-zero-test-host-codex-"),
+    );
+    await writeFile(path.join(hostCodexHome, "auth.json"), FAKE_CODEX_AUTH);
+    await writeFile(
+      path.join(hostCodexHome, "config.toml"),
+      '[mcp_servers.host]\ncommand = "host-mcp"\n',
+    );
+    vi.stubEnv("CODEX_HOME", hostCodexHome);
     vi.stubEnv("DATABASE_URL", "postgres://fake-host-db");
     vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
-    const codexExec = vi.fn(() => ({
-      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+    let seenByCli: { auth: string; config: string } | null = null;
+    const codexExec = vi.fn((_model: string, settings: any) => ({
+      doGenerate: vi.fn(async () => {
+        const runHome = settings.env.CODEX_HOME;
+        seenByCli = {
+          auth: await readFile(path.join(runHome, "auth.json"), "utf8"),
+          config: await readFile(path.join(runHome, "config.toml"), "utf8"),
+        };
+        return { text: "ok" };
+      }),
       doStream: vi.fn(),
     }));
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue(null);
@@ -378,10 +421,59 @@ describe("createCliLanguageModel", () => {
     }) as any;
     await model.doGenerate("request");
 
-    expect(getSettings(codexExec).env).toMatchObject({
+    const childEnv = getSettings(codexExec).env as Record<string, string>;
+    expect(childEnv).toMatchObject({
       DATABASE_URL: "",
       OPENAI_API_KEY: "fake-host-openai-key",
     });
+    expect(childEnv.CODEX_HOME).not.toBe(hostCodexHome);
+    expect(seenByCli).toEqual({
+      auth: FAKE_CODEX_AUTH,
+      config: expect.not.stringContaining("mcp_servers"),
+    });
+    await expect(access(childEnv.CODEX_HOME)).rejects.toThrow();
+    await rm(hostCodexHome, { recursive: true, force: true });
+  });
+
+  it("gives every Codex run a config with its built-in tools turned off", async () => {
+    let configSeenByCli = "";
+    const codexExec = vi.fn((_model: string, settings: any) => ({
+      doGenerate: vi.fn(async () => {
+        configSeenByCli = await readFile(
+          path.join(settings.env.CODEX_HOME, "config.toml"),
+          "utf8",
+        );
+        return { text: "ok" };
+      }),
+      doStream: vi.fn(),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+    await model.doGenerate("request");
+
+    for (const line of [
+      'web_search = "disabled"',
+      "shell_tool = false",
+      "view_image = false",
+      "multi_agent = false",
+      "apps = false",
+      "plugins = false",
+    ]) {
+      expect(configSeenByCli).toContain(line);
+    }
+    expect(configSeenByCli).toMatch(/\[agents\]\nenabled = false/);
   });
 
   it("asks a user without the server login to connect or reconnect", async () => {
@@ -448,7 +540,12 @@ describe("createCliLanguageModel", () => {
       RECONNECT_SUBSCRIPTION_MESSAGE,
     );
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
-      where: { userId: "user1", provider: Provider.CODEX_CLI },
+      where: {
+        userId: "user1",
+        provider: Provider.CODEX_CLI,
+        status: "connected",
+        connectedAt,
+      },
       data: expect.objectContaining({ status: "needs-reconnect" }),
     });
   });
@@ -486,7 +583,12 @@ describe("createCliLanguageModel", () => {
       RECONNECT_SUBSCRIPTION_MESSAGE,
     );
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
-      where: { userId: "user1", provider: Provider.CLAUDE_CODE },
+      where: {
+        userId: "user1",
+        provider: Provider.CLAUDE_CODE,
+        status: "connected",
+        connectedAt,
+      },
       data: expect.objectContaining({ status: "needs-reconnect" }),
     });
   });
@@ -512,19 +614,27 @@ describe("createCliLanguageModel", () => {
       connectedAt,
     });
 
-    const { createCliLanguageModel } = await loadCliProviderModule({
-      codexModule: { codexExec, isAuthenticationError: () => false },
-    });
+    const { createCliLanguageModel, RECONNECT_SUBSCRIPTION_MESSAGE } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
     const model = createCliLanguageModel({
       provider: Provider.CODEX_CLI,
       modelName: "gpt-5.3-codex",
       cliLogin: { userId: "user1", allowServerLogin: false },
     }) as any;
-    const first = await model.doStream("first");
-    await expect(readAll(first.stream)).rejects.toBe(exitError);
+    const first = await model.doStream({});
+    await expect(readAll(first.stream)).rejects.toThrow(
+      RECONNECT_SUBSCRIPTION_MESSAGE,
+    );
 
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
-      where: { userId: "user1", provider: Provider.CODEX_CLI },
+      where: {
+        userId: "user1",
+        provider: Provider.CODEX_CLI,
+        status: "connected",
+        connectedAt,
+      },
       data: expect.objectContaining({ status: "needs-reconnect" }),
     });
     const second = await model.doStream("second");
@@ -572,11 +682,23 @@ describe("createCliLanguageModel", () => {
     expect(doGenerate).toHaveBeenCalledTimes(2);
   });
 
-  it("frees the Codex run slot of a stream nobody finishes after the time limit", async () => {
+  it("stops a Codex stream nobody finishes after the time limit and frees its slot once the CLI exits", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let exitCli: () => void = () => {};
+    let cliSignal: AbortSignal | undefined;
     const doStream = vi
       .fn()
-      .mockResolvedValueOnce({ stream: new ReadableStream() })
+      .mockImplementationOnce(async (options: { abortSignal: AbortSignal }) => {
+        cliSignal = options.abortSignal;
+        return {
+          stream: new ReadableStream({
+            start(controller) {
+              // Like the provider: the stream errors when the killed CLI exits.
+              exitCli = () => controller.error(new Error("Codex CLI exited"));
+            },
+          }),
+        };
+      })
       .mockResolvedValueOnce({ stream: emptyStream() });
     const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
@@ -596,19 +718,589 @@ describe("createCliLanguageModel", () => {
     }) as any;
 
     await model.doStream({});
+    const codexHome = getSettings(codexExec).env as Record<string, string>;
     const second = model.doStream({});
     let secondStarted = false;
     second.then(() => {
       secondStarted = true;
     });
     await vi.advanceTimersByTimeAsync(MAX_CLI_CALL_MS - 1000);
-    expect(secondStarted).toBe(false);
+    expect(cliSignal?.aborted).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1000);
+    expect(cliSignal?.aborted).toBe(true);
+    expect(secondStarted).toBe(false);
+    await expect(access(codexHome.CODEX_HOME)).resolves.toBeUndefined();
+
+    exitCli();
     vi.useRealTimers();
     await expect(second).resolves.toEqual({
       stream: expect.any(ReadableStream),
     });
+    await expect(access(codexHome.CODEX_HOME)).rejects.toThrow();
+  });
+
+  it("frees the slot of a stopped CLI that never exits only after a long hard cap", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const doStream = vi
+      .fn()
+      .mockResolvedValueOnce({ stream: new ReadableStream() })
+      .mockResolvedValueOnce({ stream: emptyStream() });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel, MAX_CLI_CALL_MS, CLI_STOP_WAIT_MS } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    await model.doStream({});
+    const second = model.doStream({});
+    await vi.advanceTimersByTimeAsync(
+      MAX_CLI_CALL_MS + CLI_STOP_WAIT_MS + MAX_CLI_CALL_MS - 1,
+    );
+    await flushFileWork();
+    // The queued call looks up its login once it has the slot.
+    expect(prismaMock.aiSubscriptionLogin.findUnique).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    vi.useRealTimers();
+    await expect(second).resolves.toEqual({
+      stream: expect.any(ReadableStream),
+    });
+  });
+
+  it("stops the CLI when the reader cancels the stream", async () => {
+    let cliSignal: AbortSignal | undefined;
+    const doStream = vi.fn(async (options: { abortSignal: AbortSignal }) => {
+      cliSignal = options.abortSignal;
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            options.abortSignal.addEventListener("abort", () =>
+              controller.error(new Error("Codex CLI exited")),
+            );
+          },
+        }),
+      };
+    });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+    }) as any;
+
+    const { stream } = await model.doStream({});
+    await stream.cancel("client went away");
+
+    expect(cliSignal?.aborted).toBe(true);
+    const cwd = getSettings(codexExec).cwd as string;
+    await expect(access(cwd)).rejects.toThrow();
+  });
+
+  it("stops a Codex stream as soon as Codex runs one of its own tools", async () => {
+    let cliSignal: AbortSignal | undefined;
+    const doStream = vi.fn(async (options: { abortSignal: AbortSignal }) => {
+      cliSignal = options.abortSignal;
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "text-delta", id: "t1", delta: "hi" });
+            controller.enqueue({
+              type: "tool-call",
+              toolCallId: "item-1",
+              toolName: "exec",
+              input: '{"command":"cat fake-secret-file"}',
+              providerExecuted: true,
+              dynamic: true,
+            });
+            // Like the provider: the stream errors when the killed CLI exits.
+            options.abortSignal.addEventListener("abort", () =>
+              controller.error(new Error("Codex CLI exited")),
+            );
+          },
+        }),
+      };
+    });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+
+    const { createCliLanguageModel, CODEX_TOOL_BLOCKED_MESSAGE } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+    }) as any;
+
+    const { stream } = await model.doStream({});
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toEqual({
+      done: false,
+      value: { type: "text-delta", id: "t1", delta: "hi" },
+    });
+    await expect(reader.read()).rejects.toThrow(CODEX_TOOL_BLOCKED_MESSAGE);
+
+    expect(cliSignal?.aborted).toBe(true);
+    const cwd = getSettings(codexExec).cwd as string;
+    await expect(access(cwd)).rejects.toThrow();
+  });
+
+  it("blocks every Codex MCP call when no tools are bridged, and leaves app tool calls alone", async () => {
+    const appToolCall = {
+      type: "tool-call",
+      toolCallId: "call-1",
+      toolName: "archive",
+      input: "{}",
+    };
+    const doGenerate = vi
+      .fn()
+      .mockResolvedValueOnce({ content: [appToolCall] })
+      .mockResolvedValueOnce({
+        content: [
+          { type: "text", text: "fake secret" },
+          codexMcpCall("filesystem", "read_file"),
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: [codexMcpCall("inboxzero", "archive")],
+      });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+
+    const { createCliLanguageModel, CODEX_TOOL_BLOCKED_MESSAGE } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+    }) as any;
+
+    await expect(model.doGenerate({})).resolves.toEqual({
+      content: [appToolCall],
+    });
+    await expect(model.doGenerate({})).rejects.toThrow(
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    );
+    await expect(model.doGenerate({})).rejects.toThrow(
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    );
+  });
+
+  it("lets a bridged Codex run call only its own Inbox Zero tools", async () => {
+    const doGenerate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: [
+          codexMcpCall("inboxzero", "archive", { ids: ["m1"] }),
+          codexMcpResult("inboxzero", "archive", {
+            content: [{ type: "text", text: '{"archived":1}' }],
+          }),
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: [codexMcpCall("inboxzero", "deleteAll")],
+      })
+      .mockResolvedValueOnce({
+        content: [codexMcpCall("filesystem", "archive")],
+      })
+      .mockResolvedValueOnce({
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "item-9",
+            toolName: "exec",
+            input: '{"command":"ls"}',
+            providerExecuted: true,
+            dynamic: true,
+          },
+        ],
+      });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    const stop = vi.fn(async () => {});
+    const createLocalMcpServer = vi.fn(async () => ({
+      config: {
+        transport: "http",
+        url: "http://127.0.0.1:1",
+        bearerToken: "t",
+      },
+      stop,
+    }));
+
+    const {
+      createCliLanguageModelWithBridgedTools,
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    } = await loadCliProviderModule({
+      codexModule: {
+        codexExec,
+        createLocalMcpServer,
+        isAuthenticationError: () => false,
+      },
+    });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      tools: {
+        archive: {
+          inputSchema: z.object({ ids: z.array(z.string()) }),
+          execute: vi.fn(),
+        },
+      },
+    })) as any;
+
+    await expect(model.doGenerate({})).resolves.toEqual({
+      content: [
+        {
+          ...codexMcpCall("inboxzero", "archive"),
+          input: '{"ids":["m1"]}',
+        },
+        {
+          ...codexMcpResult("inboxzero", "archive", {}),
+          result: { archived: 1 },
+        },
+      ],
+    });
+    for (let call = 0; call < 3; call++) {
+      await expect(model.doGenerate({})).rejects.toThrow(
+        CODEX_TOOL_BLOCKED_MESSAGE,
+      );
+    }
+    expect(createLocalMcpServer).toHaveBeenCalledTimes(4);
+    expect(stop).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports a failed bridged tool call as an error result", async () => {
+    const doStream = vi.fn().mockResolvedValue({
+      stream: streamOf([
+        codexMcpCall("inboxzero", "archive", { ids: [] }),
+        {
+          ...codexMcpResult("inboxzero", "archive", undefined),
+          result: {
+            server: "inboxzero",
+            tool: "archive",
+            status: "failed",
+            error: { message: "Archive failed" },
+          },
+        },
+      ]),
+    });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    const createLocalMcpServer = vi.fn(async () => ({
+      config: {
+        transport: "http",
+        url: "http://127.0.0.1:1",
+        bearerToken: "t",
+      },
+      stop: async () => {},
+    }));
+
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          createLocalMcpServer,
+          isAuthenticationError: () => false,
+        },
+      });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      tools: {
+        archive: {
+          inputSchema: z.object({ ids: z.array(z.string()) }),
+          execute: vi.fn(),
+        },
+      },
+    })) as any;
+
+    const { stream } = await model.doStream({});
+    const parts = await readAll(stream);
+    expect(parts).toEqual([
+      expect.objectContaining({ type: "tool-call", input: '{"ids":[]}' }),
+      expect.objectContaining({
+        type: "tool-result",
+        result: "Archive failed",
+        isError: true,
+      }),
+    ]);
+  });
+
+  it("does not start a tool server for a Codex run with no tools", async () => {
+    const doGenerate = vi.fn().mockResolvedValue({ content: [] });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    const createLocalMcpServer = vi.fn();
+
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          createLocalMcpServer,
+          isAuthenticationError: () => false,
+        },
+      });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      tools: {},
+    })) as any;
+    await model.doGenerate({});
+
+    expect(createLocalMcpServer).not.toHaveBeenCalled();
+    expect(getSettings(codexExec)).not.toHaveProperty("mcpServers");
+  });
+
+  it("keeps a later Codex call waiting for the running one after a queued call is cancelled", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const doGenerate = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ text: "later" });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    const running = model.doGenerate({});
+    await vi.waitFor(() => expect(doGenerate).toHaveBeenCalledTimes(1));
+    const controller = new AbortController();
+    const cancelled = model.doGenerate({ abortSignal: controller.signal });
+    controller.abort(new Error("stopped"));
+    await expect(cancelled).rejects.toThrow("stopped");
+
+    const later = model.doGenerate({});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(doGenerate).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ text: "first" });
+    await expect(running).resolves.toEqual({ text: "first" });
+    await expect(later).resolves.toEqual({ text: "later" });
+    expect(doGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds a Codex run until a bridged tool call still running at exit finishes, and refuses new calls", async () => {
+    let finishTool: () => void = () => {};
+    let toolSignal: AbortSignal | undefined;
+    const archive = vi.fn(
+      (_input: unknown, options: { abortSignal: AbortSignal }) => {
+        toolSignal = options.abortSignal;
+        return new Promise((resolve) => {
+          finishTool = () => resolve({ archived: 1 });
+        });
+      },
+    );
+    const createLocalMcpServer = vi.fn(async () => ({
+      config: {
+        transport: "http",
+        url: "http://127.0.0.1:1",
+        bearerToken: "t",
+      },
+      stop,
+    }));
+    const stop = vi.fn(async () => {});
+    let inFlightCall: Promise<unknown> | undefined;
+    const doGenerate = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        // Codex calls the tool, then exits before the call returns.
+        const [{ tools }] = createLocalMcpServer.mock.calls[0] as any;
+        inFlightCall = tools[0].execute({ ids: ["m1"] });
+        await vi.waitFor(() => expect(archive).toHaveBeenCalled());
+        return { content: [] };
+      })
+      .mockResolvedValueOnce({ content: [] });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          createLocalMcpServer,
+          isAuthenticationError: () => false,
+        },
+      });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+      tools: {
+        archive: {
+          inputSchema: z.object({ ids: z.array(z.string()) }),
+          execute: archive as any,
+        },
+      },
+    })) as any;
+
+    let firstDone = false;
+    const first = model.doGenerate({}).finally(() => {
+      firstDone = true;
+    });
+    const second = model.doGenerate({});
+    await vi.waitFor(() => expect(toolSignal?.aborted).toBe(true));
+
+    const [{ tools }] = createLocalMcpServer.mock.calls[0] as any;
+    await expect(tools[0].execute({ ids: ["m2"] })).rejects.toThrow(
+      'Tool "archive" was not run',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(firstDone).toBe(false);
+    expect(stop).not.toHaveBeenCalled();
+    expect(doGenerate).toHaveBeenCalledTimes(1);
+    const codexHome = (getSettings(codexExec).env as Record<string, string>)
+      .CODEX_HOME;
+    await expect(access(codexHome)).resolves.toBeUndefined();
+
+    finishTool();
+    await expect(inFlightCall).resolves.toEqual({ archived: 1 });
+    await expect(first).resolves.toEqual({ content: [] });
+    await expect(access(codexHome)).rejects.toThrow();
+    await expect(second).resolves.toEqual({ content: [] });
+    expect(doGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a stopped Codex run's slot and login folder past the grace period until the CLI really exits", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let exitCli: () => void = () => {};
+    let abortsSeen = 0;
+    const doStream = vi
+      .fn()
+      .mockImplementationOnce(async (options: { abortSignal: AbortSignal }) => {
+        // A CLI that ignores the first request to stop.
+        options.abortSignal.addEventListener("abort", () => {
+          abortsSeen++;
+        });
+        return {
+          stream: new ReadableStream({
+            start(controller) {
+              exitCli = () => controller.error(new Error("Codex CLI exited"));
+            },
+          }),
+        };
+      })
+      .mockResolvedValueOnce({ stream: emptyStream() });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel, CLI_STOP_WAIT_MS } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+
+    const { stream } = await model.doStream({});
+    const codexHome = (getSettings(codexExec).env as Record<string, string>)
+      .CODEX_HOME;
+    const cancelled = stream.cancel("client went away");
+    const second = model.doStream({});
+
+    await vi.advanceTimersByTimeAsync(CLI_STOP_WAIT_MS * 3);
+    expect(abortsSeen).toBe(1);
+    await flushFileWork();
+    // The queued call looks up its login once it has the slot.
+    expect(prismaMock.aiSubscriptionLogin.findUnique).toHaveBeenCalledTimes(1);
+    await expect(access(codexHome)).resolves.toBeUndefined();
+
+    exitCli();
+    vi.useRealTimers();
+    await cancelled;
+    await expect(access(codexHome)).rejects.toThrow();
+    await expect(second).resolves.toEqual({
+      stream: expect.any(ReadableStream),
+    });
+  });
+
+  it("frees a Codex run as soon as its CLI exits, even if nobody reads or cancels the stream", async () => {
+    const doStream = vi
+      .fn()
+      .mockImplementationOnce(
+        async (options: { abortSignal: AbortSignal }) => ({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "t1", delta: "hi" });
+              // Like the provider: the stream errors when the killed CLI exits.
+              options.abortSignal.addEventListener("abort", () =>
+                controller.error(new Error("Codex CLI exited")),
+              );
+            },
+          }),
+        }),
+      )
+      // This CLI finishes on its own, leaving a part nobody reads.
+      .mockResolvedValueOnce({
+        stream: streamOf([{ type: "text-delta", id: "t1", delta: "done" }]),
+      })
+      .mockResolvedValueOnce({ stream: emptyStream() });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+    const codexHomeOf = (call: number) =>
+      (codexExec.mock.calls[call] as any)[1].env.CODEX_HOME as string;
+
+    const controller = new AbortController();
+    await model.doStream({ abortSignal: controller.signal });
+    controller.abort(new Error("client went away"));
+    await model.doStream({});
+    await expect(access(codexHomeOf(0))).rejects.toThrow();
+
+    await expect(model.doStream({})).resolves.toEqual({
+      stream: expect.any(ReadableStream),
+    });
+    await expect(access(codexHomeOf(1))).rejects.toThrow();
+    expect(doStream).toHaveBeenCalledTimes(3);
   });
 
   it("runs one Codex call at a time per user", async () => {
@@ -711,4 +1403,36 @@ async function readAll(stream: ReadableStream<unknown>) {
     parts.push(part);
   }
   return parts;
+}
+
+function codexMcpCall(server: string, tool: string, args: unknown = {}) {
+  return {
+    type: "tool-call",
+    toolCallId: "item-1",
+    toolName: tool,
+    input: JSON.stringify({
+      server,
+      tool,
+      status: "in_progress",
+      arguments: args,
+    }),
+    providerExecuted: true,
+    dynamic: true,
+  };
+}
+
+function codexMcpResult(server: string, tool: string, result: unknown) {
+  return {
+    type: "tool-result",
+    toolCallId: "item-1",
+    toolName: tool,
+    result: { server, tool, status: "completed", result },
+    dynamic: true,
+  };
+}
+
+// Fake timers don't wait for real file work, such as removing a run's folder
+// before its slot is freed; a run of real file calls lets that finish first.
+async function flushFileWork() {
+  for (let i = 0; i < 50; i++) await access(os.tmpdir());
 }

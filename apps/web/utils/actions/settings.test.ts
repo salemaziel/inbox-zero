@@ -19,6 +19,7 @@ const { clearSpecificErrorMessagesMock, mockEnv } = vi.hoisted(() => ({
   mockEnv: {
     AZURE_RESOURCE_NAME: "azure-resource",
     CLI_LLM_ENABLED: true,
+    CLI_LLM_OWNER_EMAILS: "owner@example.com" as string | undefined,
     EMAIL_ENCRYPT_SECRET: "test-email-secret",
     EMAIL_ENCRYPT_SALT: "test-email-salt",
     NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED: false,
@@ -42,13 +43,11 @@ vi.mock("@/utils/error-messages", async (importActual) => {
 describe("updateAiSettingsAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    prisma.user.findUnique.mockResolvedValue({
-      aiProvider: Provider.OPEN_AI,
-      aiApiKey: "stored-api-key",
-    } as Awaited<ReturnType<typeof prisma.user.findUnique>>);
+    mockUser({ email: "user@example.com" });
     prisma.user.updateMany.mockResolvedValue({ count: 1 } as never);
     prisma.aiSubscriptionLogin.findMany.mockResolvedValue([]);
     mockEnv.CLI_LLM_ENABLED = true;
+    mockEnv.CLI_LLM_OWNER_EMAILS = "owner@example.com";
     mockEnv.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED = false;
     mockEnv.NEXT_PUBLIC_SENSITIVE_DATA_POLICY_LOCKED = false;
   });
@@ -126,6 +125,42 @@ describe("updateAiSettingsAction", () => {
   });
 
   it("rejects a subscription provider that isn't connected", async () => {
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+    });
+
+    expect(result?.serverError).toBe("Connect this account before using it.");
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets a verified owner pick subscriptions they haven't connected, which run on the server login", async () => {
+    mockUser({ email: "owner@example.com" });
+    const aiTaskModels = {
+      economy: { provider: Provider.CLAUDE_CODE, model: "haiku" },
+    };
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+      aiTaskModels,
+    });
+
+    expect(result?.serverError).toBeUndefined();
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: {
+        aiProvider: Provider.CODEX_CLI,
+        aiModel: "gpt-6.1-sol",
+        aiApiKey: null,
+        aiTaskModels,
+      },
+    });
+  });
+
+  it("does not treat an unverified owner address as the owner when saving", async () => {
+    mockUser({ email: "owner@example.com", emailVerified: false });
+
     const result = await updateAiSettingsAction({
       aiProvider: Provider.CODEX_CLI,
       aiModel: "gpt-6.1-sol",
@@ -262,4 +297,19 @@ function mockConnectedLogins(providers: string[]) {
       ReturnType<typeof prisma.aiSubscriptionLogin.findMany>
     >,
   );
+}
+
+function mockUser({
+  email,
+  emailVerified = true,
+}: {
+  email: string;
+  emailVerified?: boolean;
+}) {
+  prisma.user.findUnique.mockResolvedValue({
+    email,
+    emailVerified,
+    aiProvider: Provider.OPEN_AI,
+    aiApiKey: "stored-api-key",
+  } as Awaited<ReturnType<typeof prisma.user.findUnique>>);
 }

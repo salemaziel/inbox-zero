@@ -1589,6 +1589,18 @@ describe("Models", () => {
       ).toThrow(CONNECT_SUBSCRIPTION_MESSAGE);
     });
 
+    it("requires a verified address even when everyone may use the server login", () => {
+      setDefaultLlms(Provider.CODEX_CLI, "gpt-5.3-codex");
+
+      for (const owners of [undefined, "*"]) {
+        vi.mocked(env).CLI_LLM_OWNER_EMAILS = owners;
+        expect(() => getModel(defaultUserAi({ emailVerified: false }))).toThrow(
+          CONNECT_SUBSCRIPTION_MESSAGE,
+        );
+        expect(getModel(defaultUserAi()).cliLogin).toBeUndefined();
+      }
+    });
+
     it("uses a per-task entry for its model type and the main settings elsewhere", () => {
       const userAi = defaultUserAi({
         aiProvider: Provider.CLAUDE_CODE,
