@@ -77,6 +77,7 @@ const followUpReminderAccountSelect = {
       aiProvider: true,
       aiModel: true,
       aiApiKey: true,
+      aiTaskModels: true,
     },
   },
   account: {

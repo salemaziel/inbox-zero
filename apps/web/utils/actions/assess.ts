@@ -62,6 +62,7 @@ export const analyzeWritingStyleAction = actionClient
             aiProvider: true,
             aiModel: true,
             aiApiKey: true,
+            aiTaskModels: true,
           },
         },
       },

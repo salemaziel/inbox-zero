@@ -240,6 +240,7 @@ export function getEmailAccount(
       aiModel: null,
       aiProvider: null,
       aiApiKey: null,
+      aiTaskModels: null,
     },
     account: {
       provider: "google",

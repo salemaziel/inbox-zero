@@ -13,7 +13,11 @@ import { createOllama } from "ollama-ai-provider-v2";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
-import { Provider, SUBSCRIPTION_MODELS } from "@/utils/llms/config";
+import {
+  aiTaskModelsSchema,
+  Provider,
+  SUBSCRIPTION_MODELS,
+} from "@/utils/llms/config";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
@@ -75,14 +79,29 @@ export function getModel(
   modelType: ModelType = "default",
 ): SelectModel {
   const allowServerCliLogin = isCliLlmOwner(userAi);
-  const usesOwnCliLogin = isCliSubscriptionProvider(userAi.aiProvider);
-  const selectedModel =
-    userAi.aiApiKey || usesOwnCliLogin
+  const cliLogin = { userId: userAi.id, allowServerLogin: allowServerCliLogin };
+  const taskModel = getUserTaskModel(userAi, modelType);
+  const usesOwnCliLogin = isCliSubscriptionProvider(
+    taskModel?.provider ?? userAi.aiProvider,
+  );
+  const usesUserApiKey = !usesOwnCliLogin && !!userAi.aiApiKey;
+  const selectedModel = taskModel
+    ? {
+        primaryModel: selectModel(
+          {
+            aiProvider: taskModel.provider,
+            aiModel: taskModel.model,
+            aiApiKey: usesOwnCliLogin ? null : userAi.aiApiKey,
+            cliLogin,
+          },
+          modelType,
+          getOpenRouterProviderOptions(modelType, taskModel.provider),
+        ),
+        fallbackModels: [],
+      }
+    : userAi.aiApiKey || usesOwnCliLogin
       ? {
-          primaryModel: selectUserModel(userAi, modelType, {
-            userId: userAi.id,
-            allowServerLogin: allowServerCliLogin,
-          }),
+          primaryModel: selectUserModel(userAi, modelType, cliLogin),
           fallbackModels: [],
         }
       : selectDeploymentModelByType(modelType, allowServerCliLogin);
@@ -101,9 +120,19 @@ export function getModel(
   return {
     ...primaryModel,
     fallbackModels,
-    hasUserApiKey:
-      !!userAi.aiApiKey || (usesOwnCliLogin && !allowServerCliLogin),
+    hasUserApiKey: usesUserApiKey || (usesOwnCliLogin && !allowServerCliLogin),
   };
+}
+
+// A per-task entry only applies while its provider is still usable: the main
+// provider (with the main API key) or a CLI subscription.
+function getUserTaskModel(userAi: UserAIFields, modelType: ModelType) {
+  const parsed = aiTaskModelsSchema.safeParse(userAi.aiTaskModels ?? {});
+  const entry = parsed.success ? parsed.data[modelType] : undefined;
+  if (!entry) return null;
+  if (isCliSubscriptionProvider(entry.provider)) return entry;
+  if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
+  return null;
 }
 
 function selectModel(

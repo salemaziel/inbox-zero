@@ -107,6 +107,7 @@ export async function processMeetingBriefings({
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
         },
       },
       account: {

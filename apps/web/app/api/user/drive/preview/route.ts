@@ -70,6 +70,7 @@ async function getPreviewData({
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
         },
       },
       account: {

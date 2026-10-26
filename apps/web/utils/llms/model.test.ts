@@ -1589,6 +1589,94 @@ describe("Models", () => {
       ).toThrow(CONNECT_SUBSCRIPTION_MESSAGE);
     });
 
+    it("uses a per-task entry for its model type and the main settings elsewhere", () => {
+      const userAi = defaultUserAi({
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "sonnet",
+        aiTaskModels: {
+          chat: { provider: Provider.CLAUDE_CODE, model: "opus" },
+          economy: { provider: Provider.CODEX_CLI, model: "gpt-6-astra" },
+        },
+      });
+
+      expect(getModel(userAi, "chat").modelName).toBe("opus");
+      expect(getModel(userAi, "default").modelName).toBe("sonnet");
+      expect(getModel(userAi, "draft").modelName).toBe("sonnet");
+      // nano has no entry and the main provider is a subscription, so it
+      // keeps the main provider's fast model.
+      expect(getModel(userAi, "nano")).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "haiku",
+      });
+    });
+
+    it("gives every subscription entry the user's own login, including a mixed Claude main and ChatGPT background setup", () => {
+      const scope = { userId: "user-1", allowServerLogin: false };
+      const userAi = defaultUserAi({
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "opus",
+        aiTaskModels: {
+          economy: { provider: Provider.CODEX_CLI, model: "gpt-6-luna" },
+        },
+      });
+
+      const economy = getModel(userAi, "economy");
+      const chat = getModel(userAi, "chat");
+
+      expect(economy).toMatchObject({
+        provider: Provider.CODEX_CLI,
+        modelName: "gpt-6-luna",
+        cliLogin: scope,
+        fallbackModels: [],
+        hasUserApiKey: true,
+      });
+      expect(chat).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "opus",
+        cliLogin: scope,
+      });
+    });
+
+    it("lets an API-key user send one task to a connected subscription", () => {
+      const userAi = defaultUserAi({
+        aiProvider: Provider.OPEN_AI,
+        aiModel: "gpt-5.1",
+        aiApiKey: "user-api-key",
+        aiTaskModels: {
+          draft: { provider: Provider.CLAUDE_CODE, model: "opus" },
+          nano: { provider: Provider.OPEN_AI, model: "gpt-5.1-nano" },
+        },
+      });
+
+      expect(getModel(userAi, "draft")).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "opus",
+        cliLogin: { userId: "user-1", allowServerLogin: false },
+      });
+      expect(getModel(userAi, "nano")).toMatchObject({
+        provider: Provider.OPEN_AI,
+        modelName: "gpt-5.1-nano",
+        hasUserApiKey: true,
+      });
+      // An API-key main provider has no fast-model fallback.
+      expect(getModel(userAi, "economy").modelName).toBe("gpt-5.1");
+    });
+
+    it("ignores an API-key entry once the main provider no longer matches it", () => {
+      const result = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CODEX_CLI,
+          aiTaskModels: {
+            chat: { provider: Provider.OPEN_AI, model: "gpt-5.1" },
+          },
+        }),
+        "chat",
+      );
+
+      expect(result.provider).toBe(Provider.CODEX_CLI);
+      expect(result.modelName).toBe("gpt-6.1-sol");
+    });
+
     it("skips CLI deployment fallbacks for non-owners only", () => {
       setDefaultLlms(Provider.OPEN_AI, "gpt-5.4-mini", [
         "codex-cli:gpt-5.3-codex",
@@ -1614,6 +1702,7 @@ function defaultUserAi(overrides: Partial<UserAIFields> = {}): UserAIFields {
     aiApiKey: null,
     aiProvider: null,
     aiModel: null,
+    aiTaskModels: null,
     ...overrides,
   };
 }

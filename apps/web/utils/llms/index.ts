@@ -171,6 +171,7 @@ const NO_USER_AI_FIELDS: UserAIFields = {
   aiProvider: null,
   aiModel: null,
   aiApiKey: null,
+  aiTaskModels: null,
 };
 
 type LLMProviderOptions = Record<string, Record<string, JSONValue>>;

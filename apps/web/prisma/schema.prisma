@@ -96,6 +96,7 @@ model User {
   aiProvider        String?
   aiModel           String?
   aiApiKey          String?
+  aiTaskModels      Json? // per model type { provider, model }; shape in utils/llms/config.ts
   decisionModelEnabled Boolean? // null follows DEFAULT_DECISION_MODEL_ENABLED
   webhookSecret     String?
 

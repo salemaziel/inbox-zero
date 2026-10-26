@@ -31,6 +31,7 @@ export async function validateUserAndAiAccess({
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
           premium: {
             select: premiumEntitlementSelect,
           },

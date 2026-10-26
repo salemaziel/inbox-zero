@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const DEFAULT_PROVIDER = "DEFAULT";
 
 export const Provider = {
@@ -63,4 +65,33 @@ export function getSubscriptionModelLabel(provider: string, model: string) {
     SUBSCRIPTION_MODELS[provider].models.find((m) => m.value === model)
       ?.label ?? model
   );
+}
+
+// Settings keys for the per-task model choice, one per model type.
+export const AI_TASK_MODEL_TYPES = [
+  "chat",
+  "draft",
+  "default",
+  "economy",
+  "nano",
+] as const;
+
+const aiTaskModelEntry = z.object({
+  provider: z.string().min(1),
+  model: z.string().trim().min(1, "Pick a model"),
+});
+
+// Stored in User.aiTaskModels. Which providers an entry may use is checked on
+// save, against the user's main provider and connected subscriptions.
+export const aiTaskModelsSchema = z.object({
+  chat: aiTaskModelEntry.optional(),
+  draft: aiTaskModelEntry.optional(),
+  default: aiTaskModelEntry.optional(),
+  economy: aiTaskModelEntry.optional(),
+  nano: aiTaskModelEntry.optional(),
+});
+export type AiTaskModels = z.infer<typeof aiTaskModelsSchema>;
+
+export function isSubscriptionModel(provider: string, model: string) {
+  return !!SUBSCRIPTION_MODELS[provider]?.models.some((m) => m.value === model);
 }
