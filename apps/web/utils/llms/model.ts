@@ -74,7 +74,7 @@ export function getModel(
   userAi: UserAIFields,
   modelType: ModelType = "default",
 ): SelectModel {
-  const allowServerCliLogin = isCliLlmOwner(userAi.email);
+  const allowServerCliLogin = isCliLlmOwner(userAi);
   const usesOwnCliLogin = isCliSubscriptionProvider(userAi.aiProvider);
   const selectedModel =
     userAi.aiApiKey || usesOwnCliLogin

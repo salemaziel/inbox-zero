@@ -38,6 +38,7 @@ export async function judgeBinary(options: {
     options.judgeUserAi ?? {
       id: "eval-judge",
       email: "eval-judge@test.com",
+      emailVerified: true,
       aiProvider: null,
       aiModel: null,
       aiApiKey: null,

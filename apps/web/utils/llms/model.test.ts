@@ -1532,6 +1532,28 @@ describe("Models", () => {
       });
     });
 
+    it("treats an empty owner list as nobody and * as everyone", () => {
+      setDefaultLlms(Provider.CODEX_CLI, "gpt-5.3-codex");
+
+      vi.mocked(env).CLI_LLM_OWNER_EMAILS = "";
+      expect(() =>
+        getModel(defaultUserAi({ email: "owner@example.com" })),
+      ).toThrow(CONNECT_SUBSCRIPTION_MESSAGE);
+
+      vi.mocked(env).CLI_LLM_OWNER_EMAILS = "*";
+      expect(getModel(defaultUserAi()).provider).toBe(Provider.CODEX_CLI);
+    });
+
+    it("does not treat an unverified owner address as the owner", () => {
+      setDefaultLlms(Provider.CODEX_CLI, "gpt-5.3-codex");
+
+      expect(() =>
+        getModel(
+          defaultUserAi({ email: "owner@example.com", emailVerified: false }),
+        ),
+      ).toThrow(CONNECT_SUBSCRIPTION_MESSAGE);
+    });
+
     it("skips CLI deployment fallbacks for non-owners only", () => {
       setDefaultLlms(Provider.OPEN_AI, "gpt-5.4-mini", [
         "codex-cli:gpt-5.3-codex",
@@ -1553,6 +1575,7 @@ function defaultUserAi(overrides: Partial<UserAIFields> = {}): UserAIFields {
   return {
     id: "user-1",
     email: "user@example.com",
+    emailVerified: true,
     aiApiKey: null,
     aiProvider: null,
     aiModel: null,

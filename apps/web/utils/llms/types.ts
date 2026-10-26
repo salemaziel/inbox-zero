@@ -4,6 +4,7 @@ export type UserAIFields = Prisma.UserGetPayload<{
   select: {
     id: true;
     email: true;
+    emailVerified: true;
     aiProvider: true;
     aiModel: true;
     aiApiKey: true;
@@ -23,6 +24,7 @@ export type EmailAccountWithAI = Prisma.EmailAccountGetPayload<{
       select: {
         id: true;
         email: true;
+        emailVerified: true;
         aiProvider: true;
         aiModel: true;
         aiApiKey: true;

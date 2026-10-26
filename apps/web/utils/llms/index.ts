@@ -167,6 +167,7 @@ function prepareOptionsForToolBridge<TOptions extends { tools?: unknown }>({
 const NO_USER_AI_FIELDS: UserAIFields = {
   id: "",
   email: "",
+  emailVerified: false,
   aiProvider: null,
   aiModel: null,
   aiApiKey: null,

@@ -236,6 +236,7 @@ export function getEmailAccount(
     user: {
       id: "user1",
       email: overrides.email || "user@test.com",
+      emailVerified: true,
       aiModel: null,
       aiProvider: null,
       aiApiKey: null,

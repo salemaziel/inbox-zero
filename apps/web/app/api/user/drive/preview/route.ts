@@ -66,6 +66,7 @@ async function getPreviewData({
         select: {
           id: true,
           email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,

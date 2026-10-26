@@ -32,6 +32,7 @@ describe.runIf(isAiTest)(
         user: {
           id: "test-user-id",
           email: "user@test.com",
+          emailVerified: true,
           aiModel: null,
           aiProvider: null,
           aiApiKey: null,

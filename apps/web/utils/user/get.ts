@@ -18,6 +18,7 @@ export type EmailAccountWithAIAndTokens = Prisma.EmailAccountGetPayload<{
       select: {
         id: true;
         email: true;
+        emailVerified: true;
         aiProvider: true;
         aiModel: true;
         aiApiKey: true;
@@ -61,6 +62,7 @@ export async function getEmailAccountWithAi({
         select: {
           id: true,
           email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
@@ -102,6 +104,7 @@ export async function getEmailAccountForRuleExecution({
         select: {
           id: true,
           email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
@@ -136,6 +139,7 @@ export async function getEmailAccountWithAiAndTokens({
         select: {
           id: true,
           email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,

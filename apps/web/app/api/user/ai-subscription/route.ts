@@ -21,7 +21,7 @@ async function getAiSubscriptions({ userId }: { userId: string }) {
   const [user, logins] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true, aiProvider: true },
+      select: { email: true, emailVerified: true, aiProvider: true },
     }),
     prisma.aiSubscriptionLogin.findMany({
       where: { userId },
@@ -37,7 +37,7 @@ async function getAiSubscriptions({ userId }: { userId: string }) {
 
   return {
     enabled: env.CLI_LLM_ENABLED,
-    canUseServerLogin: isCliLlmOwner(user.email),
+    canUseServerLogin: isCliLlmOwner(user),
     activeProvider: user.aiProvider,
     providers: CLI_SUBSCRIPTION_PROVIDERS.map((provider) => ({
       provider,
