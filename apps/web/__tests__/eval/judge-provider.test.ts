@@ -11,10 +11,14 @@ describe("getEvalJudgeUserAi", () => {
     vi.stubEnv("EVAL_JUDGE_MODEL", "");
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
 
-    expect(getEvalJudgeUserAi()).toMatchObject({
+    expect(getEvalJudgeUserAi()).toEqual({
+      id: "eval-judge",
+      email: "eval-judge@test.com",
+      emailVerified: true,
       aiProvider: "openrouter",
       aiModel: "deepseek/deepseek-v4.1-flash",
       aiApiKey: "test-key",
+      aiTaskModels: null,
     });
   });
 
@@ -23,10 +27,14 @@ describe("getEvalJudgeUserAi", () => {
     vi.stubEnv("EVAL_JUDGE_MODEL", "google/test-model");
     vi.stubEnv("GOOGLE_API_KEY", "test-key");
 
-    expect(getEvalJudgeUserAi()).toMatchObject({
+    expect(getEvalJudgeUserAi()).toEqual({
+      id: "eval-judge",
+      email: "eval-judge@test.com",
+      emailVerified: true,
       aiProvider: "google",
       aiModel: "google/test-model",
       aiApiKey: "test-key",
+      aiTaskModels: null,
     });
   });
 });
