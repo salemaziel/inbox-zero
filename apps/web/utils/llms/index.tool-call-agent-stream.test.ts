@@ -65,7 +65,15 @@ describe("toolCallAgentStream abort", () => {
     });
 
     const result = await toolCallAgentStream({
-      userAi: { aiProvider: null, aiModel: null, aiApiKey: null },
+      userAi: {
+        id: "user-id",
+        email: "user@test.com",
+        emailVerified: true,
+        aiProvider: null,
+        aiModel: null,
+        aiApiKey: null,
+        aiTaskModels: null,
+      },
       userEmail: "user@test.com",
       emailAccountId: "email-account-id",
       useCase: LlmUseCase.AssistantChat,
@@ -109,7 +117,15 @@ describe("toolCallAgentStream with a user's Claude subscription", () => {
     });
 
     const result = await toolCallAgentStream({
-      userAi: { aiProvider: null, aiModel: null, aiApiKey: null },
+      userAi: {
+        id: "user-id",
+        email: "user@test.com",
+        emailVerified: true,
+        aiProvider: null,
+        aiModel: null,
+        aiApiKey: null,
+        aiTaskModels: null,
+      },
       userEmail: "user@test.com",
       emailAccountId: "email-account-id",
       useCase: LlmUseCase.AssistantChat,

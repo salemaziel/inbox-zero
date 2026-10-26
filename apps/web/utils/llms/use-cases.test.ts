@@ -118,9 +118,13 @@ describe("LLM use cases", () => {
 
 function defaultUserAi(overrides?: Partial<UserAIFields>): UserAIFields {
   return {
+    id: "user-id",
+    email: "user@test.com",
+    emailVerified: true,
     aiProvider: Provider.OPENROUTER,
     aiModel: null,
     aiApiKey: null,
+    aiTaskModels: null,
     ...overrides,
   };
 }
