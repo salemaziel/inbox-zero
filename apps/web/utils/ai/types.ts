@@ -44,7 +44,8 @@ export type ActionItem = {
 export type ActionExecutionEmailAccount = Pick<
   EmailAccount,
   "email" | "id" | "userId"
->;
+> &
+  Partial<Pick<EmailAccount, "timezone">>;
 
 export type ExecutedRuleForAction = ExecutedRule & {
   actionItems?: Pick<ActionItem, "type">[];

@@ -5,24 +5,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ErrorMessage } from "@/components/Input";
 import { Label } from "@/components/ui/label";
 import { MutedText } from "@/components/Typography";
-import {
-  getIntegrationToolChoices,
-  type IntegrationToolChoice,
-} from "@/utils/integrations/editor";
+import type { IntegrationToolChoice } from "@/utils/integrations/editor";
 import { PLACEHOLDER_NAMES } from "@/utils/integrations/placeholders";
 
 export function IntegrationToolPicker({
+  choices,
+  errorMessage,
   integration,
   tool,
   onSelect,
 }: {
+  choices: IntegrationToolChoice[];
+  errorMessage?: string;
   integration: string | null | undefined;
   tool: string | null | undefined;
   onSelect: (choice: IntegrationToolChoice) => void;
 }) {
-  const choices = getIntegrationToolChoices();
   const selected = choices.find(
     (choice) => choice.integration === integration && choice.tool === tool,
   );
@@ -36,7 +37,7 @@ export function IntegrationToolPicker({
           const choice = choices.find(
             (option) => getChoiceValue(option) === nextValue,
           );
-          if (choice) onSelect(choice);
+          if (choice && !choice.disabledReason) onSelect(choice);
         }}
       >
         <SelectTrigger>
@@ -47,12 +48,22 @@ export function IntegrationToolPicker({
             <SelectItem
               key={getChoiceValue(choice)}
               value={getChoiceValue(choice)}
+              disabled={!!choice.disabledReason}
             >
-              {choice.label}
+              {choice.disabledReason
+                ? `${choice.label} (${choice.disabledReason})`
+                : choice.label}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
+      {choices.length > 0 &&
+      choices.every((choice) => choice.disabledReason) ? (
+        <MutedText className="text-xs">
+          Connect an app on the Integrations page to use this action.
+        </MutedText>
+      ) : null}
+      {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
     </div>
   );
 }

@@ -191,6 +191,7 @@ const parsedEnv = createEnv({
     CLI_LLM_ENABLED: booleanString.optional().default(false),
     CODEX_CLI_ALLOW_NPX: booleanString.optional().default(false),
     CODEX_CLI_PATH: z.string().optional(),
+    CLI_LLM_OWNER_EMAILS: z.string().optional(),
 
     OPENAI_ZERO_DATA_RETENTION: booleanString.optional().default(false),
     VOICE_PROVIDER: z.enum(["openai", "groq"]).optional(),
@@ -346,6 +347,7 @@ const parsedEnv = createEnv({
     // single-tenant self-hosted deployment or against a local MCP emulator.
     MCP_ALLOW_PRIVATE_IPS: booleanString.optional().default(false),
     COMPOSIO_API_KEY: z.string().optional(),
+    TRELLO_API_KEY: z.string().optional(),
     INTERNAL_API_URL: z.string().optional(),
     INTERNAL_API_KEY: z.string(),
     WHITELIST_FROM: z.string().optional(),

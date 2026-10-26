@@ -32,10 +32,11 @@ import {
 } from "@/utils/rule-action-feature-gates";
 import { findIntegration } from "@/utils/mcp/integrations";
 import {
-  buildDefaultIntegrationArgs,
+  buildIntegrationArgsFromFields,
+  getIntegrationFieldsFromArgs,
   getIntegrationToolSpec,
-  getOnlyIntegrationToolSpec,
-  normalizeSelectArgValue,
+  getMissingEditorPicks,
+  MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { assertNoSenderOnlyOverlap } from "@/utils/rule/sender-scope-overlap";
 import { isIntegrationActionEnabledForEmailAccountId } from "@/utils/integration-action.server";
@@ -191,7 +192,7 @@ export function setRuleRunOnThreads({
   });
 }
 
-export function setRuleEnabled({
+export async function setRuleEnabled({
   ruleId,
   emailAccountId,
   enabled,
@@ -200,6 +201,25 @@ export function setRuleEnabled({
   emailAccountId: string;
   enabled: boolean;
 }) {
+  if (enabled) {
+    // An unfinished integration action would fail on every matching email.
+    const rule = await prisma.rule.findFirst({
+      where: { id: ruleId, emailAccountId },
+      select: {
+        actions: {
+          where: { type: ActionType.INTEGRATION },
+          select: INTEGRATION_ACTION_SELECT,
+        },
+      },
+    });
+    const picks = describeMissingEditorPicks(rule?.actions ?? []);
+    if (picks) {
+      throw new SafeError(
+        `This rule can't be turned on yet. Open it in the rule editor, pick ${picks}, then turn it on.`,
+      );
+    }
+  }
+
   return updateRuleAndQueueHistory({
     ruleId,
     emailAccountId,
@@ -337,6 +357,7 @@ export async function createRule({
   systemType,
   provider,
   runOnThreads,
+  enabled = true,
   logger,
 }: {
   result: CreateOrUpdateRuleSchema;
@@ -344,6 +365,7 @@ export async function createRule({
   systemType?: SystemType | null;
   provider: string;
   runOnThreads: boolean;
+  enabled?: boolean;
   logger: Logger;
 }) {
   try {
@@ -379,7 +401,8 @@ export async function createRule({
       data: {
         name: result.name,
         systemType,
-        enabled: true,
+        // A rule the editor still has to finish would fail on every email.
+        enabled: enabled && !getIntegrationSetupMessage(mappedActions),
         runOnThreads,
         conditionalOperator: result.condition.conditionalOperator ?? undefined,
         instructions: result.condition.aiInstructions,
@@ -566,7 +589,14 @@ export async function updateRuleActions({
     where: { id: ruleId, emailAccountId },
     select: {
       from: true,
-      actions: { select: { type: true } },
+      actions: {
+        select: {
+          type: true,
+          integrationName: true,
+          integrationToolName: true,
+          integrationArgs: true,
+        },
+      },
     },
   });
 
@@ -583,7 +613,7 @@ export async function updateRuleActions({
   });
 
   const mappedActions = await mapActionFields(
-    actions,
+    keepEditorPickedIntegrationArgs(actions, existingRule.actions),
     provider,
     emailAccountId,
     logger,
@@ -593,6 +623,7 @@ export async function updateRuleActions({
   const rule = await prisma.rule.update({
     where: { id: ruleId, emailAccountId },
     data: {
+      ...(getIntegrationSetupMessage(mappedActions) && { enabled: false }),
       actions: {
         deleteMany: getReplaceableRuleActionsWhere(),
         createMany: {
@@ -795,16 +826,14 @@ async function mapActionFields(
 }
 
 function getIntegrationCreateFields(action: MappableAction) {
-  // AI- and API-authored actions carry flat fields with no integration named,
-  // so fall back to the only write spec we have. getOnlyIntegrationToolSpec
-  // returns undefined once there are two, forcing an explicit choice then.
-  const defaultSpec = getOnlyIntegrationToolSpec();
-  const integrationName = action.integrationName ?? defaultSpec?.integration;
-  const integrationToolName = action.integrationToolName ?? defaultSpec?.tool;
+  const { integrationName, integrationToolName } = action;
+  if (!integrationName || !integrationToolName) {
+    throw new SafeError(MISSING_INTEGRATION_TOOL_MESSAGE);
+  }
 
   return {
-    integrationName: integrationName ?? null,
-    integrationToolName: integrationToolName ?? null,
+    integrationName,
+    integrationToolName,
     integrationArgs: (action.integrationArgs ??
       buildIntegrationArgsFromFields({
         integrationName,
@@ -812,6 +841,186 @@ function getIntegrationCreateFields(action: MappableAction) {
         fields: action.fields,
       })) as Prisma.InputJsonValue,
   };
+}
+
+/**
+ * Plain-words next step for a rule whose integration actions still need a
+ * choice only the rule editor can make; null when nothing is missing.
+ */
+export function getIntegrationSetupMessage(
+  actions: readonly IntegrationActionArgs[],
+): string | null {
+  const picks = describeMissingEditorPicks(actions);
+  if (!picks) return null;
+  return `This rule was saved turned off. To finish it, open it in the rule editor, pick ${picks}, then turn the rule on.`;
+}
+
+type IntegrationActionArgs = {
+  type: ActionType;
+  integrationName?: string | null;
+  integrationToolName?: string | null;
+  integrationArgs?: unknown;
+};
+
+const INTEGRATION_ACTION_SELECT = {
+  type: true,
+  integrationName: true,
+  integrationToolName: true,
+  integrationArgs: true,
+} as const;
+
+// "the Trello board and list", or null when every editor choice is made.
+function describeMissingEditorPicks(
+  actions: readonly IntegrationActionArgs[],
+): string | null {
+  const picks = new Set<string>();
+  for (const action of actions) {
+    if (action.type !== ActionType.INTEGRATION) continue;
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    if (!spec) continue;
+
+    const missing = getMissingEditorPicks(spec, action.integrationArgs);
+    if (!missing.length) continue;
+    const appName = findIntegration(spec.integration)?.displayName ?? "";
+    picks.add(
+      `the ${appName} ${joinWords(missing.map((arg) => arg.label.toLowerCase()))}`,
+    );
+  }
+
+  return picks.size ? joinWords([...picks]) : null;
+}
+
+function joinWords(words: string[]) {
+  if (words.length <= 1) return words.join("");
+  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+// The rule writer resends whole action lists, so an edit would otherwise drop
+// what the user set in the editor (board, list, card, project, a fixed title or
+// due date...). Each existing action with the same app and tool lends its
+// stored values to one incoming action, in list order, unless the values sent
+// show each action was only moved. A field the rule writer leaves out keeps its
+// stored value; one it sends wins, and an empty one means the AI fills it per
+// email.
+function keepEditorPickedIntegrationArgs<T extends MappableAction>(
+  actions: T[],
+  existingActions: ExistingIntegrationAction[],
+): T[] {
+  if (!actions.some((action) => action.type === ActionType.INTEGRATION)) {
+    return actions;
+  }
+  const existingIntegrationActions = existingActions.filter(
+    (action) => action.type === ActionType.INTEGRATION,
+  );
+  const incoming = actions.flatMap((action, index) => {
+    if (action.type !== ActionType.INTEGRATION || action.integrationArgs) {
+      return [];
+    }
+    const fields: Record<string, string | null | undefined> | null | undefined =
+      action.fields;
+    const args: Record<string, unknown> = buildIntegrationArgsFromFields({
+      integrationName: action.integrationName,
+      integrationToolName: action.integrationToolName,
+      fields,
+    });
+    return [{ action, index, fields, args }];
+  });
+
+  const matches = new Map<number, ExistingIntegrationAction>();
+  for (const toolKey of new Set(
+    incoming.map(({ action }) => getToolKey(action)),
+  )) {
+    const group = incoming.filter(
+      ({ action }) => getToolKey(action) === toolKey,
+    );
+    const candidates = existingIntegrationActions.filter(
+      (existing) => getToolKey(existing) === toolKey,
+    );
+    const valueMatches = group.map(({ action, fields, args }) =>
+      findOnlyActionShowingSentValues(action, fields, args, candidates),
+    );
+    const isClearlyReordered =
+      valueMatches.every(Boolean) &&
+      new Set(valueMatches).size === valueMatches.length;
+    group.forEach(({ index }, position) => {
+      const match = isClearlyReordered
+        ? valueMatches[position]
+        : candidates[position];
+      if (match) matches.set(index, match);
+    });
+  }
+
+  return actions.map((action, index) => {
+    const entry = incoming.find((item) => item.index === index);
+    const existingArgs = matches.get(index)?.integrationArgs;
+    const spec = getIntegrationToolSpec(
+      action.integrationName,
+      action.integrationToolName,
+    );
+    if (!entry || !spec || !isJsonObject(existingArgs)) return action;
+    const { fields, args } = entry;
+
+    for (const arg of spec.args) {
+      if (arg.llmDescription && fields?.[arg.key] != null) continue;
+      for (const key of [arg.key, arg.displayValueKey]) {
+        if (key && key in existingArgs) args[key] = existingArgs[key];
+      }
+    }
+
+    return { ...action, integrationArgs: args as Prisma.JsonValue };
+  });
+}
+
+type ExistingIntegrationAction = {
+  type: ActionType;
+  integrationName: string | null;
+  integrationToolName: string | null;
+  integrationArgs: Prisma.JsonValue | null;
+};
+
+function getToolKey(action: {
+  integrationName?: string | null;
+  integrationToolName?: string | null;
+}) {
+  return `${action.integrationName}/${action.integrationToolName}`;
+}
+
+// Value pairing only overrides list order when the values chat sent point to
+// exactly one stored action. A field left out could belong to any action, and
+// an AI-written field looks the same on every action, so neither counts.
+function findOnlyActionShowingSentValues(
+  action: MappableAction,
+  fields: Record<string, string | null | undefined> | null | undefined,
+  args: Record<string, unknown>,
+  candidates: ExistingIntegrationAction[],
+) {
+  const spec = getIntegrationToolSpec(
+    action.integrationName,
+    action.integrationToolName,
+  );
+  const sentKeys = (spec?.args ?? [])
+    .filter((arg) => arg.llmDescription && fields?.[arg.key] != null)
+    .map((arg) => arg.key);
+  const shown = getIntegrationFieldsFromArgs({
+    ...action,
+    integrationArgs: args,
+  });
+  if (!sentKeys.some((key) => shown[key] !== undefined)) return;
+
+  const showingSentValues = candidates.filter((existing) => {
+    const stored = getIntegrationFieldsFromArgs(existing);
+    return sentKeys.every((key) => stored[key] === shown[key]);
+  });
+  return showingSentValues.length === 1 ? showingSentValues[0] : undefined;
+}
+
+function isJsonObject(
+  value: Prisma.JsonValue | null | undefined,
+): value is Prisma.JsonObject {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildRiskAction(action: MappableAction): RiskAction {
@@ -835,40 +1044,6 @@ function buildRiskAction(action: MappableAction): RiskAction {
   };
 }
 
-/**
- * Builds stored args from an AI-authored action's flat fields, applying the
- * spec's defaults so an omitted field means "the AI writes it at execution".
- */
-function buildIntegrationArgsFromFields({
-  integrationName,
-  integrationToolName,
-  fields,
-}: {
-  integrationName: string | null | undefined;
-  integrationToolName: string | null | undefined;
-  fields: MappableAction["fields"];
-}) {
-  const spec = getIntegrationToolSpec(integrationName, integrationToolName);
-  if (!spec) return {};
-
-  const args = buildDefaultIntegrationArgs(spec);
-
-  for (const arg of spec.args) {
-    const value = (
-      fields as Record<string, string | null | undefined> | null
-    )?.[arg.key];
-    if (value == null) continue;
-
-    const normalized =
-      arg.control.type === "select"
-        ? normalizeSelectArgValue(arg, value)
-        : value;
-    if (normalized !== undefined) args[arg.key] = normalized;
-  }
-
-  return args;
-}
-
 export async function assertIntegrationActionsConnected(
   actions: readonly { type: ActionType; integrationName?: string | null }[],
   emailAccountId: string,
@@ -877,10 +1052,7 @@ export async function assertIntegrationActionsConnected(
     ...new Set(
       actions
         .filter((action) => action.type === ActionType.INTEGRATION)
-        .map(
-          (action) =>
-            action.integrationName ?? getOnlyIntegrationToolSpec()?.integration,
-        )
+        .map((action) => action.integrationName)
         .filter((name): name is string => !!name),
     ),
   ];

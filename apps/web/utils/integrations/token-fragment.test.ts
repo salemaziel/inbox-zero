@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   INTEGRATION_TOKEN_STORAGE_KEY,
   moveTokenFragmentToSessionStorage,
+  takeIntegrationConnectDenied,
   takeIntegrationToken,
 } from "./token-fragment";
 
@@ -71,6 +72,24 @@ describe("moveTokenFragmentToSessionStorage", () => {
     expect(window.sessionStorage.length).toBe(0);
   });
 
+  it("records a denial, which carries an empty token and an error, and stores no token", () => {
+    window.history.replaceState(
+      null,
+      "",
+      `${CONNECT_PATH}?state=abc#token=&error=Token%20request%20rejected`,
+    );
+
+    moveTokenFragmentToSessionStorage();
+
+    expect(window.location.hash).toBe("");
+    expect(window.sessionStorage.getItem(INTEGRATION_TOKEN_STORAGE_KEY)).toBe(
+      null,
+    );
+    expect(takeIntegrationToken()).toBe(null);
+    expect(takeIntegrationConnectDenied()).toBe(true);
+    expect(takeIntegrationConnectDenied()).toBe(false);
+  });
+
   it("does not touch other fragment content", () => {
     window.history.replaceState(null, "", "/docs/page?tab=1#section-tokens=2");
 
@@ -97,5 +116,24 @@ describe("takeIntegrationToken", () => {
     window.history.replaceState(null, "", `${CONNECT_PATH}#token=from-hash`);
 
     expect(takeIntegrationToken()).toBe("from-hash");
+  });
+});
+
+describe("takeIntegrationConnectDenied", () => {
+  it("is false after a normal connect", () => {
+    window.history.replaceState(null, "", `${CONNECT_PATH}#token=secret-token`);
+    moveTokenFragmentToSessionStorage();
+
+    expect(takeIntegrationConnectDenied()).toBe(false);
+  });
+
+  it("falls back to the fragment when the early guard did not run", () => {
+    window.history.replaceState(
+      null,
+      "",
+      `${CONNECT_PATH}#token=&error=denied`,
+    );
+
+    expect(takeIntegrationConnectDenied()).toBe(true);
   });
 });

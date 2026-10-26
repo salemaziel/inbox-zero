@@ -61,6 +61,8 @@ export function buildCreateRuleSchemaFromChatToolInput(
     condition: input.condition,
     actions: input.actions.map((action) => ({
       type: action.type,
+      integrationName: action.integrationName,
+      integrationToolName: action.integrationToolName,
       fields: action.fields
         ? buildProviderRuleActionFields({ provider, fields: action.fields })
         : null,

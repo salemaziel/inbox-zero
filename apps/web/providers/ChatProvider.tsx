@@ -69,6 +69,7 @@ type ChatContextType = {
   setContext: (context: MessageContext | null) => void;
   attachments: Attachment[];
   setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>;
+  requestError: string | null;
 };
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -81,6 +82,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [chatId, setChatId] = useQueryState("chatId", parseAsString);
   const [context, setContext] = useState<MessageContext | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [inlineActions, setInlineActions] = useState<InlineEmailAction[]>([]);
   const inlineActionsRef = useRef(inlineActions);
   const pendingInlineActionsRef = useRef<InlineEmailAction[] | null>(null);
@@ -103,6 +105,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setNewChat = useCallback(() => {
+    setRequestError(null);
     setChatId(generateUUID());
   }, [setChatId]);
 
@@ -190,12 +193,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         pendingInlineActionsRef.current = null;
       }
 
-      reportChatRequestError({
-        emailAccountId,
-        error,
-        fallbackChatId: chatId ?? chat.id,
-        request: pendingRequest,
-      });
+      setRequestError(
+        reportChatRequestError({
+          emailAccountId,
+          error,
+          fallbackChatId: chatId ?? chat.id,
+          request: pendingRequest,
+        }),
+      );
       pendingRequestRef.current = null;
       pendingRequestContextRef.current = null;
     },
@@ -329,6 +334,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!chatId) setChatId(chat.id);
+      setRequestError(null);
       stoppedRef.current = false;
       interruptedRef.current = false;
 
@@ -481,6 +487,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setContext,
         attachments,
         setAttachments,
+        requestError,
       }}
     >
       <InlineEmailActionProvider value={{ queueAction: queueInlineAction }}>
@@ -553,11 +560,41 @@ function reportChatRequestError({
     textLength: request?.textLength ?? 0,
   });
   logger.flush().catch(() => undefined);
+
+  // The chat shows the server's message inline, so it isn't also a toast or an
+  // exception report.
+  const clientMessage = getClientErrorMessage(error);
+  if (clientMessage) return clientMessage;
+
   toastError({
     description: "We couldn't send your message. Please try again.",
   });
   console.error(error);
   captureException(error);
+  return null;
+}
+
+// The chat route only returns its own message on 4xx, where it is safe to show
+// (for example, asking the user to connect an AI subscription).
+function getClientErrorMessage(error: unknown) {
+  const statusCode = getErrorStatusCode(error);
+  if (!statusCode || statusCode < 400 || statusCode >= 500) return null;
+  if (!(error instanceof Error)) return null;
+
+  try {
+    const body: unknown = JSON.parse(error.message);
+    if (
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof body.error === "string"
+    ) {
+      return body.error;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function getErrorStatusCode(error: unknown) {

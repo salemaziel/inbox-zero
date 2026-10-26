@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmailAccount } from "@/__tests__/helpers";
 import { ASSISTANT_CHAT_MAX_TEXT_LENGTH } from "@/utils/actions/assistant-chat.validation";
 import prisma from "@/utils/__mocks__/prisma";
+import { SafeError } from "@/utils/error";
 
 const {
   mockAiProcessAssistantChat,
@@ -424,6 +425,19 @@ describe("chat route rule freshness persistence", () => {
     expect(prisma.chat.updateMany).toHaveBeenCalledWith({
       where: { id: "chat-1", activeStreamId },
       data: { activeStreamId: null, activeStreamStartedAt: null },
+    });
+  });
+
+  it("returns a safe error's message instead of the generic failure", async () => {
+    mockAiProcessAssistantChat.mockRejectedValueOnce(
+      new SafeError("Connect your account first."),
+    );
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Connect your account first.",
     });
   });
 

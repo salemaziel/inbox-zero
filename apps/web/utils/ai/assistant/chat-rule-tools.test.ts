@@ -8,6 +8,7 @@ import { createTestLogger } from "@/__tests__/helpers";
 import { createRuleTool } from "./tools/rules/create-rule-tool";
 import { updateRuleTool } from "./tools/rules/update-rule-tool";
 import { deleteRuleTool } from "./tools/rules/delete-rule-tool";
+import { loadAssistantRuleSnapshot } from "./chat-rule-state";
 
 const {
   mockCreateRule,
@@ -27,6 +28,7 @@ const {
       findUnique: vi.fn(),
     },
     rule: {
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
@@ -67,7 +69,7 @@ describe("createRuleTool overlap guard", () => {
       needsConfirmation: false,
       riskMessages: [],
     });
-    mockCreateRule.mockResolvedValue({ id: "new-rule-id" });
+    mockCreateRule.mockResolvedValue({ id: "new-rule-id", actions: [] });
     mockAssistantRuleSnapshot([
       {
         name: "Urgent Action Mail",
@@ -130,6 +132,92 @@ describe("createRuleTool overlap guard", () => {
         }),
       }),
     );
+  });
+
+  it("keeps the app and tool the model chose for an integration action", async () => {
+    const result = await createRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+    }).execute({
+      name: "Invoices",
+      condition: {
+        aiInstructions: "Invoices",
+        static: null,
+        conditionalOperator: null,
+      },
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" },
+          delayInMinutes: null,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockCreateRule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: expect.objectContaining({ name: "Pay invoice" }),
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("says the rule is off until the user picks what only the editor can", async () => {
+    mockCreateRule.mockResolvedValue({
+      id: "new-rule-id",
+      enabled: false,
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { name: "Pay invoice" },
+        },
+      ],
+    });
+
+    const result = await createRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+    }).execute({
+      name: "Invoices",
+      condition: {
+        aiInstructions: "Invoices",
+        static: null,
+        conditionalOperator: null,
+      },
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" },
+          delayInMinutes: null,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      message:
+        "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+    });
   });
 
   it("waits for confirmation instead of creating a risky rule", async () => {
@@ -218,6 +306,7 @@ describe("updateRuleTool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPartialUpdateRule.mockResolvedValue({ id: "rule-id" });
+    mockUpdateRuleActions.mockResolvedValue({ id: "rule-id", actions: [] });
     mockAssistantRuleSnapshot([
       {
         name: "Vendor Billing",
@@ -668,6 +757,363 @@ describe("updateRuleTool", () => {
       mockSetRuleEnabled.mock.calls.map(([input]) => input.ruleId),
     ).toEqual(["marketing-rule-id", "newsletter-rule-id"]);
     expect(rulesRevision).toBe(5);
+  });
+
+  it("treats switching an integration action to another tool as a change", async () => {
+    const trelloAction = {
+      ...vendorBillingRuleWithActions().actions[1],
+      type: ActionType.INTEGRATION,
+      integrationName: "trello",
+      integrationToolName: "create-card",
+    };
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      actions: [trelloAction],
+    });
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: {
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "add-comment",
+            fields: {},
+            delayInMinutes: null,
+          },
+        ],
+      },
+    });
+
+    expect(result.originalActions).toEqual([
+      expect.objectContaining({
+        integrationName: "trello",
+        integrationToolName: "create-card",
+      }),
+    ]);
+    expect(mockUpdateRuleActions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({ integrationToolName: "add-comment" }),
+        ],
+      }),
+    );
+  });
+});
+
+describe("updateRuleTool with an unfinished integration action", () => {
+  it("keeps the rule off and says what to pick, even when asked to enable it", async () => {
+    vi.clearAllMocks();
+    mockAssistantRuleSnapshot([]);
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      enabled: false,
+    });
+    mockUpdateRuleActions.mockResolvedValue({
+      id: "new-rule-id",
+      enabled: false,
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { name: "Pay invoice" },
+        },
+      ],
+    });
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: {
+        enabled: true,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "create-card",
+            fields: {},
+            delayInMinutes: null,
+          },
+        ],
+      },
+    });
+
+    expect(mockSetRuleEnabled).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      updatedEnabled: false,
+      message:
+        "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+    });
+  });
+
+  it("leaves the rule off and says why when asked only to turn it on", async () => {
+    vi.clearAllMocks();
+    mockAssistantRuleSnapshot([]);
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      enabled: false,
+    });
+    mockPrisma.rule.findFirst.mockResolvedValue({
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { boardId: "", listId: "", name: "" },
+        },
+      ],
+    });
+    const { setRuleEnabled } =
+      await vi.importActual<typeof import("@/utils/rule/rule")>(
+        "@/utils/rule/rule",
+      );
+    mockSetRuleEnabled.mockImplementation(setRuleEnabled);
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: { enabled: true },
+    });
+
+    expect(mockSetRuleEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+    );
+    expect(result).toMatchObject({
+      success: true,
+      originalEnabled: false,
+      updatedEnabled: false,
+      message:
+        "This rule can't be turned on yet. Open it in the rule editor, pick the Trello board and list, then turn it on.",
+    });
+  });
+});
+
+describe("loadAssistantRuleSnapshot", () => {
+  it("names the app and tool of each integration action", async () => {
+    mockPrisma.emailAccount.findUnique.mockResolvedValue({
+      about: null,
+      rulesRevision: 1,
+      rules: [
+        {
+          name: "Invoices",
+          instructions: "Invoices",
+          updatedAt: new Date("2026-04-27T00:01:00.000Z"),
+          from: null,
+          to: null,
+          subject: null,
+          conditionalOperator: null,
+          enabled: true,
+          runOnThreads: true,
+          actions: [
+            {
+              ...vendorBillingRuleWithActions().actions[1],
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+            },
+            vendorBillingRuleWithActions().actions[0],
+          ],
+        },
+      ],
+      messagingChannels: [],
+    });
+
+    const snapshot = await loadAssistantRuleSnapshot({
+      emailAccountId: "email-account-id",
+    });
+
+    expect(snapshot.rules[0].actions).toEqual([
+      expect.objectContaining({
+        type: ActionType.INTEGRATION,
+        integrationName: "trello",
+        integrationToolName: "create-card",
+      }),
+      expect.not.objectContaining({ integrationName: expect.anything() }),
+    ]);
+  });
+
+  it("shows the values fixed in the editor and leaves out the ones the AI fills", async () => {
+    mockPrisma.emailAccount.findUnique.mockResolvedValue({
+      about: null,
+      rulesRevision: 1,
+      rules: [
+        {
+          name: "Invoices",
+          instructions: "Invoices",
+          updatedAt: new Date("2026-04-27T00:01:00.000Z"),
+          from: null,
+          to: null,
+          subject: null,
+          conditionalOperator: null,
+          enabled: true,
+          runOnThreads: true,
+          actions: [
+            {
+              ...vendorBillingRuleWithActions().actions[1],
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              integrationArgs: {
+                boardId: "board-1",
+                listId: "list-1",
+                name: "Pay invoice",
+                description: "",
+              },
+            },
+            {
+              ...vendorBillingRuleWithActions().actions[1],
+              type: ActionType.INTEGRATION,
+              integrationName: "todoist",
+              integrationToolName: "add-tasks",
+              integrationArgs: {
+                content: "",
+                projectId: "inbox",
+                dueString: "tomorrow",
+              },
+            },
+            {
+              ...vendorBillingRuleWithActions().actions[1],
+              type: ActionType.INTEGRATION,
+              integrationName: "todoist",
+              integrationToolName: "add-tasks",
+              integrationArgs: { content: "", dueString: "ai" },
+            },
+          ],
+        },
+      ],
+      messagingChannels: [],
+    });
+
+    const snapshot = await loadAssistantRuleSnapshot({
+      emailAccountId: "email-account-id",
+    });
+
+    expect(mockPrisma.emailAccount.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          rules: expect.objectContaining({
+            select: expect.objectContaining({
+              actions: {
+                select: expect.objectContaining({ integrationArgs: true }),
+              },
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(snapshot.rules[0].actions.map((action) => action.fields)).toEqual([
+      { name: "Pay invoice" },
+      { dueString: "tomorrow" },
+      {},
+    ]);
+  });
+});
+
+describe("updateRuleTool with editor-set integration values", () => {
+  it("shows them and treats resending them unchanged as no change", async () => {
+    vi.clearAllMocks();
+    mockAssistantRuleSnapshot([]);
+    mockPrisma.rule.findUnique.mockResolvedValue({
+      ...vendorBillingRuleWithActions(),
+      actions: [
+        {
+          ...vendorBillingRuleWithActions().actions[1],
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          integrationArgs: {
+            content: "Call back",
+            projectId: "6X7",
+            dueString: "tomorrow",
+          },
+        },
+      ],
+    });
+
+    const result = await updateRuleTool({
+      email: "user@example.com",
+      emailAccountId: "email-account-id",
+      provider: "google",
+      integrationActionsEnabled: true,
+      logger,
+      getRuleReadState: () => ({
+        readAt: Date.now(),
+        rulesRevision: 3,
+        ruleUpdatedAtByName: new Map([
+          ["Vendor Billing", "2026-04-27T00:00:00.000Z"],
+        ]),
+      }),
+    }).execute({
+      ruleName: "Vendor Billing",
+      updates: {
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            fields: { content: "Call back", dueString: "tomorrow" },
+            delayInMinutes: null,
+          },
+        ],
+      },
+    });
+
+    expect(mockPrisma.rule.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          actions: {
+            select: expect.objectContaining({ integrationArgs: true }),
+          },
+        }),
+      }),
+    );
+    expect(result.originalActions).toEqual([
+      expect.objectContaining({
+        fields: { content: "Call back", dueString: "tomorrow" },
+      }),
+    ]);
+    expect(result.alreadyApplied).toBe(true);
+    expect(mockUpdateRuleActions).not.toHaveBeenCalled();
   });
 });
 

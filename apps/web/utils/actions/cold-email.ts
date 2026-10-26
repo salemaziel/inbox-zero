@@ -161,7 +161,17 @@ export const testColdEmailAction = actionClient
       const emailAccount = await prisma.emailAccount.findUnique({
         where: { id: emailAccountId },
         include: {
-          user: { select: { aiProvider: true, aiModel: true, aiApiKey: true } },
+          user: {
+            select: {
+              id: true,
+              email: true,
+              emailVerified: true,
+              aiProvider: true,
+              aiModel: true,
+              aiApiKey: true,
+              aiTaskModels: true,
+            },
+          },
           account: { select: { provider: true } },
         },
       });

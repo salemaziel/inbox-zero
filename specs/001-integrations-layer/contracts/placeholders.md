@@ -11,7 +11,8 @@ Default syntax pending owner question Q2 in [../spec.md](../spec.md). If the own
 ## Where markers apply
 
 - Only in integration-action args whose control is `text`.
-- Never in `select` or `remote-select` args (they store option values).
+- Never in user-stored `select` or `remote-select` values (they store option values).
+- Exception declared by a spec, not by the user: a `select` option's `payloadValue` may contain markers (Trello's "Attach link to the email" Yes option is `[[link]]`). When that option is chosen, the rendered `payloadValue` replaces the arg's value in the resolved args that `buildPayload` receives; the stored value stays the option value.
 - Never in non-integration action fields (`label`, `subject`, `content`, `to`, `cc`, `bcc`, `url`) in this phase.
 
 ## Values

@@ -57,13 +57,16 @@ Validation: every `dependsOn` key must be another arg key of the same spec (enfo
 ### NativeIntegrationExecutor (`apps/web/utils/integrations/types.ts`)
 
 ```text
-run(connection, payload, { signal }) => Promise<unknown>        // raw app response; parsed by parseResult
-parseResult(raw) => IntegrationCallResult | null                // shared shape, required for native
+run(connection, { tool, payload }, { signal }) => Promise<unknown>  // raw app response; parsed by parseResult
+parseResult(raw, tool) => IntegrationCallResult | null          // shared shape, required for native
 listOptions(connection, argKey, parentValues, { signal }) => Promise<IntegrationArgOption[]>
 testConnection({ accessToken }, { signal }) => Promise<void>    // throws IntegrationError on failure
 revoke?(connection, { signal }) => Promise<void>                // best-effort
 buildAuthorizeUrl?({ returnUrl }) => string                     // required when connectKind = token-redirect; returnUrl already carries ?state=…
+isConfigured?() => boolean                                      // false when a server setting (e.g. an API key) is missing; the app is then not listed or connectable
 ```
+
+`tool` is the spec's tool name, so one executor can serve several tools (added in Phase 5). `integrationFetch(url, init, { classifyError? })` lets an app map its own error responses to a kind (and optionally replace the provider message); returning `undefined` keeps the default status mapping.
 
 `connection` = `NativeConnection { id, emailAccountId, accessToken }`. `buildAuthorizeUrl` is the concrete form of the design's "redirects to the app's authorize page" (§6.3, Connect row). `run` returning raw output plus a separate `parseResult` keeps native and MCP result handling on one path.
 

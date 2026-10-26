@@ -24,6 +24,7 @@ const ENCRYPTED_FIELDS = {
   // encrypting it does not break any lookup.
   meetingRecording: ["meetingUrl"],
   user: ["aiApiKey", "webhookSecret"],
+  aiSubscriptionLogin: ["credential"],
 } as const satisfies Record<string, readonly string[]>;
 
 type FieldSpec = Record<string, readonly string[]>;
@@ -54,6 +55,7 @@ function buildResult(spec: FieldSpec) {
 }
 
 export const __testing__ = {
+  ENCRYPTED_FIELDS,
   buildQuery,
   encryptCreateData,
   encryptUpdateData,

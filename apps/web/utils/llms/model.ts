@@ -13,11 +13,22 @@ import { createOllama } from "ollama-ai-provider-v2";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
-import { Provider } from "@/utils/llms/config";
+import {
+  aiTaskModelsSchema,
+  Provider,
+  SUBSCRIPTION_MODELS,
+} from "@/utils/llms/config";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
-import { assertCliLlmEnabled, createCliLanguageModel } from "./cli-provider";
+import {
+  assertCliLlmEnabled,
+  type CliLoginScope,
+  CONNECT_SUBSCRIPTION_MESSAGE,
+  createCliLanguageModel,
+  isCliLlmOwner,
+  isCliSubscriptionProvider,
+} from "./cli-provider";
 
 const DEFAULT_GOOGLE_THINKING_BUDGET = 128;
 const REASONING_EFFORT_BY_MODEL_TYPE = {
@@ -36,6 +47,7 @@ export type ResolvedModel = {
   provider: string;
   modelName: string;
   model: LanguageModelV4;
+  cliLogin?: CliLoginScope;
   // biome-ignore lint/suspicious/noExplicitAny: existing loose external shape
   providerOptions?: Record<string, any>;
 };
@@ -66,12 +78,33 @@ export function getModel(
   userAi: UserAIFields,
   modelType: ModelType = "default",
 ): SelectModel {
-  const selectedModel = userAi.aiApiKey
+  const allowServerCliLogin = isCliLlmOwner(userAi);
+  const cliLogin = { userId: userAi.id, allowServerLogin: allowServerCliLogin };
+  const taskModel = getUserTaskModel(userAi, modelType);
+  const usesOwnCliLogin = isCliSubscriptionProvider(
+    taskModel?.provider ?? userAi.aiProvider,
+  );
+  const usesUserApiKey = !usesOwnCliLogin && !!userAi.aiApiKey;
+  const selectedModel = taskModel
     ? {
-        primaryModel: selectUserModel(userAi, modelType),
+        primaryModel: selectModel(
+          {
+            aiProvider: taskModel.provider,
+            aiModel: taskModel.model,
+            aiApiKey: usesOwnCliLogin ? null : userAi.aiApiKey,
+            cliLogin,
+          },
+          modelType,
+          getOpenRouterProviderOptions(modelType, taskModel.provider),
+        ),
         fallbackModels: [],
       }
-    : selectDeploymentModelByType(modelType);
+    : userAi.aiApiKey || usesOwnCliLogin
+      ? {
+          primaryModel: selectUserModel(userAi, modelType, cliLogin),
+          fallbackModels: [],
+        }
+      : selectDeploymentModelByType(modelType, allowServerCliLogin);
   const { primaryModel, fallbackModels } = selectedModel;
 
   logger.info("Using model", {
@@ -84,7 +117,22 @@ export function getModel(
     ),
   });
 
-  return { ...primaryModel, fallbackModels, hasUserApiKey: !!userAi.aiApiKey };
+  return {
+    ...primaryModel,
+    fallbackModels,
+    hasUserApiKey: usesUserApiKey || (usesOwnCliLogin && !allowServerCliLogin),
+  };
+}
+
+// A per-task entry only applies while its provider is still usable: the main
+// provider (with the main API key) or a CLI subscription.
+function getUserTaskModel(userAi: UserAIFields, modelType: ModelType) {
+  const parsed = aiTaskModelsSchema.safeParse(userAi.aiTaskModels ?? {});
+  const entry = parsed.success ? parsed.data[modelType] : undefined;
+  if (!entry) return null;
+  if (isCliSubscriptionProvider(entry.provider)) return entry;
+  if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
+  return null;
 }
 
 function selectModel(
@@ -92,10 +140,12 @@ function selectModel(
     aiProvider,
     aiModel,
     aiApiKey,
+    cliLogin,
   }: {
     aiProvider: string;
     aiModel: string | null;
     aiApiKey: string | null;
+    cliLogin?: CliLoginScope;
   },
   modelType: ModelType,
   // biome-ignore lint/suspicious/noExplicitAny: existing loose external shape
@@ -299,25 +349,31 @@ function selectModel(
       };
     }
     case Provider.CODEX_CLI: {
-      const modelName = aiModel || "gpt-5.3-codex";
+      const modelName =
+        aiModel || SUBSCRIPTION_MODELS[Provider.CODEX_CLI].defaultModel;
       return {
         provider: Provider.CODEX_CLI,
         modelName,
         model: createCliLanguageModel({
           provider: Provider.CODEX_CLI,
           modelName,
+          cliLogin,
         }),
+        cliLogin,
       };
     }
     case Provider.CLAUDE_CODE: {
-      const modelName = aiModel || "sonnet";
+      const modelName =
+        aiModel || SUBSCRIPTION_MODELS[Provider.CLAUDE_CODE].defaultModel;
       return {
         provider: Provider.CLAUDE_CODE,
         modelName,
         model: createCliLanguageModel({
           provider: Provider.CLAUDE_CODE,
           modelName,
+          cliLogin,
         }),
+        cliLogin,
       };
     }
 
@@ -377,17 +433,25 @@ function createOpenRouterProviderOptions(
   };
 }
 
-function selectDeploymentModelByType(modelType: ModelType): {
+function selectDeploymentModelByType(
+  modelType: ModelType,
+  allowServerCliLogin = true,
+): {
   primaryModel: ResolvedModel;
   fallbackModels: ResolvedModel[];
 } {
   const selectedModel =
-    resolveRoleModelList(modelType) ??
+    resolveRoleModelList(modelType, allowServerCliLogin) ??
     getDeploymentModelFallbackTypes(modelType)
-      .map((fallbackType) => resolveRoleModelList(fallbackType))
+      .map((fallbackType) =>
+        resolveRoleModelList(fallbackType, allowServerCliLogin),
+      )
       .find((modelList) => !!modelList);
 
   if (!selectedModel) {
+    if (!allowServerCliLogin) {
+      throw new SafeError(CONNECT_SUBSCRIPTION_MESSAGE);
+    }
     throw new Error(`No configured LLM model list resolved for ${modelType}`);
   }
 
@@ -410,11 +474,12 @@ function getDeploymentModelFallbackTypes(modelType: ModelType): ModelType[] {
 function selectUserModel(
   userAi: UserAIFields,
   modelType: ModelType,
+  cliLogin: CliLoginScope,
 ): ResolvedModel {
   const configuredDefault = getFirstSupportedModelListEntry("default");
   const aiProvider = userAi.aiProvider || configuredDefault?.provider;
   const aiModel = userAi.aiProvider
-    ? userAi.aiModel || null
+    ? getUserModelName(userAi.aiProvider, userAi.aiModel, modelType)
     : configuredDefault?.modelName || null;
 
   if (!aiProvider) {
@@ -426,21 +491,45 @@ function selectUserModel(
       aiProvider,
       aiModel,
       aiApiKey: userAi.aiApiKey,
+      cliLogin,
     },
     modelType,
     getOpenRouterProviderOptions(modelType, aiProvider),
   );
 }
 
-function resolveRoleModelList(modelType: ModelType): {
+// Background jobs on a user's own subscription use the provider's fast model so
+// they don't burn through the plan's limits.
+function getUserModelName(
+  aiProvider: string,
+  aiModel: string | null,
+  modelType: ModelType,
+) {
+  if (aiProvider !== Provider.CLAUDE_CODE && aiProvider !== Provider.CODEX_CLI)
+    return aiModel || null;
+  if (modelType === "economy" || modelType === "nano")
+    return SUBSCRIPTION_MODELS[aiProvider].fastModel;
+  return aiModel || null;
+}
+
+function resolveRoleModelList(
+  modelType: ModelType,
+  allowServerCliLogin = true,
+): {
   primaryModel: ResolvedModel;
   fallbackModels: ResolvedModel[];
 } | null {
   const modelListConfig = getConfiguredModelListByType(modelType);
   if (!modelListConfig) return null;
 
+  // Users without the server's CLI login never get CLI deployment models.
+  const entries = parseModelListConfig(modelListConfig).filter(
+    (entry) =>
+      allowServerCliLogin || !isCliSubscriptionProvider(entry.provider),
+  );
+
   const resolvedModels = resolveDeploymentModelEntries({
-    entries: parseModelListConfig(modelListConfig),
+    entries,
     modelType,
     getOpenRouterProviderOptions,
     warningMessages: {

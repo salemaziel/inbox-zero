@@ -5,6 +5,7 @@ import { createEmailProvider } from "@/utils/email/provider";
 import { DELETE_EMAIL_ACTION_DISABLED_MESSAGE } from "@/utils/delete-email-action";
 import { WEBHOOK_ACTION_DISABLED_MESSAGE } from "@/utils/outbound-webhook/action";
 import { getActionRiskLevel } from "@/utils/risk";
+import { SafeError } from "@/utils/error";
 
 const {
   createRuleHistoryMock,
@@ -63,6 +64,7 @@ import {
   createRule,
   createRuleWithResolvedActions,
   deleteRule,
+  getIntegrationSetupMessage,
   partialUpdateRule,
   replaceRuleWithResolvedActions,
   setRuleEnabled,
@@ -696,6 +698,79 @@ describe("rule history snapshots", () => {
   });
 });
 
+describe("turning a rule on", () => {
+  beforeEach(() => {
+    resetRuleMocks();
+    prisma.rule.update.mockResolvedValue({
+      id: RULE_ID,
+      actions: [],
+      group: null,
+    } as never);
+  });
+
+  function enable() {
+    return setRuleEnabled({
+      ruleId: RULE_ID,
+      emailAccountId: EMAIL_ACCOUNT_ID,
+      enabled: true,
+    });
+  }
+
+  it("refuses while an integration action still needs an editor choice", async () => {
+    prisma.rule.findFirst.mockResolvedValue({
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { boardId: "", name: "" },
+        },
+      ],
+    } as never);
+
+    await expect(enable()).rejects.toThrow(
+      new SafeError(
+        "This rule can't be turned on yet. Open it in the rule editor, pick the Trello board and list, then turn it on.",
+      ),
+    );
+    expect(prisma.rule.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "a finished Trello rule",
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { boardId: "board-1", listId: "list-1", name: "" },
+        },
+      ],
+    },
+    {
+      name: "a Todoist rule",
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          integrationArgs: { content: "", projectId: "inbox" },
+        },
+      ],
+    },
+    { name: "a rule with no integration action", actions: [] },
+  ])("turns on $name as before", async ({ actions }) => {
+    prisma.rule.findFirst.mockResolvedValue({ actions } as never);
+
+    await enable();
+
+    expect(prisma.rule.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { enabled: true } }),
+    );
+  });
+});
+
 describe("webhook URL validation at save time", () => {
   beforeEach(resetRuleMocks);
 
@@ -818,6 +893,358 @@ describe("integration action access", () => {
       mockIsIntegrationActionEnabledForEmailAccountId,
     ).toHaveBeenCalledOnce();
     expect(prisma.rule.update).toHaveBeenCalled();
+  });
+
+  it("saves the app and tool the rule writer named, with args from its fields", async () => {
+    prisma.mcpConnection.findMany.mockResolvedValue([
+      { integration: { name: "trello" } },
+    ] as never);
+
+    await updateRuleActions({
+      ruleId: RULE_ID,
+      actions: [
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ],
+      provider: "gmail",
+      emailAccountId: EMAIL_ACCOUNT_ID,
+      logger,
+    });
+
+    const saved = JSON.stringify(prisma.rule.update.mock.calls[0][0]);
+    expect(saved).toContain('"integrationName":"trello"');
+    expect(saved).toContain('"integrationToolName":"create-card"');
+    expect(saved).toContain('"name":"Pay invoice"');
+    expect(saved).toContain('"attachLink":"yes"');
+  });
+
+  describe("keeps the choices picked in the rule editor", () => {
+    const trelloCreateCard = {
+      type: ActionType.INTEGRATION,
+      integrationName: "trello",
+      integrationToolName: "create-card",
+      integrationArgs: {
+        boardId: "board-1",
+        boardName: "Ops",
+        listId: "list-1",
+        listName: "To do",
+        name: "",
+        labelId: "label-1",
+        labelName: "Finance",
+        due: "tomorrow",
+        attachLink: "no",
+      },
+    };
+
+    async function updateTo(actions: RuleAction[]) {
+      await updateRuleActions({
+        ruleId: RULE_ID,
+        actions,
+        provider: "gmail",
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        logger,
+      });
+      return prisma.rule.update.mock.calls[0][0].data.actions as {
+        createMany: { data: { integrationArgs?: Record<string, string> }[] };
+      };
+    }
+
+    beforeEach(() => {
+      prisma.mcpConnection.findMany.mockResolvedValue([
+        { integration: { name: "trello" } },
+        { integration: { name: "todoist" } },
+      ] as never);
+    });
+
+    it("for an action with the same app and tool", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [{ type: ActionType.ARCHIVE }, trelloCreateCard],
+      } as never);
+
+      const saved = await updateTo([
+        archiveAction(),
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay invoice" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[1].integrationArgs).toEqual({
+        ...trelloCreateCard.integrationArgs,
+        name: "Pay invoice",
+      });
+    });
+
+    it("for Todoist's project", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: {
+              content: "",
+              projectId: "6X7",
+              projectName: "Work",
+              dueString: "ai",
+            },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([integrationAction()]);
+
+      expect(saved.createMany.data[0].integrationArgs).toMatchObject({
+        content: "Create a task",
+        projectId: "6X7",
+        projectName: "Work",
+      });
+    });
+
+    it("but not from an action using a different tool", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            ...trelloCreateCard,
+            integrationToolName: "add-comment",
+            integrationArgs: { boardId: "board-1", cardId: "card-1" },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: {} as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).not.toHaveProperty(
+        "boardId",
+      );
+    });
+
+    it("for values chat could also set but didn't send", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: {
+              content: "Call the customer back",
+              description: "",
+              projectId: "6X7",
+              projectName: "Work",
+              dueString: "tomorrow",
+            },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          fields: { content: null, description: null, dueString: null } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).toEqual({
+        content: "Call the customer back",
+        description: "",
+        projectId: "6X7",
+        projectName: "Work",
+        dueString: "tomorrow",
+      });
+    });
+
+    it("but uses what chat sends, and an empty value lets the AI write it", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            ...trelloCreateCard,
+            integrationArgs: {
+              ...trelloCreateCard.integrationArgs,
+              name: "Pay invoice",
+              description: "From the billing inbox",
+            },
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          fields: { name: "Pay this invoice", description: "" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).toEqual({
+        ...trelloCreateCard.integrationArgs,
+        name: "Pay this invoice",
+        description: "",
+      });
+    });
+
+    it("but an empty due date lets the AI take it from each email again", async () => {
+      const storedArgs = {
+        content: "Call the customer back",
+        projectId: "6X7",
+        projectName: "Work",
+        dueString: "tomorrow",
+      };
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: storedArgs,
+          },
+        ],
+      } as never);
+
+      const saved = await updateTo([
+        {
+          type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
+          fields: { content: null, dueString: "" } as any,
+          delayInMinutes: null,
+        } as RuleAction,
+      ]);
+
+      expect(saved.createMany.data[0].integrationArgs).toEqual({
+        ...storedArgs,
+        dueString: "ai",
+      });
+    });
+
+    it("for each action when chat resends two of the same tool in another order", async () => {
+      const opsCard = {
+        ...trelloCreateCard,
+        integrationArgs: { ...trelloCreateCard.integrationArgs, name: "Ops" },
+      };
+      const salesCard = {
+        ...trelloCreateCard,
+        integrationArgs: {
+          ...trelloCreateCard.integrationArgs,
+          boardId: "board-2",
+          boardName: "Sales",
+          listId: "list-2",
+          listName: "Leads",
+          name: "Sales",
+        },
+      };
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [opsCard, salesCard],
+      } as never);
+
+      const saved = await updateTo(
+        ["Sales", "Ops"].map(
+          (name) =>
+            ({
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: { name } as any,
+              delayInMinutes: null,
+            }) as RuleAction,
+        ),
+      );
+
+      expect(
+        saved.createMany.data.map((action) => action.integrationArgs?.boardId),
+      ).toEqual(["board-2", "board-1"]);
+    });
+
+    it("for each action when chat leaves one's fixed title out and gives the other a title", async () => {
+      const payInvoiceCard = {
+        ...trelloCreateCard,
+        integrationArgs: {
+          ...trelloCreateCard.integrationArgs,
+          name: "Pay invoice",
+        },
+      };
+      const aiTitledCard = {
+        ...trelloCreateCard,
+        integrationArgs: {
+          ...trelloCreateCard.integrationArgs,
+          boardId: "board-2",
+          boardName: "Sales",
+          listId: "list-2",
+          listName: "Leads",
+        },
+      };
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [payInvoiceCard, aiTitledCard],
+      } as never);
+
+      const saved = await updateTo(
+        [null, "Receipts"].map(
+          (name) =>
+            ({
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: { name } as any,
+              delayInMinutes: null,
+            }) as RuleAction,
+        ),
+      );
+
+      expect(
+        saved.createMany.data.map((action) => action.integrationArgs),
+      ).toEqual([
+        payInvoiceCard.integrationArgs,
+        { ...aiTitledCard.integrationArgs, name: "Receipts" },
+      ]);
+    });
+  });
+
+  it("rejects an integration action that names no app and tool", async () => {
+    await expect(
+      updateRuleActions({
+        ruleId: RULE_ID,
+        actions: [
+          {
+            type: ActionType.INTEGRATION,
+            fields: { content: "Create a task" } as any,
+            delayInMinutes: null,
+          } as RuleAction,
+        ],
+        provider: "gmail",
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        logger,
+      }),
+    ).rejects.toThrow("doesn't say which app and action to use");
+
+    expect(prisma.rule.update).not.toHaveBeenCalled();
   });
 
   it("rejects integration action updates when access is disabled", async () => {
@@ -966,6 +1393,119 @@ describe("explicit rule creation", () => {
     expect(rule.enabled).toBe(true);
   });
 
+  describe("an integration action missing a choice only the editor can make", () => {
+    beforeEach(() => {
+      mockIsIntegrationActionEnabledForEmailAccountId.mockResolvedValue(true);
+      prisma.rule.create.mockImplementation(
+        async ({ data }) =>
+          ({ ...data, id: RULE_ID, actions: [], group: null }) as any,
+      );
+      prisma.mcpConnection.findMany.mockResolvedValue([
+        { integration: { name: "trello" } },
+        { integration: { name: "todoist" } },
+      ] as never);
+    });
+
+    it("saves the rule turned off", async () => {
+      const rule = await createRule({
+        result: createRuleResult({
+          actions: [
+            {
+              type: ActionType.INTEGRATION,
+              integrationName: "trello",
+              integrationToolName: "create-card",
+              fields: { name: "Pay invoice" } as any,
+              delayInMinutes: null,
+            } as RuleAction,
+          ],
+        }),
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        provider: "gmail",
+        runOnThreads: true,
+        logger,
+      });
+      expect(rule.enabled).toBe(false);
+    });
+
+    it("keeps a rule whose integration needs no editor choice turned on", async () => {
+      const rule = await createRule({
+        result: createRuleResult({ actions: [integrationAction()] }),
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        provider: "gmail",
+        runOnThreads: true,
+        logger,
+      });
+      expect(rule.enabled).toBe(true);
+    });
+
+    it("turns a rule off when chat adds such an action to it", async () => {
+      prisma.rule.findFirst.mockResolvedValue({
+        from: null,
+        actions: [{ type: ActionType.ARCHIVE }],
+      } as never);
+      prisma.rule.update.mockResolvedValue({
+        id: RULE_ID,
+        actions: [],
+        group: null,
+      } as never);
+
+      await updateRuleActions({
+        ruleId: RULE_ID,
+        actions: [
+          archiveAction(),
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "add-comment",
+            fields: {} as any,
+            delayInMinutes: null,
+          } as RuleAction,
+        ],
+        provider: "gmail",
+        emailAccountId: EMAIL_ACCOUNT_ID,
+        logger,
+      });
+
+      expect(prisma.rule.update.mock.calls[0][0].data.enabled).toBe(false);
+    });
+
+    it("tells the user in plain words what to pick before turning the rule on", () => {
+      expect(
+        getIntegrationSetupMessage([
+          { type: ActionType.ARCHIVE },
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "create-card",
+            integrationArgs: { boardId: "", name: "" },
+          },
+        ]),
+      ).toBe(
+        "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+      );
+      expect(
+        getIntegrationSetupMessage([
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "move-card",
+            integrationArgs: { boardId: "board-1" },
+          },
+        ]),
+      ).toContain("pick the Trello card and destination,");
+      expect(
+        getIntegrationSetupMessage([
+          {
+            type: ActionType.INTEGRATION,
+            integrationName: "todoist",
+            integrationToolName: "add-tasks",
+            integrationArgs: { content: "", projectId: "inbox" },
+          },
+        ]),
+      ).toBeNull();
+    });
+  });
+
   it("does not silently disable a submitted rule based on example text", async () => {
     prisma.rule.create.mockImplementation(
       async ({ data }) =>
@@ -1081,6 +1621,8 @@ function deleteAction(): RuleAction {
 function integrationAction(): RuleAction {
   return {
     type: ActionType.INTEGRATION,
+    integrationName: "todoist",
+    integrationToolName: "add-tasks",
     fields: { content: "Create a task" } as any,
     delayInMinutes: null,
   } as RuleAction;

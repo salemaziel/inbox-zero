@@ -223,6 +223,47 @@ describe("confirmAssistantCreateRule", () => {
     expect(updatedParts[0].output.ruleId).toBe("rule-created-1");
   });
 
+  it("says the rule is off until the user picks what only the editor can", async () => {
+    (
+      prisma.emailAccount.findUnique as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      email: "owner@example.com",
+      account: { userId: "u1", provider: "google" },
+    });
+    prisma.chatMessage.findFirst.mockResolvedValue({
+      id: "cm-1",
+      chatId: "chat-1",
+      updatedAt: new Date("2026-02-23T00:00:00.000Z"),
+      parts: [buildPendingCreateRulePart()],
+    } as never);
+    prisma.chatMessage.updateMany.mockResolvedValue({ count: 1 } as never);
+    createRuleMock.mockResolvedValue({
+      id: "rule-created-1",
+      enabled: false,
+      actions: [
+        {
+          type: "INTEGRATION",
+          integrationName: "trello",
+          integrationToolName: "create-card",
+          integrationArgs: { name: "" },
+        },
+      ],
+    });
+
+    const result = await confirmAssistantCreateRule(
+      "ea_1" as never,
+      {
+        chatId: "chat-1",
+        chatMessageId: "cm-1",
+        toolCallId: "tool-cr-1",
+      } as never,
+    );
+
+    expect(result?.data?.message).toBe(
+      "This rule was saved turned off. To finish it, open it in the rule editor, pick the Trello board and list, then turn the rule on.",
+    );
+  });
+
   it("returns an error when confirmation persistence fails", async () => {
     const logger = createTestLogger();
 

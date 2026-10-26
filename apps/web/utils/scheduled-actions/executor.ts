@@ -87,6 +87,7 @@ export async function executeScheduledAction(
         email: emailAccount.email,
         userId: emailAccount.userId,
         id: emailAccount.id,
+        timezone: emailAccount.timezone,
       },
       scheduledAction,
       log,

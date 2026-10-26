@@ -8,6 +8,9 @@ import { Button } from "@/components/new-landing/common/Button";
 import { HeaderLinks } from "@/components/new-landing/HeaderLinks";
 import { landingPageAnalytics } from "@/hooks/useAnalytics";
 
+// Solutions and Pricing are hidden until those pages are ready, not removed.
+const SHOW_NAV_LINKS = false;
+
 interface HeaderProps {
   className: string;
 }
@@ -28,7 +31,7 @@ export function Header({ className }: HeaderProps) {
       <div className="block md:hidden">
         <Logo variant="mobile" />
       </div>
-      <HeaderLinks />
+      {SHOW_NAV_LINKS ? <HeaderLinks /> : null}
       <div className="flex items-center gap-3">
         <div className="hidden md:block">
           <Button variant="secondary" asChild>

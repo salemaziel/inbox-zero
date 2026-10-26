@@ -234,6 +234,8 @@ const nextConfig: NextConfig = {
   },
   logging: {
     browserToTerminal: true,
+    // Server action arguments include pasted integration tokens.
+    serverFunctions: false,
   },
   onDemandEntries: isDevelopment
     ? {

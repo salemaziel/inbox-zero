@@ -126,6 +126,7 @@
         "CLI_LLM_ENABLED",
         "CODEX_CLI_ALLOW_NPX",
         "CODEX_CLI_PATH",
+        "CLI_LLM_OWNER_EMAILS",
         "PERPLEXITY_API_KEY",
 
         "REDIS_HTTP_URL",
@@ -195,6 +196,7 @@
         "MCP_SERVER_URL_OVERRIDES",
         "MCP_ALLOW_PRIVATE_IPS",
         "COMPOSIO_API_KEY",
+        "TRELLO_API_KEY",
         "INTERNAL_API_URL",
         "INTERNAL_API_KEY",
         "WHITELIST_FROM",

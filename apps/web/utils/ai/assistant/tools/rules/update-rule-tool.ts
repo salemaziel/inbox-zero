@@ -9,7 +9,10 @@ import {
   type RuleAction,
 } from "@/utils/ai/rule/create-rule-schema";
 import { isDuplicateError } from "@/utils/prisma-helpers";
+import { getIntegrationFieldsFromArgs } from "@/utils/mcp/tool-specs";
+import { SafeError } from "@/utils/error";
 import {
+  getIntegrationSetupMessage,
   partialUpdateRule,
   setRuleEnabled,
   updateRuleActions,
@@ -56,6 +59,9 @@ export const updateRuleTool = ({
   hasPendingRuleDeletion?: (ruleName: string) => boolean;
 }) => {
   let updateQueue = Promise.resolve();
+  const integrationFieldsOnEdit = integrationActionsEnabled
+    ? " For an integration action, resend the field values shown in the current rule to keep them, and send an empty string for a field only when the user wants the AI to write it again."
+    : "";
 
   return tool({
     description:
@@ -85,7 +91,7 @@ export const updateRuleTool = ({
               .min(1, "Rules must have at least one action.")
               .optional()
               .describe(
-                "The full replacement list of actions. Use only when the user explicitly asks to change actions/outcomes. Omit for condition-only, name-only, or enabled-state-only edits; omitted actions are preserved. To remove one action, include every action that should remain and omit the action being removed. Empty action lists are invalid.",
+                `The full replacement list of actions. Use only when the user explicitly asks to change actions/outcomes. Omit for condition-only, name-only, or enabled-state-only edits; omitted actions are preserved. To remove one action, include every action that should remain and omit the action being removed. Empty action lists are invalid.${integrationFieldsOnEdit}`,
               ),
           })
           .refine((updates) => Object.keys(updates).length > 0, {
@@ -145,6 +151,9 @@ export const updateRuleTool = ({
                 url: true,
                 folderName: true,
                 delayInMinutes: true,
+                integrationName: true,
+                integrationToolName: true,
+                integrationArgs: true,
               },
             },
           },
@@ -202,9 +211,14 @@ export const updateRuleTool = ({
                 subject: action.subject,
                 webhookUrl: action.url,
                 folderName: action.folderName,
+                ...getIntegrationFieldsFromArgs(action),
               },
             }),
           ),
+          ...(action.integrationName && {
+            integrationName: action.integrationName,
+            integrationToolName: action.integrationToolName,
+          }),
           delayInMinutes: action.delayInMinutes,
         }));
         const requestedChangesAlreadyMatchRule = !ruleUpdateHasChanges({
@@ -256,11 +270,14 @@ export const updateRuleTool = ({
           });
         }
 
+        let setupMessage: string | null = null;
         if (effectiveUpdates.actions) {
-          await updateRuleActions({
+          const updatedRule = await updateRuleActions({
             ruleId: rule.id,
             actions: effectiveUpdates.actions.map((action) => ({
               type: action.type,
+              integrationName: action.integrationName,
+              integrationToolName: action.integrationToolName,
               fields: buildProviderRuleActionFields({
                 provider,
                 fields: action.fields ?? {},
@@ -271,17 +288,27 @@ export const updateRuleTool = ({
             emailAccountId,
             logger,
           });
+          // updateRuleActions turned the rule off; it stays off until the
+          // user finishes the action in the rule editor.
+          setupMessage = getIntegrationSetupMessage(updatedRule.actions);
         }
+        let updatedEnabled = setupMessage
+          ? false
+          : (effectiveUpdates.enabled ?? rule.enabled);
 
-        if (
-          effectiveUpdates.enabled !== undefined &&
-          effectiveUpdates.enabled !== rule.enabled
-        ) {
-          await setRuleEnabled({
-            ruleId: rule.id,
-            emailAccountId,
-            enabled: effectiveUpdates.enabled,
-          });
+        if (!setupMessage && updatedEnabled !== rule.enabled) {
+          try {
+            await setRuleEnabled({
+              ruleId: rule.id,
+              emailAccountId,
+              enabled: updatedEnabled,
+            });
+          } catch (error) {
+            // setRuleEnabled refuses to turn on a rule the editor must finish.
+            if (!(error instanceof SafeError)) throw error;
+            setupMessage = error.message;
+            updatedEnabled = rule.enabled;
+          }
         }
 
         const snapshot = await loadRuleSnapshotAfterWrite({
@@ -301,12 +328,13 @@ export const updateRuleTool = ({
           originalName: rule.name,
           updatedName: effectiveUpdates.name ?? rule.name,
           originalEnabled: rule.enabled,
-          updatedEnabled: effectiveUpdates.enabled ?? rule.enabled,
+          updatedEnabled,
           originalConditions,
           updatedConditions: effectiveUpdates.condition,
           originalActions,
           updatedActions: effectiveUpdates.actions,
           currentRule,
+          ...(setupMessage && { message: setupMessage }),
         };
       } catch (error) {
         logger.error("Failed to update rule", { error, ruleName });
@@ -351,6 +379,8 @@ export type UpdateRuleOutput = {
   originalActions?: Array<{
     type: string;
     fields: Record<string, string | null>;
+    integrationName?: string;
+    integrationToolName?: string | null;
     delayInMinutes?: number | null;
   }>;
   updatedActions?: RuleAction[];
@@ -522,10 +552,14 @@ function actionsLookCopiedFromRule(
 function normalizeActionForComparison(action: {
   delayInMinutes?: number | null;
   fields?: Record<string, string | null> | null;
+  integrationName?: string | null;
+  integrationToolName?: string | null;
   type: string;
 }) {
   return {
     type: action.type,
+    integrationName: action.integrationName ?? null,
+    integrationToolName: action.integrationToolName ?? null,
     delayInMinutes: action.delayInMinutes ?? null,
     fields: Object.fromEntries(
       Object.entries(action.fields ?? {})

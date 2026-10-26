@@ -115,6 +115,7 @@ type FixtureCall = {
   method: FixtureMethod;
   conn: NativeConnection | { accessToken: string };
   signal: AbortSignal;
+  tool?: string;
   payload?: Record<string, unknown>;
   argKey?: string;
   parents?: Record<string, string>;
@@ -149,8 +150,8 @@ export function createFixtureExecutor() {
   }
 
   const executor: NativeIntegrationExecutor = {
-    run: (conn, payload, { signal }) =>
-      respond("run", { conn, payload, signal }) as Promise<unknown>,
+    run: (conn, { tool, payload }, { signal }) =>
+      respond("run", { conn, tool, payload, signal }) as Promise<unknown>,
     parseResult: (raw) => parseIntegrationCallResult(raw),
     listOptions: (conn, argKey, parents, { signal }) =>
       respond("listOptions", {

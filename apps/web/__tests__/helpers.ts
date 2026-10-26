@@ -234,9 +234,13 @@ export function getEmailAccount(
     calendarBookingLink: null,
     draftReplyConfidence: overrides.draftReplyConfidence ?? "MEDIUM",
     user: {
+      id: "user1",
+      email: overrides.email || "user@test.com",
+      emailVerified: true,
       aiModel: null,
       aiProvider: null,
       aiApiKey: null,
+      aiTaskModels: null,
     },
     account: {
       provider: "google",

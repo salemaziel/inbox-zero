@@ -70,9 +70,13 @@ export const scanFollowUpRemindersAction = actionClient
         followUpAutoDraftEnabled: true,
         user: {
           select: {
+            id: true,
+            email: true,
+            emailVerified: true,
             aiProvider: true,
             aiModel: true,
             aiApiKey: true,
+            aiTaskModels: true,
           },
         },
         account: { select: { provider: true } },

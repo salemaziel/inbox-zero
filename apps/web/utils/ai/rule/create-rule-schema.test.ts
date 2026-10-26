@@ -59,6 +59,8 @@ describe("createRuleSchema", () => {
       actions: [
         {
           type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
           fields: { content: "Follow up" },
           delayInMinutes: null,
         },
@@ -69,6 +71,61 @@ describe("createRuleSchema", () => {
       false,
     );
     expect(createRuleSchema(provider, true).safeParse(rule).success).toBe(true);
+  });
+
+  it("offers one integration option per tool, each naming its app and tool", () => {
+    const parse = (action: Record<string, unknown>) =>
+      createRuleSchema(provider, true).safeParse(
+        buildRule({ delayInMinutes: null, ...action }),
+      );
+
+    const trello = parse({
+      type: ActionType.INTEGRATION,
+      integrationName: "trello",
+      integrationToolName: "create-card",
+      fields: { name: "Pay invoice" },
+    });
+    expect(trello.success).toBe(true);
+    expect(trello.data?.actions[0]).toMatchObject({
+      integrationName: "trello",
+      integrationToolName: "create-card",
+      fields: { name: "Pay invoice" },
+    });
+
+    expect(
+      parse({
+        type: ActionType.INTEGRATION,
+        integrationName: "trello",
+        integrationToolName: "move-card",
+        fields: {},
+      }).success,
+    ).toBe(true);
+    expect(
+      parse({
+        type: ActionType.INTEGRATION,
+        integrationName: "trello",
+        integrationToolName: "add-tasks",
+        fields: {},
+      }).success,
+    ).toBe(false);
+    expect(
+      parse({ type: ActionType.INTEGRATION, fields: { content: "Follow up" } })
+        .success,
+    ).toBe(false);
+  });
+
+  it("only exposes the args each tool lets the rule writer set", () => {
+    const result = createRuleSchema(provider, true).safeParse(
+      buildRule({
+        type: ActionType.INTEGRATION,
+        integrationName: "trello",
+        integrationToolName: "create-card",
+        fields: { name: "Pay invoice", boardId: "board-1" },
+        delayInMinutes: null,
+      }),
+    );
+
+    expect(result.data?.actions[0].fields).not.toHaveProperty("boardId");
   });
 
   it("rejects SEND_EMAIL without fields.to", () => {

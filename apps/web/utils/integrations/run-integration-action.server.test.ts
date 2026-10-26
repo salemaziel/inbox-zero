@@ -64,11 +64,12 @@ describe("runIntegrationAction", () => {
   });
 
   describe("native", () => {
-    it("runs the executor with the connection and payload and returns its result", async () => {
+    it("runs the executor with the connection, tool and payload and returns its result", async () => {
       fixture.enqueue("run", {
         externalId: "item-9",
         url: "https://fixture.invalid/items/9",
       });
+      const parseResult = vi.spyOn(fixture.executor, "parseResult");
 
       const result = await runIntegrationAction(nativeOptions());
 
@@ -83,9 +84,14 @@ describe("runIntegrationAction", () => {
       expect(fixture.calls[0]).toMatchObject({
         method: "run",
         conn: { id: "conn-1", accessToken: "token-1" },
+        tool: "create-item",
         payload,
       });
       expect(fixture.calls[0].signal).toBeInstanceOf(AbortSignal);
+      expect(parseResult).toHaveBeenCalledWith(
+        expect.anything(),
+        "create-item",
+      );
     });
 
     it("fails without calling the app when there is no active connection", async () => {

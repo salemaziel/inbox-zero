@@ -102,6 +102,8 @@ describe("actionsNeedChatRiskConfirmation", () => {
       actions: [
         {
           type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
           fields: {
             content: null,
             description: null,
@@ -129,6 +131,8 @@ describe("actionsNeedChatRiskConfirmation", () => {
       actions: [
         {
           type: ActionType.INTEGRATION,
+          integrationName: "todoist",
+          integrationToolName: "add-tasks",
           fields: {
             content: "Review the contract",
             description: "Sent by the contracts team",

@@ -8,16 +8,42 @@ export type IntegrationToolChoice = {
   integration: string;
   tool: string;
   label: string;
+  disabledReason?: string;
 };
 
-export function getIntegrationToolChoices(
-  specs: readonly IntegrationToolSpec[] = INTEGRATION_TOOL_SPECS,
-): IntegrationToolChoice[] {
-  return specs.map((spec) => ({
-    integration: spec.integration,
-    tool: spec.tool,
-    label: spec.actionLabel,
-  }));
+/**
+ * Tools whose app the user can use: connected apps are selectable, available
+ * but unconnected apps are listed disabled, and anything else is left out.
+ * `integrations` is the Integrations page list, which holds only available apps.
+ */
+export function getIntegrationToolChoices({
+  integrations,
+  specs = INTEGRATION_TOOL_SPECS,
+}: {
+  integrations: readonly {
+    name: string;
+    displayName: string;
+    connection?: { isActive: boolean } | null;
+  }[];
+  specs?: readonly IntegrationToolSpec[];
+}): IntegrationToolChoice[] {
+  return specs.flatMap((spec) => {
+    const app = integrations.find(
+      (integration) => integration.name === spec.integration,
+    );
+    if (!app) return [];
+
+    return [
+      {
+        integration: spec.integration,
+        tool: spec.tool,
+        label: spec.actionLabel,
+        ...(!app.connection?.isActive && {
+          disabledReason: `Connect ${app.displayName} first`,
+        }),
+      },
+    ];
+  });
 }
 
 /**

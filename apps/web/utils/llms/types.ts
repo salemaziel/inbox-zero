@@ -2,9 +2,13 @@ import type { Prisma } from "@/generated/prisma/client";
 
 export type UserAIFields = Prisma.UserGetPayload<{
   select: {
+    id: true;
+    email: true;
+    emailVerified: true;
     aiProvider: true;
     aiModel: true;
     aiApiKey: true;
+    aiTaskModels: true;
   };
 }>;
 export type EmailAccountWithAI = Prisma.EmailAccountGetPayload<{
@@ -19,9 +23,13 @@ export type EmailAccountWithAI = Prisma.EmailAccountGetPayload<{
     calendarBookingLink: true;
     user: {
       select: {
+        id: true;
+        email: true;
+        emailVerified: true;
         aiProvider: true;
         aiModel: true;
         aiApiKey: true;
+        aiTaskModels: true;
       };
     };
     account: {

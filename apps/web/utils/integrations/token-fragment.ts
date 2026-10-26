@@ -1,4 +1,5 @@
 export const INTEGRATION_TOKEN_STORAGE_KEY = "integration-connect-token";
+const INTEGRATION_DENIED_STORAGE_KEY = "integration-connect-denied";
 
 const CONNECT_PATH = /^\/[^/]+\/integrations\/connect\/[^/]+\/?$/;
 
@@ -14,9 +15,12 @@ export function moveTokenFragmentToSessionStorage() {
   if (token === null) return;
 
   const { pathname, search } = window.location;
-  if (token && CONNECT_PATH.test(pathname)) {
+  if (CONNECT_PATH.test(pathname) && (token || isFragmentDenial())) {
     try {
-      window.sessionStorage.setItem(INTEGRATION_TOKEN_STORAGE_KEY, token);
+      window.sessionStorage.setItem(
+        token ? INTEGRATION_TOKEN_STORAGE_KEY : INTEGRATION_DENIED_STORAGE_KEY,
+        token || "1",
+      );
     } catch {
       // Storage can be unavailable (privacy modes). The URL is still cleared;
       // the connect page then asks the user to start again.
@@ -36,6 +40,24 @@ export function takeIntegrationToken(): string | null {
     // Storage unavailable: fall through to the fragment.
   }
   return stored || getFragmentToken();
+}
+
+// The user declined on the app's authorize page: it returns an empty token
+// and an error instead of a token.
+export function takeIntegrationConnectDenied(): boolean {
+  let stored: string | null = null;
+  try {
+    stored = window.sessionStorage.getItem(INTEGRATION_DENIED_STORAGE_KEY);
+    window.sessionStorage.removeItem(INTEGRATION_DENIED_STORAGE_KEY);
+  } catch {
+    // Storage unavailable: fall through to the fragment.
+  }
+  return !!stored || isFragmentDenial();
+}
+
+function isFragmentDenial() {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return !params.get("token") && params.has("error");
 }
 
 function getFragmentToken() {

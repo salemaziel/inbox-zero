@@ -35,6 +35,7 @@ import {
   type RuleActionCreateData,
   addActionOwnershipToInput,
   assertIntegrationActionsConnected,
+  getIntegrationSetupMessage,
 } from "@/utils/rule/rule";
 import { SafeError } from "@/utils/error";
 import {
@@ -68,6 +69,7 @@ export const createRuleAction = actionClient
       ctx: { emailAccountId, userId, logger, provider },
       parsedInput: {
         name,
+        enabled,
         runOnThreads,
         actions,
         conditions: conditionsInput,
@@ -103,6 +105,7 @@ export const createRuleAction = actionClient
           emailAccountId,
           provider,
           runOnThreads: runOnThreads ?? true,
+          enabled,
           logger,
         });
 
@@ -507,10 +510,52 @@ export const toggleAllRulesAction = actionClient
   .inputSchema(toggleAllRulesBody)
   .action(async ({ ctx: { emailAccountId }, parsedInput: { enabled } }) => {
     if (enabled) {
-      await prisma.rule.updateMany({
-        where: { emailAccountId, organizationRuleId: null },
+      const offIntegrationRules = await prisma.rule.findMany({
+        where: {
+          emailAccountId,
+          organizationRuleId: null,
+          enabled: false,
+          actions: { some: { type: ActionType.INTEGRATION } },
+        },
+        select: {
+          id: true,
+          name: true,
+          actions: {
+            where: { type: ActionType.INTEGRATION },
+            select: {
+              type: true,
+              integrationName: true,
+              integrationToolName: true,
+              integrationArgs: true,
+            },
+          },
+        },
+      });
+      // Turning these on would fail on every matching email.
+      const unfinishedRules = offIntegrationRules.filter((rule) =>
+        getIntegrationSetupMessage(rule.actions),
+      );
+
+      const otherRules = await prisma.rule.updateMany({
+        where: {
+          emailAccountId,
+          organizationRuleId: null,
+          ...(unfinishedRules.length && {
+            id: { notIn: unfinishedRules.map((rule) => rule.id) },
+          }),
+        },
         data: { enabled },
       });
+
+      if (unfinishedRules.length) {
+        return {
+          success: true,
+          message: getUnfinishedRulesLeftOffMessage(
+            unfinishedRules.map((rule) => rule.name),
+            otherRules.count > 0,
+          ),
+        };
+      }
     } else {
       await prisma.$transaction([
         prisma.rule.updateMany({
@@ -759,6 +804,20 @@ function mapActionToSanitizedFields(action: {
     integrationToolName: sanitized.integrationToolName ?? null,
     integrationArgs: sanitized.integrationArgs ?? null,
   };
+}
+
+function getUnfinishedRulesLeftOffMessage(
+  ruleNames: string[],
+  hasOtherRules: boolean,
+) {
+  const names = new Intl.ListFormat("en", { type: "conjunction" }).format(
+    ruleNames,
+  );
+  const leftOff =
+    ruleNames.length === 1
+      ? `${names} stays off until it's finished: open it in the rule editor, pick the board, list or card, then turn it on.`
+      : `${names} stay off until they're finished: open each one in the rule editor, pick the board, list or card, then turn it on.`;
+  return hasOtherRules ? `Every other rule is on. ${leftOff}` : leftOff;
 }
 
 function handleRuleError(error: unknown, logger: Logger) {

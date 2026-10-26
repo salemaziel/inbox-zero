@@ -44,10 +44,10 @@ export type NativeConnection = {
 export type NativeIntegrationExecutor = {
   run(
     conn: NativeConnection,
-    payload: Record<string, unknown>,
+    call: { tool: string; payload: Record<string, unknown> },
     o: { signal: AbortSignal },
   ): Promise<unknown>;
-  parseResult(raw: unknown): IntegrationCallResult | null;
+  parseResult(raw: unknown, tool: string): IntegrationCallResult | null;
   listOptions(
     conn: NativeConnection,
     argKey: string,
@@ -60,4 +60,7 @@ export type NativeIntegrationExecutor = {
   ): Promise<void>;
   revoke?(conn: NativeConnection, o: { signal: AbortSignal }): Promise<void>;
   buildAuthorizeUrl?(o: { returnUrl: string }): string;
+  // False when a server-level setting the app needs (such as an API key) is
+  // missing; the app is then not offered. Omitted means always configured.
+  isConfigured?(): boolean;
 };

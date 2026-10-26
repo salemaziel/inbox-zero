@@ -16,9 +16,13 @@ export type EmailAccountWithAIAndTokens = Prisma.EmailAccountGetPayload<{
     calendarBookingLink: true;
     user: {
       select: {
+        id: true;
+        email: true;
+        emailVerified: true;
         aiProvider: true;
         aiModel: true;
         aiApiKey: true;
+        aiTaskModels: true;
       };
     };
     account: {
@@ -57,9 +61,13 @@ export async function getEmailAccountWithAi({
       name: true,
       user: {
         select: {
+          id: true,
+          email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
         },
       },
       account: {
@@ -96,9 +104,13 @@ export async function getEmailAccountForRuleExecution({
       draftReplyConfidence: true,
       user: {
         select: {
+          id: true,
+          email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
         },
       },
       account: {
@@ -128,9 +140,13 @@ export async function getEmailAccountWithAiAndTokens({
       calendarBookingLink: true,
       user: {
         select: {
+          id: true,
+          email: true,
+          emailVerified: true,
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
         },
       },
       account: {

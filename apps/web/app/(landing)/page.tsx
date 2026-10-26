@@ -18,6 +18,7 @@ import { FAQs } from "@/app/(landing)/home/FAQs";
 import { FinalCTA } from "@/app/(landing)/home/FinalCTA";
 import { WordReveal } from "@/components/new-landing/common/WordReveal";
 import { SectionLink } from "@/components/new-landing/common/SectionLink";
+import { CallToAction } from "@/components/new-landing/CallToAction";
 import { env } from "@/env";
 import { BRAND_NAME } from "@/utils/branding";
 
@@ -28,8 +29,9 @@ export default function NewLanding() {
     return (
       <BasicLayout>
         <Hero
-          title={`${BRAND_NAME} for self-hosted teams`}
-          subtitle={`Deploy ${BRAND_NAME} on your own infrastructure and automate your inbox with full data control.`}
+          title="The AI assistant that clears your inbox for you"
+          subtitle={`${BRAND_NAME} sorts your email, drafts replies in your voice, and turns emails into tasks in the tools you already use, so you spend less time in your inbox.`}
+          cta={<CallToAction showSalesButton={false} />}
         />
       </BasicLayout>
     );

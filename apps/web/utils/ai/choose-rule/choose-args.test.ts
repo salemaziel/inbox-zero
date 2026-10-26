@@ -678,6 +678,29 @@ describe("getActionItemsWithAiArgs integration placeholders", () => {
   });
 });
 
+describe("getActionItemsWithAiArgs select options that carry an email field", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(aiGenerateArgs).mockResolvedValue({
+      args: undefined,
+      attribution: null,
+    });
+  });
+
+  it("replaces a chosen option with the email field it stands for", async () => {
+    const [yes, no] = await runGetActionItems([
+      createTrelloCardAction("trello-yes", "yes"),
+      createTrelloCardAction("trello-no", "no"),
+    ]);
+
+    expect(yes.integrationArgs).toMatchObject({
+      attachLink: expect.stringMatching(/^https:\/\//),
+      boardId: "board-1",
+    });
+    expect(no.integrationArgs).toMatchObject({ attachLink: "no" });
+  });
+});
+
 async function runGetActionItems(actions: Action[]) {
   const message = getMockMessage({
     from: "alice@example.com",
@@ -706,6 +729,24 @@ function createTodoistAction(integrationArgs: Record<string, string>) {
     integrationName: "todoist",
     integrationToolName: "add-tasks",
     integrationArgs,
+  });
+}
+
+function createTrelloCardAction(id: string, attachLink: string) {
+  return createMockAction({
+    id,
+    type: ActionType.INTEGRATION,
+    integrationName: "trello",
+    integrationToolName: "create-card",
+    integrationArgs: {
+      boardId: "board-1",
+      listId: "list-1",
+      name: "Pay invoice",
+      description: "From Acme",
+      labelId: "none",
+      due: "none",
+      attachLink,
+    },
   });
 }
 

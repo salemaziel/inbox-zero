@@ -17,12 +17,14 @@ Unchanged contract (`integration`, `tool`, `actionLabel`, `llmDescription`, `arg
 - Native remote-select args set `source: "native"` and omit `optionsTool`/`parseOptions`.
 - MCP remote-select args with parents provide `buildOptionsArgs(parents)`.
 - Text args may contain `[[field]]` markers (see [placeholders.md](./placeholders.md)); `buildPayload` receives resolved strings and never sees markers.
+- `buildPayload(resolved, { timeZone })` also gets the account's IANA time zone (`EmailAccount.timezone`, UTC when unset or invalid), for args such as due dates that depend on the user's day.
+- A required arg with no `aiPrompt` (for example a Trello board) can only be picked in the rule editor. An AI-written rule that leaves one empty (chat, the confirmation card, mobile prompt-to-rule) is saved turned off, and the user is told in plain words which choices to pick before turning it on. Turning such a rule on (`setRuleEnabled`, and "turn all rules on", which skips it) is refused with the same plain-words choices. Chat sees the stored values of the args the rule writer may set (`llmDescription`), leaving out values the AI fills per email. Chat edits that resend an action with the same app and tool keep the stored values of the args the rule writer cannot set, and of every arg it may set but left out; a value it sends wins, and an empty one means the AI fills it.
 
 Specs are added to `INTEGRATION_TOOL_SPECS`. App-specific spec files may live in `apps/web/utils/integrations/<app>/` and be listed there (Phase 5 decides).
 
 ## 3. Server executor (server-only) — `apps/web/utils/integrations/executors.server.ts`
 
-- Native: an entry in `NATIVE_EXECUTORS[<integration>]` implementing `NativeIntegrationExecutor` (`run`, `parseResult`, `listOptions`, `testConnection`, optional `revoke`, `buildAuthorizeUrl` when `connectKind = "token-redirect"`).
+- Native: an entry in `NATIVE_EXECUTORS[<integration>]` implementing `NativeIntegrationExecutor` (`run`, `parseResult`, `listOptions`, `testConnection`, optional `revoke`, `buildAuthorizeUrl` when `connectKind = "token-redirect"`, optional `isConfigured`). `run` and `parseResult` receive the tool name.
 - MCP: optionally an entry in `MCP_RESULT_PARSERS[<integration>][<tool>]` with `parseResult(raw)`; nothing else.
 
 Executor rules:
@@ -36,7 +38,7 @@ Executor rules:
 
 ## 4. Call result
 
-`run` returns the raw response; `parseResult(raw)` returns `{ externalId?, url? } | null`. Only an `externalId` enables rerun protection. The URL is shown in history only if `https:`.
+`run` returns the raw response; `parseResult(raw, tool)` returns `{ externalId?, url? } | null`. Only an `externalId` enables rerun protection. The URL is shown in history only if `https:`.
 
 ## 5. Error kinds the layer understands
 

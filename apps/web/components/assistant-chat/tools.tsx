@@ -919,7 +919,13 @@ export function PendingCreateRuleToolCard({
       }
 
       setRuleIdOverride(createdId);
-      toastSuccess({ description: "Rule created and enabled." });
+      const setupMessage =
+        result.data && "message" in result.data
+          ? result.data.message
+          : undefined;
+      toastSuccess({
+        description: setupMessage ?? "Rule created and enabled.",
+      });
     } catch {
       toastError({ description: "Could not create this rule." });
     } finally {
@@ -1746,7 +1752,7 @@ function RuleEditToggleActions({
             if (result?.serverError) {
               setEnabled(!checked);
               toastError({
-                description: `Failed to ${checked ? "enable" : "disable"} rule.`,
+                description: `Failed to ${checked ? "enable" : "disable"} rule. ${result.serverError}`,
               });
             }
           } catch {

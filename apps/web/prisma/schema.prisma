@@ -96,6 +96,7 @@ model User {
   aiProvider        String?
   aiModel           String?
   aiApiKey          String?
+  aiTaskModels      Json? // per model type { provider, model }; shape in utils/llms/config.ts
   decisionModelEnabled Boolean? // null follows DEFAULT_DECISION_MODEL_ENABLED
   webhookSecret     String?
 
@@ -109,7 +110,8 @@ model User {
   premiumAdminId String?
   premiumAdmin   Premium? @relation(fields: [premiumAdminId], references: [id])
 
-  apiKeys ApiKey[]
+  apiKeys              ApiKey[]
+  aiSubscriptionLogins AiSubscriptionLogin[]
 
   emailAccounts EmailAccount[]
 
@@ -1361,6 +1363,25 @@ model ApiKey {
 
   @@index([userId, isActive])
   @@index([emailAccountId, isActive])
+}
+
+// A user's own Claude Code or Codex CLI subscription login. The Claude token
+// is stored encrypted in `credential`; Codex keeps its own auth.json in the
+// user's CLI home folder, so `credential` stays null for it.
+model AiSubscriptionLogin {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  provider    String // "claude-code" | "codex-cli"
+  credential  String?
+  status      String   @default("connected") // "connected" | "needs-reconnect"
+  lastError   String?
+  connectedAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
 }
 
 model EmailToken {

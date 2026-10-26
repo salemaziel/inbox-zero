@@ -4,6 +4,7 @@ import {
   updateSensitiveDataPolicyAction,
   updateAiSettingsAction,
 } from "./settings";
+import { Prisma } from "@/generated/prisma/client";
 import { Provider } from "@/utils/llms/config";
 
 vi.mock("@/utils/prisma");
@@ -17,6 +18,7 @@ const { clearSpecificErrorMessagesMock, mockEnv } = vi.hoisted(() => ({
   clearSpecificErrorMessagesMock: vi.fn(),
   mockEnv: {
     AZURE_RESOURCE_NAME: "azure-resource",
+    CLI_LLM_ENABLED: true,
     EMAIL_ENCRYPT_SECRET: "test-email-secret",
     EMAIL_ENCRYPT_SALT: "test-email-salt",
     NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED: false,
@@ -45,6 +47,8 @@ describe("updateAiSettingsAction", () => {
       aiApiKey: "stored-api-key",
     } as Awaited<ReturnType<typeof prisma.user.findUnique>>);
     prisma.user.updateMany.mockResolvedValue({ count: 1 } as never);
+    prisma.aiSubscriptionLogin.findMany.mockResolvedValue([]);
+    mockEnv.CLI_LLM_ENABLED = true;
     mockEnv.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED = false;
     mockEnv.NEXT_PUBLIC_SENSITIVE_DATA_POLICY_LOCKED = false;
   });
@@ -62,6 +66,7 @@ describe("updateAiSettingsAction", () => {
         aiProvider: Provider.OPEN_AI,
         aiModel: "gpt-5.1",
         aiApiKey: "stored-api-key",
+        aiTaskModels: Prisma.DbNull,
       },
     });
     expect(clearSpecificErrorMessagesMock).toHaveBeenCalled();
@@ -91,6 +96,123 @@ describe("updateAiSettingsAction", () => {
 
     expect(result?.serverError).toBe(
       "AI model settings are managed by the deployment.",
+    );
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("saves a connected subscription as the main provider without an API key", async () => {
+    mockConnectedLogins([Provider.CLAUDE_CODE]);
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CLAUDE_CODE,
+      aiModel: "opus",
+      aiApiKey: "ignored-key",
+    });
+
+    expect(result?.serverError).toBeUndefined();
+    expect(prisma.aiSubscriptionLogin.findMany).toHaveBeenCalledWith({
+      where: { userId: "user-1", status: "connected" },
+      select: { provider: true },
+    });
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: {
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "opus",
+        aiApiKey: null,
+        aiTaskModels: Prisma.DbNull,
+      },
+    });
+  });
+
+  it("rejects a subscription provider that isn't connected", async () => {
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+    });
+
+    expect(result?.serverError).toBe("Connect this account before using it.");
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a subscription model from another provider's list", async () => {
+    mockConnectedLogins([Provider.CLAUDE_CODE, Provider.CODEX_CLI]);
+
+    const mainResult = await updateAiSettingsAction({
+      aiProvider: Provider.CLAUDE_CODE,
+      aiModel: "gpt-6.1-sol",
+    });
+    const taskResult = await updateAiSettingsAction({
+      aiProvider: Provider.CLAUDE_CODE,
+      aiModel: "sonnet",
+      aiTaskModels: {
+        economy: { provider: Provider.CODEX_CLI, model: "opus" },
+      },
+    });
+
+    expect(mainResult?.validationErrors).toBeDefined();
+    expect(taskResult?.validationErrors).toBeDefined();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("saves per-task entries on the main API key provider and a connected subscription", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+    const aiTaskModels = {
+      chat: { provider: Provider.OPEN_AI, model: "gpt-5.1-mini" },
+      economy: { provider: Provider.CODEX_CLI, model: "gpt-6-luna" },
+    };
+
+    await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-5.1",
+      aiTaskModels,
+    });
+
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: {
+        aiProvider: Provider.OPEN_AI,
+        aiModel: "gpt-5.1",
+        aiApiKey: "stored-api-key",
+        aiTaskModels,
+      },
+    });
+  });
+
+  it("rejects a per-task provider that is neither the main provider nor connected", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+
+    const notMain = await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-5.1",
+      aiTaskModels: {
+        draft: { provider: Provider.ANTHROPIC, model: "claude-sonnet-4-5" },
+      },
+    });
+    const notConnected = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+      aiTaskModels: { chat: { provider: Provider.CLAUDE_CODE, model: "opus" } },
+    });
+
+    const message =
+      "Each task can only use your main provider or an AI subscription you've connected.";
+    expect(notMain?.serverError).toBe(message);
+    expect(notConnected?.serverError).toBe(message);
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects subscription providers when the server has them turned off", async () => {
+    mockEnv.CLI_LLM_ENABLED = false;
+    mockConnectedLogins([Provider.CLAUDE_CODE]);
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CLAUDE_CODE,
+      aiModel: "sonnet",
+    });
+
+    expect(result?.serverError).toBe(
+      "AI subscriptions aren't enabled on this server.",
     );
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
@@ -133,3 +255,11 @@ describe("updateSensitiveDataPolicyAction", () => {
     expect(prisma.emailAccount.update).not.toHaveBeenCalled();
   });
 });
+
+function mockConnectedLogins(providers: string[]) {
+  prisma.aiSubscriptionLogin.findMany.mockResolvedValue(
+    providers.map((provider) => ({ provider })) as Awaited<
+      ReturnType<typeof prisma.aiSubscriptionLogin.findMany>
+    >,
+  );
+}

@@ -1111,6 +1111,42 @@ describe("runActionFunction", () => {
       );
     });
 
+    it("works out a preset Trello due date in the account's time zone", async () => {
+      vi.useFakeTimers();
+      // 20:00 on Oct 24 in Los Angeles, already Oct 25 in UTC.
+      vi.setSystemTime(new Date("2026-10-25T03:00:00.000Z"));
+      try {
+        await runActionFunction({
+          client: createMockEmailProvider(),
+          email,
+          action: {
+            id: "action-1",
+            type: ActionType.INTEGRATION,
+            integrationName: "trello",
+            integrationToolName: "create-card",
+            integrationArgs: {
+              boardId: "board-1",
+              listId: "list-1",
+              name: "Pay invoice",
+              due: "today",
+              attachLink: "no",
+            },
+          },
+          emailAccount: { ...emailAccount, timezone: "America/Los_Angeles" },
+          executedRule: { id: "executed-rule-1", ruleId: "rule-1" } as never,
+          logger,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(runIntegrationAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({ due: "2026-10-24T19:00:00.000Z" }),
+        }),
+      );
+    });
+
     it("skips when integration actions are disabled", async () => {
       mockIsIntegrationActionEnabledForUserId.mockResolvedValue(false);
 

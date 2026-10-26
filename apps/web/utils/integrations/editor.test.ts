@@ -21,8 +21,17 @@ function findArg(spec: IntegrationToolSpec, key: string): IntegrationArgSpec {
 }
 
 describe("getIntegrationToolChoices", () => {
-  it("returns one choice for one spec", () => {
-    expect(getIntegrationToolChoices([fixtureCreateItemSpec])).toEqual([
+  const connected = { isActive: true };
+
+  it("offers a tool only once its app is connected", () => {
+    expect(
+      getIntegrationToolChoices({
+        integrations: [
+          { name: "fixture", displayName: "Fixture", connection: connected },
+        ],
+        specs: [fixtureCreateItemSpec],
+      }),
+    ).toEqual([
       {
         integration: "fixture",
         tool: "create-item",
@@ -31,32 +40,60 @@ describe("getIntegrationToolChoices", () => {
     ]);
   });
 
-  it("returns one choice per spec", () => {
-    const choices = getIntegrationToolChoices([
-      fixtureCreateItemSpec,
-      fixtureMcpCreateItemSpec,
-    ]);
+  it("shows an available but unconnected app as disabled", () => {
+    const choices = getIntegrationToolChoices({
+      integrations: [
+        { name: "fixture", displayName: "Fixture", connection: null },
+        {
+          name: "fixture-mcp",
+          displayName: "Fixture MCP",
+          connection: { isActive: false },
+        },
+      ],
+      specs: [fixtureCreateItemSpec, fixtureMcpCreateItemSpec],
+    });
 
     expect(choices).toEqual([
-      {
+      expect.objectContaining({
         integration: "fixture",
-        tool: "create-item",
-        label: "Create fixture item",
-      },
-      {
+        disabledReason: "Connect Fixture first",
+      }),
+      expect.objectContaining({
         integration: "fixture-mcp",
-        tool: "create-item",
-        label: "Create fixture MCP item",
-      },
+        disabledReason: "Connect Fixture MCP first",
+      }),
     ]);
+  });
+
+  it("hides tools of apps that are not available", () => {
+    expect(
+      getIntegrationToolChoices({
+        integrations: [
+          {
+            name: "fixture-mcp",
+            displayName: "Fixture MCP",
+            connection: connected,
+          },
+        ],
+        specs: [fixtureCreateItemSpec, fixtureMcpCreateItemSpec],
+      }),
+    ).toEqual([expect.objectContaining({ integration: "fixture-mcp" })]);
   });
 
   it("defaults to the production specs", () => {
-    expect(getIntegrationToolChoices()).toContainEqual({
-      integration: "todoist",
-      tool: "add-tasks",
-      label: todoistSpec.actionLabel,
-    });
+    expect(
+      getIntegrationToolChoices({
+        integrations: [
+          { name: "todoist", displayName: "Todoist", connection: connected },
+        ],
+      }),
+    ).toEqual([
+      {
+        integration: "todoist",
+        tool: "add-tasks",
+        label: todoistSpec.actionLabel,
+      },
+    ]);
   });
 });
 
