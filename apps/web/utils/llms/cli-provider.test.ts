@@ -809,6 +809,98 @@ describe("createCliLanguageModel", () => {
     await expect(access(cwd)).rejects.toThrow();
   });
 
+  it("stops a Codex stream as soon as Codex runs one of its own tools", async () => {
+    let cliSignal: AbortSignal | undefined;
+    const doStream = vi.fn(async (options: { abortSignal: AbortSignal }) => {
+      cliSignal = options.abortSignal;
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "text-delta", id: "t1", delta: "hi" });
+            controller.enqueue({
+              type: "tool-call",
+              toolCallId: "item-1",
+              toolName: "exec",
+              input: '{"command":"cat fake-secret-file"}',
+              providerExecuted: true,
+              dynamic: true,
+            });
+            // Like the provider: the stream errors when the killed CLI exits.
+            options.abortSignal.addEventListener("abort", () =>
+              controller.error(new Error("Codex CLI exited")),
+            );
+          },
+        }),
+      };
+    });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+
+    const { createCliLanguageModel, CODEX_TOOL_BLOCKED_MESSAGE } =
+      await loadCliProviderModule({
+        codexModule: { codexExec, isAuthenticationError: () => false },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+    }) as any;
+
+    const { stream } = await model.doStream({});
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toEqual({
+      done: false,
+      value: { type: "text-delta", id: "t1", delta: "hi" },
+    });
+    await expect(reader.read()).rejects.toThrow(CODEX_TOOL_BLOCKED_MESSAGE);
+
+    expect(cliSignal?.aborted).toBe(true);
+    const cwd = getSettings(codexExec).cwd as string;
+    await expect(access(cwd)).rejects.toThrow();
+  });
+
+  it("blocks Codex calls to MCP servers that aren't allowed, and leaves other tool calls alone", async () => {
+    const mcpCall = {
+      type: "tool-call",
+      toolCallId: "item-1",
+      toolName: "read_file",
+      input: '{"server":"filesystem","tool":"read_file"}',
+      providerExecuted: true,
+      dynamic: true,
+    };
+    const appToolCall = {
+      type: "tool-call",
+      toolCallId: "call-1",
+      toolName: "archive",
+      input: "{}",
+    };
+    const doGenerate = vi
+      .fn()
+      .mockResolvedValueOnce({ content: [appToolCall] })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "fake secret" }, mcpCall],
+      });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+
+    const {
+      createCliLanguageModel,
+      CODEX_ALLOWED_MCP_SERVERS,
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+    }) as any;
+
+    expect(CODEX_ALLOWED_MCP_SERVERS).not.toContain("filesystem");
+    await expect(model.doGenerate({})).resolves.toEqual({
+      content: [appToolCall],
+    });
+    await expect(model.doGenerate({})).rejects.toThrow(
+      CODEX_TOOL_BLOCKED_MESSAGE,
+    );
+  });
+
   it("runs one Codex call at a time per user", async () => {
     let resolveFirst: (value: unknown) => void = () => {};
     const doGenerate = vi

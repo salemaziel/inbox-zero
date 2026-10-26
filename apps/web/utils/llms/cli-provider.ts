@@ -104,6 +104,12 @@ export const CONNECT_SUBSCRIPTION_MESSAGE =
   "Connect your ChatGPT or Claude account in Settings to use the AI assistant.";
 export const RECONNECT_SUBSCRIPTION_MESSAGE =
   "Your connected ChatGPT or Claude account was signed out. Reconnect it in Settings to use the AI assistant.";
+export const CODEX_TOOL_BLOCKED_MESSAGE =
+  "The AI model tried to run a command, so the request was stopped.";
+
+// MCP servers whose tools a Codex run may call. Codex runs get no Inbox Zero
+// tools yet, so this is empty and every tool Codex runs stops the run.
+export const CODEX_ALLOWED_MCP_SERVERS: readonly string[] = [];
 
 // Concurrent Codex runs for one user would race on its rotating refresh token.
 // Kept on globalThis because route handlers and server actions can load
@@ -457,6 +463,10 @@ function createCliRunModel({
         options: { ...(options as object), abortSignal },
         // Settles once the CLI process has exited.
         exited: Promise.resolve() as Promise<unknown>,
+        // Codex's own tools are turned off in its config; if it runs one
+        // anyway, the run is stopped.
+        findBlockedTool:
+          provider === Provider.CODEX_CLI ? findBlockedCodexTool : () => null,
         end,
         // The login folder and run slot are only freed once the CLI has
         // exited, or after a bounded wait if it ignores the abort.
@@ -507,7 +517,13 @@ function createCliRunModel({
           doGenerate(call.options, ...args.slice(1)),
         );
         call.exited = pending.catch(() => undefined);
-        return await pending;
+        const result = await pending;
+        // The run has already finished here, so its output is dropped.
+        const blockedTool = ((result as { content?: unknown[] }).content ?? [])
+          .map(call.findBlockedTool)
+          .find(Boolean);
+        if (blockedTool) throw blockedToolError(provider, blockedTool);
+        return result;
       } catch (error) {
         return await call.handleError(error);
       } finally {
@@ -548,6 +564,14 @@ function createCliRunModel({
           if (next.done) {
             await call.end();
             controller.close();
+            return;
+          }
+          const blockedTool = call.findBlockedTool(next.value);
+          if (blockedTool) {
+            const error = blockedToolError(provider, blockedTool);
+            await call.stop(error);
+            await reader.cancel(error).catch(() => undefined);
+            controller.error(error);
             return;
           }
           const part = next.value as { type?: string; error?: unknown };
@@ -714,6 +738,45 @@ async function markNeedsReconnect(login: UserCliLogin) {
       lastError: "The sign-in was rejected or has expired.",
     },
   });
+}
+
+// Codex reports each tool it runs itself (shell, file patch, web search, MCP)
+// as a provider-executed tool call. Only calls to an allowed MCP server pass;
+// returns the name of any other tool.
+function findBlockedCodexTool(part: unknown): string | null {
+  if (!part || typeof part !== "object") return null;
+  const { type, providerExecuted, toolName, input } = part as {
+    type?: unknown;
+    providerExecuted?: unknown;
+    toolName?: unknown;
+    input?: unknown;
+  };
+  if (type !== "tool-call" || providerExecuted !== true) return null;
+  const server = getMcpServerName(input);
+  if (server && CODEX_ALLOWED_MCP_SERVERS.includes(server)) return null;
+  return typeof toolName === "string" && toolName ? toolName : "unknown";
+}
+
+function getMcpServerName(input: unknown): string | null {
+  let parsed: unknown = input;
+  if (typeof input === "string") {
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      return null;
+    }
+  }
+  const server = (parsed as { server?: unknown } | null)?.server;
+  return typeof server === "string" ? server : null;
+}
+
+// Only the tool name is logged: its input and output may hold email content.
+function blockedToolError(provider: CliProvider, toolName: string) {
+  logger.warn("Stopped a CLI run that used one of its own tools", {
+    provider,
+    toolName,
+  });
+  return new SafeError(CODEX_TOOL_BLOCKED_MESSAGE);
 }
 
 function isUsableLogin<T extends { status: string; credential: string | null }>(
