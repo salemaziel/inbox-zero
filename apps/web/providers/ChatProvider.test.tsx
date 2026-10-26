@@ -437,10 +437,10 @@ describe("ChatProvider", () => {
     });
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalledWith({
-        description: "Connect your account first.",
-      });
+      expect(latestContext?.requestError).toBe("Connect your account first.");
     });
+    expect(mockToastError).not.toHaveBeenCalled();
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
   it("rejects oversized drafts before sending and keeps their content", async () => {
