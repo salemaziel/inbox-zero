@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import prisma from "@/utils/__mocks__/prisma";
 import { Provider } from "@/utils/llms/config";
+import { assertTrialAiUsageAllowed } from "@/utils/llms/model-usage-guard";
 import { LlmUseCase } from "@/utils/llms/use-cases";
 import { toolCallAgentStream } from "./index";
 
@@ -154,6 +155,59 @@ describe("toolCallAgentStream with a user's Claude subscription", () => {
         },
       }),
     );
+  });
+});
+
+describe("toolCallAgentStream spend guards for an owner's subscription", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("counts an owner's run as their own only when their own login is connected", async () => {
+    for (const [status, hasUserApiKey] of [
+      ["connected", true],
+      ["needs-reconnect", false],
+    ] as const) {
+      vi.mocked(assertTrialAiUsageAllowed).mockClear();
+      prisma.aiSubscriptionLogin.findUnique.mockResolvedValue({
+        status,
+        credential: "fake-user-oauth-token",
+      } as any);
+      mockGetModelForUseCase.mockReturnValue({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "sonnet",
+        model: createTextModel(),
+        cliLogin: { userId: "user-1", allowServerLogin: true },
+        fallbackModels: [],
+        hasUserApiKey: false,
+      });
+
+      const result = await toolCallAgentStream({
+        userAi: {
+          id: "user-1",
+          email: "owner@test.com",
+          emailVerified: true,
+          aiProvider: Provider.CLAUDE_CODE,
+          aiModel: null,
+          aiApiKey: null,
+          aiTaskModels: null,
+        },
+        userEmail: "owner@test.com",
+        emailAccountId: "email-account-id",
+        useCase: LlmUseCase.AssistantChat,
+        usageLabel: "test",
+        promptHardening: { trust: "untrusted", level: "full" },
+        messages: [{ role: "user", content: "Hi" }],
+        tools: {},
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        // drain
+      }
+
+      expect(assertTrialAiUsageAllowed).toHaveBeenCalledWith(
+        expect.objectContaining({ hasUserApiKey }),
+      );
+    }
   });
 });
 

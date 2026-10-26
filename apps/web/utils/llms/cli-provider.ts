@@ -648,6 +648,19 @@ async function saveRefreshedCodexLogin(codexHome: string, login: UserCliLogin) {
   });
 }
 
+// Whether a run for this user would use their own login rather than the
+// server's.
+export async function hasConnectedCliLogin(
+  userId: string,
+  provider: CliProvider,
+): Promise<boolean> {
+  const login = await prisma.aiSubscriptionLogin.findUnique({
+    where: { userId_provider: { userId, provider } },
+    select: { status: true, credential: true },
+  });
+  return isUsableLogin(login);
+}
+
 // Returns null when the CLI should run with the server's own login.
 async function resolveUserCliLogin(
   provider: CliProvider,
@@ -661,7 +674,7 @@ async function resolveUserCliLogin(
     select: { status: true, credential: true, connectedAt: true },
   });
 
-  if (login?.status === "connected" && login.credential) {
+  if (isUsableLogin(login)) {
     logger.info("Using user CLI subscription login", {
       provider,
       userLogin: true,
@@ -695,6 +708,12 @@ async function markNeedsReconnect(login: UserCliLogin) {
       lastError: "The sign-in was rejected or has expired.",
     },
   });
+}
+
+function isUsableLogin<T extends { status: string; credential: string | null }>(
+  login: T | null,
+): login is T & { credential: string } {
+  return login?.status === "connected" && !!login.credential;
 }
 
 function sleep(ms: number) {

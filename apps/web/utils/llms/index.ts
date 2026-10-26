@@ -67,6 +67,7 @@ import { Provider } from "@/utils/llms/config";
 import {
   type CliLoginScope,
   createClaudeCodeLanguageModelWithBridgedTools,
+  hasConnectedCliLogin,
 } from "@/utils/llms/cli-provider";
 import {
   appendOllamaOnlySystemGuidance,
@@ -1399,16 +1400,28 @@ async function resolveModelCandidates({
   modelOptions: SelectModel;
   modelCandidates: ResolvedModel[];
 }> {
+  // getModel can't tell whether an owner's subscription will run on their own
+  // connected login or the server's, so spend guards check it here.
+  const ownModelOptions =
+    !modelOptions.hasUserApiKey &&
+    modelOptions.cliLogin?.allowServerLogin &&
+    (await hasConnectedCliLogin(
+      modelOptions.cliLogin.userId,
+      modelOptions.provider,
+    ))
+      ? { ...modelOptions, hasUserApiKey: true }
+      : modelOptions;
+
   await assertTrialAiUsageAllowed({
     userEmail,
-    hasUserApiKey: modelOptions.hasUserApiKey,
+    hasUserApiKey: ownModelOptions.hasUserApiKey,
     label,
     userId,
     emailAccountId,
   });
 
   const effectiveModelOptions = await getCostControlledModelOptions({
-    modelOptions,
+    modelOptions: ownModelOptions,
     userEmail,
     userId,
     emailAccountId,
