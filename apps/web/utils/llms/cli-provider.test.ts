@@ -516,7 +516,12 @@ describe("createCliLanguageModel", () => {
       RECONNECT_SUBSCRIPTION_MESSAGE,
     );
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
-      where: { userId: "user1", provider: Provider.CODEX_CLI },
+      where: {
+        userId: "user1",
+        provider: Provider.CODEX_CLI,
+        status: "connected",
+        connectedAt,
+      },
       data: expect.objectContaining({ status: "needs-reconnect" }),
     });
   });
@@ -554,7 +559,12 @@ describe("createCliLanguageModel", () => {
       RECONNECT_SUBSCRIPTION_MESSAGE,
     );
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
-      where: { userId: "user1", provider: Provider.CLAUDE_CODE },
+      where: {
+        userId: "user1",
+        provider: Provider.CLAUDE_CODE,
+        status: "connected",
+        connectedAt,
+      },
       data: expect.objectContaining({ status: "needs-reconnect" }),
     });
   });
@@ -592,7 +602,12 @@ describe("createCliLanguageModel", () => {
     await expect(readAll(first.stream)).rejects.toBe(exitError);
 
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
-      where: { userId: "user1", provider: Provider.CODEX_CLI },
+      where: {
+        userId: "user1",
+        provider: Provider.CODEX_CLI,
+        status: "connected",
+        connectedAt,
+      },
       data: expect.objectContaining({ status: "needs-reconnect" }),
     });
     const second = await model.doStream("second");

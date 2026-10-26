@@ -638,9 +638,15 @@ async function resolveUserCliLogin(
   );
 }
 
+// Only the sign-in this run used: a newer sign-in in the meantime is kept.
 async function markNeedsReconnect(login: UserCliLogin) {
   await prisma.aiSubscriptionLogin.updateMany({
-    where: { userId: login.userId, provider: login.provider },
+    where: {
+      userId: login.userId,
+      provider: login.provider,
+      status: "connected",
+      connectedAt: login.connectedAt,
+    },
     data: {
       status: "needs-reconnect",
       lastError: "The sign-in was rejected or has expired.",
