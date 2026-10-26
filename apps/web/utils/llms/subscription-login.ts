@@ -44,6 +44,7 @@ type LoginSession = {
   child?: ChildProcessWithoutNullStreams;
   tempDir?: string;
   timer?: NodeJS.Timeout;
+  saving?: Promise<void>;
 };
 
 export type SubscriptionLoginView = {
@@ -185,6 +186,8 @@ export async function cancelSubscriptionLogin({
   const session = sessions.get(key);
   if (!session) return;
   if (isActive(session)) await finish(session, "cancelled");
+  // A save already in flight must land before a disconnect deletes the row.
+  await session.saving?.catch(() => undefined);
   sessions.delete(key);
 }
 
@@ -305,7 +308,11 @@ function isActive(session: LoginSession) {
 
 function expireIfDue(session: LoginSession) {
   if (isActive(session) && Date.now() >= session.expiresAt) {
-    finish(session, "expired", "Sign-in timed out. Start again.");
+    finish(session, "expired", "Sign-in timed out. Start again.").catch(() => {
+      logger.warn("Could not clean up an expired CLI sign-in", {
+        provider: session.provider,
+      });
+    });
   }
 }
 
@@ -431,8 +438,7 @@ async function completeLogin(session: LoginSession, exitCode: number | null) {
       logger.warn("Claude sign-in did not produce a token", { exitCode });
       return finish(session, "failed", failMessage);
     }
-    await saveLogin(session, token);
-    return finish(session, "connected");
+    return saveAndConnect(session, token);
   }
 
   const authJson = session.tempDir
@@ -444,17 +450,41 @@ async function completeLogin(session: LoginSession, exitCode: number | null) {
     logger.warn("Codex sign-in did not finish", { exitCode });
     return finish(session, "failed", failMessage);
   }
-  await saveLogin(session, authJson);
-  return finish(session, "connected");
+  return saveAndConnect(session, authJson);
 }
 
-async function saveLogin(session: LoginSession, credential: string) {
+async function saveAndConnect(session: LoginSession, credential: string) {
+  if (!isActive(session)) return;
+
+  const { userId, provider } = session;
+  const connectedAt = new Date();
+  session.saving = saveLogin(session, credential, connectedAt);
+  try {
+    await session.saving;
+  } finally {
+    session.saving = undefined;
+  }
+
+  if (isActive(session)) return finish(session, "connected");
+
+  // Cancelled, disconnected or expired while saving: don't leave the login
+  // behind.
+  await prisma.aiSubscriptionLogin.deleteMany({
+    where: { userId, provider, connectedAt },
+  });
+}
+
+async function saveLogin(
+  session: LoginSession,
+  credential: string,
+  connectedAt: Date,
+) {
   const { userId, provider } = session;
   const data = {
     credential,
     status: "connected",
     lastError: null,
-    connectedAt: new Date(),
+    connectedAt,
   };
   await prisma.aiSubscriptionLogin.upsert({
     where: { userId_provider: { userId, provider } },

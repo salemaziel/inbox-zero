@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
 import { Provider } from "./config";
 import {
+  disconnectSubscriptionLogin,
   getSubscriptionLogin,
   parseClaudeLoginUrl,
   parseClaudeSetupToken,
@@ -273,6 +274,53 @@ describe("subscription login sessions", () => {
         }),
       }),
     );
+  });
+
+  it("does not bring back a login disconnected while its save was in flight", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const child = mockSpawnedChild();
+    let finishUpsert: (value: unknown) => void = () => {};
+    let saved = false;
+    prisma.aiSubscriptionLogin.upsert.mockReturnValue(
+      new Promise((resolve) => {
+        finishUpsert = resolve;
+      }).then(() => {
+        saved = true;
+      }) as never,
+    );
+    const deletedAfterSave: boolean[] = [];
+    prisma.aiSubscriptionLogin.deleteMany.mockImplementation((async () => {
+      deletedAfterSave.push(saved);
+      return { count: 1 };
+    }) as never);
+
+    await startSubscriptionLogin({
+      userId: "user1",
+      provider: Provider.CLAUDE_CODE,
+    });
+    child.stdout.emit("data", Buffer.from(CLAUDE_PROMPT_OUTPUT));
+    submitSubscriptionLoginCode({ userId: "user1", code: "fake-code#state" });
+    vi.advanceTimersByTime(200);
+    child.stdout.emit("data", Buffer.from(CLAUDE_SUCCESS_OUTPUT));
+    child.emit("close", 0);
+    await vi.waitFor(() =>
+      expect(prisma.aiSubscriptionLogin.upsert).toHaveBeenCalled(),
+    );
+
+    vi.useRealTimers();
+    const disconnected = disconnectSubscriptionLogin({
+      userId: "user1",
+      provider: Provider.CLAUDE_CODE,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    finishUpsert({});
+    await disconnected;
+
+    expect(deletedAfterSave.length).toBeGreaterThan(0);
+    expect(deletedAfterSave.at(-1)).toBe(true);
+    expect(
+      getSubscriptionLogin({ userId: "user1", provider: Provider.CLAUDE_CODE }),
+    ).toBeNull();
   });
 
   it("saves Codex's auth.json to the database only when the CLI exits cleanly and wrote it", async () => {
