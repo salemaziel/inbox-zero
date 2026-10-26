@@ -6,6 +6,13 @@ import { useAction } from "next-safe-action/hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { LoadingContent } from "@/components/LoadingContent";
 import { toastError, toastSuccess } from "@/components/Toast";
 import type { GetAiSubscriptionResponse } from "@/app/api/user/ai-subscription/route";
@@ -16,7 +23,11 @@ import {
   startAiSubscriptionLoginAction,
   submitAiSubscriptionLoginCodeAction,
 } from "@/utils/actions/ai-subscription";
-import { Provider } from "@/utils/llms/config";
+import {
+  getSubscriptionModelLabel,
+  Provider,
+  SUBSCRIPTION_MODELS,
+} from "@/utils/llms/config";
 import { getActionErrorMessage } from "@/utils/error";
 
 type SubscriptionEntry = GetAiSubscriptionResponse["providers"][number];
@@ -66,6 +77,7 @@ export function SubscriptionLoginSection({
               key={entry.provider}
               entry={entry}
               isActiveProvider={data.activeProvider === entry.provider}
+              activeModel={data.activeModel}
               refetch={() => {
                 mutate();
                 refetchUser();
@@ -81,15 +93,24 @@ export function SubscriptionLoginSection({
 function SubscriptionLoginCard({
   entry,
   isActiveProvider,
+  activeModel,
   refetch,
 }: {
   entry: SubscriptionEntry;
   isActiveProvider: boolean;
+  activeModel: string | null;
   refetch: () => void;
 }) {
   const { provider, login, session } = entry;
   const labels = PROVIDER_LABELS[provider];
   const [code, setCode] = useState("");
+  const [pickedModel, setPickedModel] = useState<string | null>(null);
+  const modelConfig = SUBSCRIPTION_MODELS[provider];
+  const savedModel = isActiveProvider ? activeModel : null;
+  const selectedModel =
+    [pickedModel, savedModel].find((value) =>
+      modelConfig.models.some((model) => model.value === value),
+    ) ?? modelConfig.defaultModel;
 
   const onError = ({
     error,
@@ -127,6 +148,14 @@ function SubscriptionLoginCard({
       toastSuccess({
         description: `The assistant now uses your ${labels.account} subscription.`,
       });
+      refetch();
+    },
+    onError,
+  });
+
+  const changeModel = useAction(selectAiSubscriptionAction, {
+    onSuccess: () => {
+      toastSuccess({ description: "Model updated." });
       refetch();
     },
     onError,
@@ -173,7 +202,7 @@ function SubscriptionLoginCard({
             <Button
               size="sm"
               loading={select.isExecuting}
-              onClick={() => select.execute({ provider })}
+              onClick={() => select.execute({ provider, model: selectedModel })}
             >
               Use this
             </Button>
@@ -190,6 +219,35 @@ function SubscriptionLoginCard({
           )}
         </div>
       </div>
+
+      {isConnected && (
+        <div className="space-y-1">
+          <Select
+            value={selectedModel}
+            disabled={changeModel.isExecuting}
+            onValueChange={(model) => {
+              setPickedModel(model);
+              if (isActiveProvider) changeModel.execute({ provider, model });
+            }}
+          >
+            <SelectTrigger className="h-8 w-48" aria-label="Model">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {modelConfig.models.map((model) => (
+                <SelectItem key={model.value} value={model.value}>
+                  {model.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Background tasks like sorting use{" "}
+            {getSubscriptionModelLabel(provider, modelConfig.fastModel)} to save
+            your plan's limits.
+          </p>
+        </div>
+      )}
 
       {sessionActive && (
         <div className="space-y-2 text-sm">

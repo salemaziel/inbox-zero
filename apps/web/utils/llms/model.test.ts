@@ -1518,6 +1518,41 @@ describe("Models", () => {
       expect(result.hasUserApiKey).toBe(true);
     });
 
+    it("uses the chosen model for main work and the fast model for background work", () => {
+      const scope = { userId: "user-1", allowServerLogin: false };
+
+      for (const modelType of ["default", "chat", "draft"] as const) {
+        const result = getModel(
+          defaultUserAi({ aiProvider: Provider.CLAUDE_CODE, aiModel: "opus" }),
+          modelType,
+        );
+        expect(result.modelName).toBe("opus");
+        expect(result.cliLogin).toEqual(scope);
+      }
+
+      for (const modelType of ["economy", "nano"] as const) {
+        const result = getModel(
+          defaultUserAi({ aiProvider: Provider.CLAUDE_CODE, aiModel: "opus" }),
+          modelType,
+        );
+        expect(result.modelName).toBe("haiku");
+        expect(result.cliLogin).toEqual(scope);
+      }
+
+      const codexEconomy = getModel(
+        defaultUserAi({ aiProvider: Provider.CODEX_CLI, aiModel: null }),
+        "economy",
+      );
+      expect(codexEconomy.modelName).toBe("gpt-6-luna");
+      expect(codexEconomy.cliLogin).toEqual(scope);
+
+      const codexDefault = getModel(
+        defaultUserAi({ aiProvider: Provider.CODEX_CLI }),
+      );
+      expect(codexDefault.modelName).toBe("gpt-6.1-sol");
+      expect(codexDefault.cliLogin).toEqual(scope);
+    });
+
     it("lets an owner's chosen subscription provider fall back to the server login", () => {
       const result = getModel(
         defaultUserAi({

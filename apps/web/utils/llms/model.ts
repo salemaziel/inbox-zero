@@ -13,7 +13,7 @@ import { createOllama } from "ollama-ai-provider-v2";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
-import { Provider } from "@/utils/llms/config";
+import { Provider, SUBSCRIPTION_MODELS } from "@/utils/llms/config";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
@@ -320,7 +320,8 @@ function selectModel(
       };
     }
     case Provider.CODEX_CLI: {
-      const modelName = aiModel || "gpt-5.3-codex";
+      const modelName =
+        aiModel || SUBSCRIPTION_MODELS[Provider.CODEX_CLI].defaultModel;
       return {
         provider: Provider.CODEX_CLI,
         modelName,
@@ -333,7 +334,8 @@ function selectModel(
       };
     }
     case Provider.CLAUDE_CODE: {
-      const modelName = aiModel || "sonnet";
+      const modelName =
+        aiModel || SUBSCRIPTION_MODELS[Provider.CLAUDE_CODE].defaultModel;
       return {
         provider: Provider.CLAUDE_CODE,
         modelName,
@@ -448,7 +450,7 @@ function selectUserModel(
   const configuredDefault = getFirstSupportedModelListEntry("default");
   const aiProvider = userAi.aiProvider || configuredDefault?.provider;
   const aiModel = userAi.aiProvider
-    ? userAi.aiModel || null
+    ? getUserModelName(userAi.aiProvider, userAi.aiModel, modelType)
     : configuredDefault?.modelName || null;
 
   if (!aiProvider) {
@@ -465,6 +467,20 @@ function selectUserModel(
     modelType,
     getOpenRouterProviderOptions(modelType, aiProvider),
   );
+}
+
+// Background jobs on a user's own subscription use the provider's fast model so
+// they don't burn through the plan's limits.
+function getUserModelName(
+  aiProvider: string,
+  aiModel: string | null,
+  modelType: ModelType,
+) {
+  if (aiProvider !== Provider.CLAUDE_CODE && aiProvider !== Provider.CODEX_CLI)
+    return aiModel || null;
+  if (modelType === "economy" || modelType === "nano")
+    return SUBSCRIPTION_MODELS[aiProvider].fastModel;
+  return aiModel || null;
 }
 
 function resolveRoleModelList(

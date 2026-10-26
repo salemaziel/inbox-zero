@@ -29,3 +29,38 @@ export const providerOptions: { label: string; value: string }[] = [
   { label: "OpenRouter", value: Provider.OPENROUTER },
   { label: "Vercel AI Gateway", value: Provider.AI_GATEWAY },
 ];
+
+export const SUBSCRIPTION_MODELS = {
+  [Provider.CLAUDE_CODE]: {
+    models: [
+      { value: "sonnet", label: "Sonnet" },
+      { value: "opus", label: "Opus" },
+      { value: "haiku", label: "Haiku" },
+    ],
+    defaultModel: "sonnet",
+    fastModel: "haiku",
+  },
+  [Provider.CODEX_CLI]: {
+    models: [
+      { value: "gpt-6.1-sol", label: "GPT-6.1-Sol" },
+      { value: "gpt-6-astra", label: "GPT-6-Astra" },
+      { value: "gpt-6-luna", label: "GPT-6-Luna" },
+    ],
+    defaultModel: "gpt-6.1-sol",
+    fastModel: "gpt-6-luna",
+  },
+} as const satisfies Record<
+  string,
+  {
+    models: readonly { value: string; label: string }[];
+    defaultModel: string;
+    fastModel: string;
+  }
+>;
+
+export function getSubscriptionModelLabel(provider: string, model: string) {
+  return (
+    SUBSCRIPTION_MODELS[provider].models.find((m) => m.value === model)
+      ?.label ?? model
+  );
+}

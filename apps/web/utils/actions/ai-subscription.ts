@@ -4,6 +4,7 @@ import { env } from "@/env";
 import { actionClientUser } from "@/utils/actions/safe-action";
 import {
   aiSubscriptionProviderBody,
+  selectAiSubscriptionBody,
   submitAiSubscriptionCodeBody,
 } from "@/utils/actions/ai-subscription.validation";
 import { SafeError } from "@/utils/error";
@@ -51,8 +52,8 @@ export const disconnectAiSubscriptionAction = actionClientUser
 
 export const selectAiSubscriptionAction = actionClientUser
   .metadata({ name: "selectAiSubscription" })
-  .inputSchema(aiSubscriptionProviderBody)
-  .action(async ({ ctx: { userId }, parsedInput: { provider } }) => {
+  .inputSchema(selectAiSubscriptionBody)
+  .action(async ({ ctx: { userId }, parsedInput: { provider, model } }) => {
     assertModelSettingsEnabled();
 
     const login = await prisma.aiSubscriptionLogin.findUnique({
@@ -63,10 +64,10 @@ export const selectAiSubscriptionAction = actionClientUser
       throw new SafeError("Connect this account before using it.");
     }
 
-    // A null model uses the provider's default from utils/llms/model.ts.
+    // A null model uses the provider's default from utils/llms/config.ts.
     await prisma.user.update({
       where: { id: userId },
-      data: { aiProvider: provider, aiModel: null, aiApiKey: null },
+      data: { aiProvider: provider, aiModel: model ?? null, aiApiKey: null },
     });
   });
 
