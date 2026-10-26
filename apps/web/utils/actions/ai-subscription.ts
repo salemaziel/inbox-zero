@@ -18,14 +18,16 @@ import prisma from "@/utils/prisma";
 export const startAiSubscriptionLoginAction = actionClientUser
   .metadata({ name: "startAiSubscriptionLogin" })
   .inputSchema(aiSubscriptionProviderBody)
-  .action(async ({ ctx: { userId }, parsedInput: { provider } }) =>
-    startSubscriptionLogin({ userId, provider }),
-  );
+  .action(async ({ ctx: { userId }, parsedInput: { provider } }) => {
+    assertModelSettingsEnabled();
+    return startSubscriptionLogin({ userId, provider });
+  });
 
 export const submitAiSubscriptionLoginCodeAction = actionClientUser
   .metadata({ name: "submitAiSubscriptionLoginCode" })
   .inputSchema(submitAiSubscriptionCodeBody)
   .action(async ({ ctx: { userId }, parsedInput: { code } }) => {
+    assertModelSettingsEnabled();
     submitSubscriptionLoginCode({ userId, code });
   });
 
@@ -51,9 +53,7 @@ export const selectAiSubscriptionAction = actionClientUser
   .metadata({ name: "selectAiSubscription" })
   .inputSchema(aiSubscriptionProviderBody)
   .action(async ({ ctx: { userId }, parsedInput: { provider } }) => {
-    if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
-      throw new SafeError("AI model settings are managed by the deployment.");
-    }
+    assertModelSettingsEnabled();
 
     const login = await prisma.aiSubscriptionLogin.findUnique({
       where: { userId_provider: { userId, provider } },
@@ -69,3 +69,9 @@ export const selectAiSubscriptionAction = actionClientUser
       data: { aiProvider: provider, aiModel: null, aiApiKey: null },
     });
   });
+
+function assertModelSettingsEnabled() {
+  if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
+    throw new SafeError("AI model settings are managed by the deployment.");
+  }
+}

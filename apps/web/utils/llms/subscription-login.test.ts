@@ -10,6 +10,8 @@ import {
   parseClaudeSetupToken,
   parseCodexDeviceLogin,
   startSubscriptionLogin,
+  MAX_ACTIVE_SUBSCRIPTION_LOGINS,
+  SUBSCRIPTION_LOGIN_START_COOLDOWN_MS,
   SUBSCRIPTION_LOGIN_TTL_MS,
   submitSubscriptionLoginCode,
 } from "./subscription-login";
@@ -103,9 +105,12 @@ describe("parseCodexDeviceLogin", () => {
 describe("subscription login sessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (
-      globalThis as { inboxZeroSubscriptionLogins?: Map<string, unknown> }
-    ).inboxZeroSubscriptionLogins?.clear();
+    const state = globalThis as {
+      inboxZeroSubscriptionLogins?: Map<string, unknown>;
+      inboxZeroSubscriptionLoginStarts?: Map<string, unknown>;
+    };
+    state.inboxZeroSubscriptionLogins?.clear();
+    state.inboxZeroSubscriptionLoginStarts?.clear();
   });
 
   afterEach(async () => {
@@ -142,6 +147,40 @@ describe("subscription login sessions", () => {
       url: "https://auth.openai.com/codex/device",
       deviceCode: "WXYZ-12345",
     });
+  });
+
+  it("makes a user wait before starting another sign-in", async () => {
+    mockSpawnedChild();
+    await startSubscriptionLogin({
+      userId: "user1",
+      provider: Provider.CODEX_CLI,
+    });
+
+    await expect(
+      startSubscriptionLogin({
+        userId: "user1",
+        provider: Provider.CLAUDE_CODE,
+      }),
+    ).rejects.toThrow("Wait a few seconds");
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps how many sign-ins run on the server at once", async () => {
+    for (let i = 0; i < MAX_ACTIVE_SUBSCRIPTION_LOGINS; i++) {
+      mockSpawnedChild();
+      await startSubscriptionLogin({
+        userId: `user${i}`,
+        provider: Provider.CODEX_CLI,
+      });
+    }
+
+    await expect(
+      startSubscriptionLogin({
+        userId: "one-too-many",
+        provider: Provider.CODEX_CLI,
+      }),
+    ).rejects.toThrow("Too many sign-ins");
+    expect(spawnMock).toHaveBeenCalledTimes(MAX_ACTIVE_SUBSCRIPTION_LOGINS);
   });
 
   it("runs the CLI with host credentials blanked", async () => {
@@ -251,6 +290,8 @@ describe("subscription login sessions", () => {
     );
     expect(prisma.aiSubscriptionLogin.upsert).not.toHaveBeenCalled();
 
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + SUBSCRIPTION_LOGIN_START_COOLDOWN_MS);
     const child = mockSpawnedChild();
     prisma.aiSubscriptionLogin.upsert.mockResolvedValue({} as never);
     await startSubscriptionLogin({

@@ -56,6 +56,9 @@ export type SubscriptionLoginView = {
 };
 
 export const SUBSCRIPTION_LOGIN_TTL_MS = 10 * 60 * 1000;
+// Each sign-in keeps a terminal and a Node CLI alive, so the server caps them.
+export const MAX_ACTIVE_SUBSCRIPTION_LOGINS = 5;
+export const SUBSCRIPTION_LOGIN_START_COOLDOWN_MS = 30 * 1000;
 const MAX_OUTPUT_CHARS = 64 * 1024;
 // Claude's sign-in prompt is an Ink text field: a carriage return glued to the
 // pasted code folds into the paste, so Return is sent as its own write.
@@ -68,9 +71,13 @@ const logger = createScopedLogger("llms/subscription-login");
 // open sign-ins live on globalThis to be reachable from both.
 const globalForLogins = globalThis as unknown as {
   inboxZeroSubscriptionLogins?: Map<string, LoginSession>;
+  inboxZeroSubscriptionLoginStarts?: Map<string, number>;
 };
 globalForLogins.inboxZeroSubscriptionLogins ??= new Map();
+globalForLogins.inboxZeroSubscriptionLoginStarts ??= new Map();
 const sessions = globalForLogins.inboxZeroSubscriptionLogins;
+// When each user last started a sign-in.
+const lastStarts = globalForLogins.inboxZeroSubscriptionLoginStarts;
 
 export function isSubscriptionProvider(
   provider: string,
@@ -107,6 +114,7 @@ export async function startSubscriptionLogin({
     if (isActive(existing)) return toView(existing);
     sessions.delete(key);
   }
+  assertCanStartLogin(userId);
 
   const session: LoginSession = {
     id: randomUUID(),
@@ -257,6 +265,35 @@ const CSI_HORIZONTAL_MOVE_RE = /\x1b\[[0-9;]*[GC]/g;
 const CSI_ANY_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const ESC_SHORT_RE = /\x1b[()][A-Za-z0-9]|\x1b[=>78]/g;
 // biome-ignore-end lint/suspicious/noControlCharactersInRegex: terminal escape sequences
+
+function assertCanStartLogin(userId: string) {
+  const now = Date.now();
+  const lastStart = lastStarts.get(userId);
+  if (
+    lastStart !== undefined &&
+    now - lastStart < SUBSCRIPTION_LOGIN_START_COOLDOWN_MS
+  ) {
+    throw new SafeError("Wait a few seconds before starting another sign-in.");
+  }
+
+  let active = 0;
+  for (const session of sessions.values()) {
+    expireIfDue(session);
+    if (isActive(session)) active++;
+  }
+  if (active >= MAX_ACTIVE_SUBSCRIPTION_LOGINS) {
+    throw new SafeError(
+      "Too many sign-ins are in progress. Try again in a few minutes.",
+    );
+  }
+
+  for (const [id, startedAt] of lastStarts) {
+    if (now - startedAt >= SUBSCRIPTION_LOGIN_START_COOLDOWN_MS) {
+      lastStarts.delete(id);
+    }
+  }
+  lastStarts.set(userId, now);
+}
 
 function sessionKey(userId: string, provider: SubscriptionProvider) {
   return `${userId}:${provider}`;
