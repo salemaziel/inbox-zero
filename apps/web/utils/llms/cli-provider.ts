@@ -114,9 +114,11 @@ const globalForCodexRuns = globalThis as unknown as {
 globalForCodexRuns.inboxZeroCodexRunQueues ??= new Map();
 const codexRunQueues = globalForCodexRuns.inboxZeroCodexRunQueues;
 
-// A call that is never finished (a stream nobody reads or cancels) gives up
-// its run slot and folder after this long.
+// A call still running after this long (for example a stream nobody reads or
+// cancels) is stopped, and its run slot and folder are freed.
 export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
+// How long a stopped CLI gets to exit before its folder is removed anyway.
+export const CLI_STOP_WAIT_MS = 10 * 1000;
 
 export function assertCliLlmEnabled(provider: CliProvider) {
   if (env.CLI_LLM_ENABLED) return;
@@ -420,12 +422,11 @@ function createCliRunModel({
 
   const startCall = async (options: unknown) => {
     const module = await getModule();
+    const callerSignal = (options as { abortSignal?: AbortSignal } | undefined)
+      ?.abortSignal;
     const release =
       provider === Provider.CODEX_CLI && cliLogin
-        ? await acquireCodexRun(
-            cliLogin.userId,
-            (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
-          )
+        ? await acquireCodexRun(cliLogin.userId, callerSignal)
         : () => {};
 
     let run: CliRun | undefined;
@@ -435,36 +436,57 @@ function createCliRunModel({
       run = await startCliRun(provider, login);
       const model = buildModel(module, run);
 
-      let ended = false;
-      const end = async () => {
-        if (ended) return;
-        ended = true;
-        clearTimeout(maxCallTimer);
-        await run?.finish();
-        release();
+      // Both providers stop their CLI process when this signal aborts.
+      const stopController = new AbortController();
+      const abortSignal = callerSignal
+        ? AbortSignal.any([callerSignal, stopController.signal])
+        : stopController.signal;
+
+      let ending: Promise<void> | undefined;
+      const end = () => {
+        ending ??= (async () => {
+          clearTimeout(maxCallTimer);
+          await run?.finish();
+          release();
+        })();
+        return ending;
       };
+
+      const call = {
+        model,
+        options: { ...(options as object), abortSignal },
+        // Settles once the CLI process has exited.
+        exited: Promise.resolve() as Promise<unknown>,
+        end,
+        // The login folder and run slot are only freed once the CLI has
+        // exited, or after a bounded wait if it ignores the abort.
+        stop: async (reason: unknown) => {
+          stopController.abort(reason);
+          await Promise.race([call.exited, sleep(CLI_STOP_WAIT_MS)]);
+          await end();
+        },
+        // Returns the reconnect error when the user's login was rejected.
+        checkLoginRejected: async (
+          error: unknown,
+        ): Promise<SafeError | null> => {
+          if (!login || !isCliAuthenticationError(module, provider, error)) {
+            return null;
+          }
+          await markNeedsReconnect(login);
+          return new SafeError(RECONNECT_SUBSCRIPTION_MESSAGE);
+        },
+        handleError: async (error: unknown): Promise<never> => {
+          throw (await call.checkLoginRejected(error)) ?? error;
+        },
+      };
+
       const maxCallTimer = setTimeout(() => {
-        logger.warn("CLI call was never finished; releasing it", { provider });
-        end().catch(() => undefined);
+        logger.warn("CLI call ran too long; stopping it", { provider });
+        call.stop(new Error("CLI call ran too long")).catch(() => undefined);
       }, MAX_CLI_CALL_MS);
       maxCallTimer.unref?.();
 
-      // Returns the reconnect error when the user's login was rejected.
-      const checkLoginRejected = async (
-        error: unknown,
-      ): Promise<SafeError | null> => {
-        if (!login || !isCliAuthenticationError(module, provider, error)) {
-          return null;
-        }
-        await markNeedsReconnect(login);
-        return new SafeError(RECONNECT_SUBSCRIPTION_MESSAGE);
-      };
-
-      const handleError = async (error: unknown): Promise<never> => {
-        throw (await checkLoginRejected(error)) ?? error;
-      };
-
-      return { model, end, handleError, checkLoginRejected };
+      return call;
     } catch (error) {
       await run?.finish();
       release();
@@ -481,7 +503,11 @@ function createCliRunModel({
       const call = await startCall(args[0]);
       try {
         const doGenerate = getModelMethod(call.model, "doGenerate", provider);
-        return await doGenerate(...args);
+        const pending = Promise.resolve(
+          doGenerate(call.options, ...args.slice(1)),
+        );
+        call.exited = pending.catch(() => undefined);
+        return await pending;
       } catch (error) {
         return await call.handleError(error);
       } finally {
@@ -493,32 +519,49 @@ function createCliRunModel({
       let result: { stream: ReadableStream<unknown> } & Record<string, unknown>;
       try {
         const doStream = getModelMethod(call.model, "doStream", provider);
-        result = (await doStream(...args)) as typeof result;
+        result = (await doStream(
+          call.options,
+          ...args.slice(1),
+        )) as typeof result;
       } catch (error) {
         await call.end();
         return call.handleError(error);
       }
       // The CLI keeps running while the stream is read, so its folder and the
-      // Codex run slot are kept until the stream ends. Both providers report
-      // a rejected login inside the stream (an error part, or by erroring the
-      // stream), not from doStream itself.
-      const stream = result.stream.pipeThrough(
-        new TransformStream({
-          async transform(chunk, controller) {
-            const part = chunk as { type?: string; error?: unknown };
-            const rejected =
-              part?.type === "error"
-                ? await call.checkLoginRejected(part.error)
-                : null;
-            controller.enqueue(rejected ? { ...part, error: rejected } : chunk);
-          },
-          flush: call.end,
-          async cancel(reason: unknown) {
-            await call.checkLoginRejected(reason);
+      // Codex run slot are kept until the stream ends. The source stream ends
+      // when the CLI exits, whether or not anyone is reading it. Both
+      // providers report a rejected login inside the stream (an error part,
+      // or by erroring the stream), not from doStream itself.
+      const reader = result.stream.getReader();
+      call.exited = reader.closed.catch(() => undefined);
+      const stream = new ReadableStream({
+        async pull(controller) {
+          let next: ReadableStreamReadResult<unknown>;
+          try {
+            next = await reader.read();
+          } catch (error) {
+            const rejected = await call.checkLoginRejected(error);
             await call.end();
-          },
-        } as Transformer<unknown, unknown>),
-      );
+            controller.error(rejected ?? error);
+            return;
+          }
+          if (next.done) {
+            await call.end();
+            controller.close();
+            return;
+          }
+          const part = next.value as { type?: string; error?: unknown };
+          const rejected =
+            part?.type === "error"
+              ? await call.checkLoginRejected(part.error)
+              : null;
+          controller.enqueue(rejected ? { ...part, error: rejected } : part);
+        },
+        async cancel(reason: unknown) {
+          await call.stop(reason);
+          await reader.cancel(reason).catch(() => undefined);
+        },
+      });
       return { ...result, stream };
     },
   } as unknown as LanguageModelV4;
@@ -651,6 +694,12 @@ async function markNeedsReconnect(login: UserCliLogin) {
       status: "needs-reconnect",
       lastError: "The sign-in was rejected or has expired.",
     },
+  });
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref?.();
   });
 }
 
