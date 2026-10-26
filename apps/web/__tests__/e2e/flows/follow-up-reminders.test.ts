@@ -109,6 +109,7 @@ async function getEmailAccountForProcessing(emailAccountId: string) {
           aiProvider: true,
           aiModel: true,
           aiApiKey: true,
+          aiTaskModels: true,
         },
       },
       account: { select: { provider: true } },

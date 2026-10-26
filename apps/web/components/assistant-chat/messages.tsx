@@ -76,18 +76,16 @@ export function Messages({
               </Fragment>
             ))}
 
-            {status === "submitted" &&
-              messages.length > 0 &&
-              messages[messages.length - 1].role === "user" && (
-                <Message from="assistant">
-                  <MessageContent variant="flat">
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Loader />
-                      <span>Thinking...</span>
-                    </div>
-                  </MessageContent>
-                </Message>
-              )}
+            {isWaitingForReply(status, messages) && (
+              <Message from="assistant">
+                <MessageContent variant="flat">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader />
+                    <span>Thinking...</span>
+                  </div>
+                </MessageContent>
+              </Message>
+            )}
           </div>
 
           <div className="h-8 shrink-0" />
@@ -143,4 +141,24 @@ function buildEmailLookup(messages: Array<ChatMessage>): EmailLookup {
     }
   }
   return lookup;
+}
+
+// Some providers (the Claude Code and Codex CLIs) open the reply stream long
+// before any text arrives, so "submitted" alone ends the indicator too early.
+export function isWaitingForReply(
+  status: UseChatHelpers<ChatMessage>["status"],
+  messages: ChatMessage[],
+) {
+  const lastMessage = messages.at(-1);
+  if (!lastMessage) return false;
+  if (status === "submitted") return lastMessage.role === "user";
+  if (status !== "streaming" || lastMessage.role !== "assistant") return false;
+
+  return !lastMessage.parts.some(
+    (part) =>
+      ((part.type === "text" || part.type === "reasoning") &&
+        part.text.trim().length > 0) ||
+      part.type.startsWith("tool-") ||
+      part.type === "file",
+  );
 }

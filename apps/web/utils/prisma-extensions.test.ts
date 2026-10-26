@@ -137,4 +137,16 @@ describe("buildQuery handlers", () => {
     expect(args.create.webhookSecret).toMatch(/^v1:[0-9a-f]+$/);
     expect(args.update.webhookSecret.set).toMatch(/^v1:[0-9a-f]+$/);
   });
+
+  it("encrypts the AI subscription login credential on upsert", async () => {
+    const handlers = buildQuery(__testing__.ENCRYPTED_FIELDS);
+    const args = {
+      create: { provider: "claude-code", credential: "fake-oauth-token" },
+      update: { credential: "fake-oauth-token-2" },
+    };
+    await handlers.aiSubscriptionLogin.upsert({ args, query: queryFn });
+    expect(args.create.credential).toMatch(/^v1:[0-9a-f]+$/);
+    expect(args.update.credential).toMatch(/^v1:[0-9a-f]+$/);
+    expect(args.create.provider).toBe("claude-code");
+  });
 });

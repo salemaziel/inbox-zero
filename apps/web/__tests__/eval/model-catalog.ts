@@ -153,9 +153,11 @@ export function getEmailAccountForModel(
   model: EvalModel,
   overrides: Partial<EmailAccountWithAI> = {},
 ): EmailAccountWithAI {
+  const emailAccount = getEmailAccount(overrides);
   return {
-    ...getEmailAccount(overrides),
+    ...emailAccount,
     user: {
+      ...emailAccount.user,
       aiProvider: model.provider,
       aiModel: model.model,
       aiApiKey: getApiKeyForProvider(model.provider),

@@ -2,11 +2,29 @@ import { simulateReadableStream, tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import prisma from "@/utils/__mocks__/prisma";
+import { Provider } from "@/utils/llms/config";
 import { LlmUseCase } from "@/utils/llms/use-cases";
 import { toolCallAgentStream } from "./index";
 
-const { mockGetModelForUseCase } = vi.hoisted(() => ({
+const { mockGetModelForUseCase, mockClaudeCode } = vi.hoisted(() => ({
   mockGetModelForUseCase: vi.fn(),
+  mockClaudeCode: vi.fn(),
+}));
+
+vi.mock("@/utils/prisma");
+
+vi.mock("@/env", async (importActual) => {
+  const actual = await importActual<typeof import("@/env")>();
+  return {
+    env: { ...actual.env, CLI_LLM_ENABLED: true },
+  };
+});
+
+vi.mock("ai-sdk-provider-claude-code", () => ({
+  claudeCode: mockClaudeCode,
+  createAiSdkMcpServer: vi.fn(() => ({ type: "mcp-server" })),
+  isAuthenticationError: () => false,
 }));
 
 vi.mock("@/utils/llms/use-cases", async (importActual) => ({
@@ -69,6 +87,87 @@ describe("toolCallAgentStream abort", () => {
     expect(archive).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("toolCallAgentStream with a user's Claude subscription", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("runs bridged tool calls with the user's own login, not the server's", async () => {
+    prisma.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: "fake-user-oauth-token",
+    } as any);
+    mockClaudeCode.mockImplementation(() => createTextModel());
+    mockGetModelForUseCase.mockReturnValue({
+      provider: Provider.CLAUDE_CODE,
+      modelName: "sonnet",
+      model: createTextModel(),
+      cliLogin: { userId: "user-1", allowServerLogin: false },
+      fallbackModels: [],
+      hasUserApiKey: true,
+    });
+
+    const result = await toolCallAgentStream({
+      userAi: { aiProvider: null, aiModel: null, aiApiKey: null },
+      userEmail: "user@test.com",
+      emailAccountId: "email-account-id",
+      useCase: LlmUseCase.AssistantChat,
+      usageLabel: "test",
+      promptHardening: { trust: "untrusted", level: "full" },
+      messages: [{ role: "user", content: "Archive everything" }],
+      tools: {
+        archive: tool({ inputSchema: z.object({}), execute: vi.fn() }),
+      },
+    });
+    for await (const _chunk of result.toUIMessageStream()) {
+      // drain
+    }
+
+    expect(mockClaudeCode).toHaveBeenCalled();
+    for (const [, settings] of mockClaudeCode.mock.calls) {
+      expect(settings.env).toMatchObject({
+        CLAUDE_CODE_OAUTH_TOKEN: "fake-user-oauth-token",
+        CLAUDE_CONFIG_DIR: expect.any(String),
+      });
+    }
+    expect(prisma.aiSubscriptionLogin.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId_provider: { userId: "user-1", provider: Provider.CLAUDE_CODE },
+        },
+      }),
+    );
+  });
+});
+
+function createTextModel() {
+  return new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: "stream-start", warnings: [] },
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "done" },
+          { type: "text-end", id: "t1" },
+          {
+            type: "finish",
+            finishReason: { unified: "stop", raw: undefined },
+            usage: {
+              inputTokens: {
+                total: 1,
+                noCache: 1,
+                cacheRead: undefined,
+                cacheWrite: undefined,
+              },
+              outputTokens: { total: 1, text: 1, reasoning: undefined },
+            },
+          },
+        ],
+      }),
+    }),
+  });
+}
 
 function createToolCallingModel() {
   return new MockLanguageModelV4({

@@ -11,6 +11,7 @@ import {
   toggleDigestBody,
 } from "@/utils/actions/settings.validation";
 import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
+import { isCliSubscriptionProvider } from "@/utils/llms/cli-provider";
 import prisma from "@/utils/prisma";
 import {
   calculateNextScheduleDate,
@@ -18,7 +19,7 @@ import {
 } from "@/utils/schedule";
 import { actionClientUser } from "@/utils/actions/safe-action";
 import { ActionType, SystemType } from "@/generated/prisma/enums";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { clearSpecificErrorMessages, ErrorType } from "@/utils/error-messages";
 import { SafeError } from "@/utils/error";
 import { env } from "@/env";
@@ -50,7 +51,7 @@ export const updateAiSettingsAction = actionClientUser
   .action(
     async ({
       ctx: { userId, logger },
-      parsedInput: { aiProvider, aiModel, aiApiKey },
+      parsedInput: { aiProvider, aiModel, aiApiKey, aiTaskModels },
     }) => {
       if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
         throw new SafeError("AI model settings are managed by the deployment.");
@@ -62,11 +63,52 @@ export const updateAiSettingsAction = actionClientUser
         );
       }
 
+      const taskEntries = Object.entries(aiTaskModels ?? {}).filter(
+        (pair): pair is [string, { provider: string; model: string }] =>
+          !!pair[1],
+      );
+      const usesCliProvider =
+        isCliSubscriptionProvider(aiProvider) ||
+        taskEntries.some(([, entry]) =>
+          isCliSubscriptionProvider(entry.provider),
+        );
+      if (usesCliProvider && !env.CLI_LLM_ENABLED) {
+        throw new SafeError("AI subscriptions aren't enabled on this server.");
+      }
+      const connectedProviders = usesCliProvider
+        ? await getConnectedSubscriptionProviders(userId)
+        : [];
+
+      if (
+        isCliSubscriptionProvider(aiProvider) &&
+        !connectedProviders.includes(aiProvider)
+      ) {
+        throw new SafeError("Connect this account before using it.");
+      }
+
+      for (const [, entry] of taskEntries) {
+        const isMainProvider =
+          aiProvider !== DEFAULT_PROVIDER && entry.provider === aiProvider;
+        if (!isMainProvider && !connectedProviders.includes(entry.provider)) {
+          throw new SafeError(
+            "Each task can only use your main provider or an AI subscription you've connected.",
+          );
+        }
+      }
+
+      const nextAiTaskModels = taskEntries.length
+        ? Object.fromEntries(taskEntries)
+        : Prisma.DbNull;
+
       const providedAiApiKey = aiApiKey?.trim() || null;
 
       let nextAiApiKey: string | null = providedAiApiKey;
 
-      if (!nextAiApiKey && aiProvider !== DEFAULT_PROVIDER) {
+      if (
+        !nextAiApiKey &&
+        aiProvider !== DEFAULT_PROVIDER &&
+        !isCliSubscriptionProvider(aiProvider)
+      ) {
         const existingUser = await prisma.user.findUnique({
           where: { id: userId },
           select: { aiProvider: true, aiApiKey: true },
@@ -86,8 +128,20 @@ export const updateAiSettingsAction = actionClientUser
         where: { id: userId },
         data:
           aiProvider === DEFAULT_PROVIDER
-            ? { aiProvider: null, aiModel: null, aiApiKey: null }
-            : { aiProvider, aiModel, aiApiKey: nextAiApiKey },
+            ? {
+                aiProvider: null,
+                aiModel: null,
+                aiApiKey: null,
+                aiTaskModels: nextAiTaskModels,
+              }
+            : {
+                aiProvider,
+                aiModel,
+                aiApiKey: isCliSubscriptionProvider(aiProvider)
+                  ? null
+                  : nextAiApiKey,
+                aiTaskModels: nextAiTaskModels,
+              },
       });
 
       if (result.count === 0) {
@@ -308,3 +362,11 @@ export const toggleDigestAction = actionClient
       return { success: true };
     },
   );
+
+async function getConnectedSubscriptionProviders(userId: string) {
+  const logins = await prisma.aiSubscriptionLogin.findMany({
+    where: { userId, status: "connected" },
+    select: { provider: true },
+  });
+  return logins.map((login) => login.provider);
+}
