@@ -449,6 +449,84 @@ describe("createCliLanguageModel", () => {
     });
   });
 
+  it("marks a login rejected inside a Claude stream for reconnect", async () => {
+    const authError = new Error("unauthorized");
+    const claudeCode = vi.fn(() => ({
+      doGenerate: vi.fn(),
+      doStream: vi.fn().mockResolvedValue({
+        stream: streamOf([{ type: "error", error: authError }]),
+      }),
+    }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: "fake-user-oauth-token",
+      connectedAt,
+    });
+
+    const { createCliLanguageModel, RECONNECT_SUBSCRIPTION_MESSAGE } =
+      await loadCliProviderModule({
+        claudeModule: {
+          claudeCode,
+          isAuthenticationError: (error: unknown) => error === authError,
+        },
+      });
+    const model = createCliLanguageModel({
+      provider: Provider.CLAUDE_CODE,
+      modelName: "sonnet",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+    const { stream } = await model.doStream("request");
+    const parts = await readAll(stream);
+
+    expect((parts[0] as { error: Error }).error.message).toBe(
+      RECONNECT_SUBSCRIPTION_MESSAGE,
+    );
+    expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user1", provider: Provider.CLAUDE_CODE },
+      data: expect.objectContaining({ status: "needs-reconnect" }),
+    });
+  });
+
+  it("marks a Codex login rejected mid-stream for reconnect and frees the run slot", async () => {
+    const exitError = Object.assign(new Error("Codex CLI exited with code 1"), {
+      data: { exitCode: 1, stderr: "Error: 401 Unauthorized" },
+    });
+    const doStream = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.error(exitError);
+          },
+        }),
+      })
+      .mockResolvedValueOnce({ stream: emptyStream() });
+    const codexExec = vi.fn(() => ({ doGenerate: vi.fn(), doStream }));
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec, isAuthenticationError: () => false },
+    });
+    const model = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      cliLogin: { userId: "user1", allowServerLogin: false },
+    }) as any;
+    const first = await model.doStream("first");
+    await expect(readAll(first.stream)).rejects.toBe(exitError);
+
+    expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user1", provider: Provider.CODEX_CLI },
+      data: expect.objectContaining({ status: "needs-reconnect" }),
+    });
+    const second = await model.doStream("second");
+    await expect(readAll(second.stream)).resolves.toEqual([]);
+  });
+
   it("runs one Codex call at a time per user", async () => {
     let resolveFirst: (value: unknown) => void = () => {};
     const doGenerate = vi
@@ -532,4 +610,21 @@ function emptyStream() {
       controller.close();
     },
   });
+}
+
+function streamOf(parts: unknown[]) {
+  return new ReadableStream({
+    start(controller) {
+      for (const part of parts) controller.enqueue(part);
+      controller.close();
+    },
+  });
+}
+
+async function readAll(stream: ReadableStream<unknown>) {
+  const parts: unknown[] = [];
+  for await (const part of stream as unknown as AsyncIterable<unknown>) {
+    parts.push(part);
+  }
+  return parts;
 }

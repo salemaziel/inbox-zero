@@ -64,6 +64,8 @@ const CODEX_CONFIG_TOML = 'cli_auth_credentials_store = "file"\n';
 // the whole server env into the child, so every other key is blanked.
 const CODEX_SAFE_ENV_RE =
   /^(?:PATH|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z_]+|TZ|TMPDIR|TERM|(?:HTTPS?|NO|ALL)_PROXY|(?:https?|no|all)_proxy|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|CODEX_CA_CERTIFICATE|RUST_LOG)$/;
+const CODEX_AUTH_FAILURE_RE =
+  /\b401\b|unauthorized|not logged in|refresh token|log in again|sign in again/i;
 // The server's own Codex login, kept only for runs that use it.
 const CODEX_SERVER_LOGIN_ENV = [
   "CODEX_HOME",
@@ -406,15 +408,22 @@ function createCliRunModel({
         release();
       };
 
-      const handleError = async (error: unknown): Promise<never> => {
-        if (login && isCliAuthenticationError(module, error)) {
-          await markNeedsReconnect(login);
-          throw new SafeError(RECONNECT_SUBSCRIPTION_MESSAGE);
+      // Returns the reconnect error when the user's login was rejected.
+      const checkLoginRejected = async (
+        error: unknown,
+      ): Promise<SafeError | null> => {
+        if (!login || !isCliAuthenticationError(module, provider, error)) {
+          return null;
         }
-        throw error;
+        await markNeedsReconnect(login);
+        return new SafeError(RECONNECT_SUBSCRIPTION_MESSAGE);
       };
 
-      return { model, end, handleError };
+      const handleError = async (error: unknown): Promise<never> => {
+        throw (await checkLoginRejected(error)) ?? error;
+      };
+
+      return { model, end, handleError, checkLoginRejected };
     } catch (error) {
       await run?.finish();
       release();
@@ -449,11 +458,24 @@ function createCliRunModel({
         return call.handleError(error);
       }
       // The CLI keeps running while the stream is read, so its folder and the
-      // Codex run slot are kept until the stream ends.
+      // Codex run slot are kept until the stream ends. Both providers report
+      // a rejected login inside the stream (an error part, or by erroring the
+      // stream), not from doStream itself.
       const stream = result.stream.pipeThrough(
         new TransformStream({
+          async transform(chunk, controller) {
+            const part = chunk as { type?: string; error?: unknown };
+            const rejected =
+              part?.type === "error"
+                ? await call.checkLoginRejected(part.error)
+                : null;
+            controller.enqueue(rejected ? { ...part, error: rejected } : chunk);
+          },
           flush: call.end,
-          cancel: call.end,
+          async cancel(reason: unknown) {
+            await call.checkLoginRejected(reason);
+            await call.end();
+          },
         } as Transformer<unknown, unknown>),
       );
       return { ...result, stream };
@@ -576,13 +598,23 @@ async function markNeedsReconnect(login: UserCliLogin) {
 
 function isCliAuthenticationError(
   module: CliProviderModule,
+  provider: CliProvider,
   error: unknown,
 ): boolean {
   const isAuthenticationError = module.isAuthenticationError;
-  return (
+  if (
     typeof isAuthenticationError === "function" &&
-    !!isAuthenticationError(error)
-  );
+    isAuthenticationError(error)
+  ) {
+    return true;
+  }
+  if (provider !== Provider.CODEX_CLI) return false;
+
+  // When Codex's own login is rejected it just exits non-zero; the provider
+  // only tags the error as auth when the CLI can't start, so read stderr.
+  const stderr = (error as { data?: { stderr?: unknown } } | null)?.data
+    ?.stderr;
+  return typeof stderr === "string" && CODEX_AUTH_FAILURE_RE.test(stderr);
 }
 
 async function acquireCodexRun(userId: string): Promise<() => void> {
