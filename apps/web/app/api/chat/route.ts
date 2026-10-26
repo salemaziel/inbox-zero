@@ -345,11 +345,13 @@ export const POST = withEmailAccount("chat", async (request) => {
 
     const stream = createUIMessageStream({
       generateId: () => streamId,
+      onError: getStreamErrorText,
       execute: async ({ writer }) => {
         let responseMessage: UIMessage | null = null;
 
         for await (const chunk of result.toUIMessageStream({
           sendFinish: false,
+          onError: getStreamErrorText,
           onEnd: ({ responseMessage: finishedResponseMessage }) => {
             responseMessage = finishedResponseMessage;
           },
@@ -649,4 +651,14 @@ function removeIncompleteToolParts(message: UIMessage): UIMessage {
         ),
     ),
   };
+}
+
+// An error inside the reply stream keeps the SDK's generic text unless it is
+// a safe error, whose message (for example, reconnect your AI subscription)
+// is sent as JSON, like the route's 4xx responses, for the client to show.
+function getStreamErrorText(error: unknown) {
+  if (error instanceof SafeError && error.safeMessage) {
+    return JSON.stringify({ error: error.safeMessage });
+  }
+  return "An error occurred.";
 }

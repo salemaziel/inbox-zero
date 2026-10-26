@@ -601,6 +601,42 @@ describe("ChatProvider interrupted replies", () => {
     expect(mockResumeStream).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the server's message inline when the reply fails with one, without reattaching", async () => {
+    let latestContext: ReturnType<typeof useChat> | undefined;
+    function Consumer() {
+      latestContext = useChat();
+      return null;
+    }
+    renderWithProvider(<Consumer />);
+
+    act(() => {
+      chatState.onError?.(
+        new Error(JSON.stringify({ error: "Reconnect your account." })),
+      );
+    });
+
+    await waitFor(() => {
+      expect(latestContext?.requestError).toBe("Reconnect your account.");
+    });
+    expect(mockResumeStream).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it("keeps a generic reply failure off the inline alert", async () => {
+    let latestContext: ReturnType<typeof useChat> | undefined;
+    function Consumer() {
+      latestContext = useChat();
+      return null;
+    }
+    renderWithProvider(<Consumer />);
+
+    act(() => {
+      chatState.onError?.(new Error("An error occurred."));
+    });
+
+    expect(latestContext?.requestError).toBeNull();
+  });
+
   it("reattaches when a backgrounded tab's stream stalled", async () => {
     renderWithProvider(<div />);
 

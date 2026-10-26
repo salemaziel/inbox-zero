@@ -648,17 +648,20 @@ async function saveRefreshedCodexLogin(codexHome: string, login: UserCliLogin) {
   });
 }
 
-// Whether a run for this user would use their own login rather than the
-// server's.
-export async function hasConnectedCliLogin(
-  userId: string,
+// Run before a call starts: throws the connect or reconnect prompt when the
+// user's own login is required but not usable, and otherwise says whether
+// the call will run on the user's own login rather than the server's.
+export async function checkUserCliLogin(
   provider: CliProvider,
+  { userId, allowServerLogin }: CliLoginScope,
 ): Promise<boolean> {
   const login = await prisma.aiSubscriptionLogin.findUnique({
     where: { userId_provider: { userId, provider } },
     select: { status: true, credential: true },
   });
-  return isUsableLogin(login);
+  if (isUsableLogin(login)) return true;
+  if (allowServerLogin) return false;
+  throw missingLoginError(login);
 }
 
 // Returns null when the CLI should run with the server's own login.
@@ -688,8 +691,11 @@ async function resolveUserCliLogin(
   }
 
   if (allowServerLogin) return null;
+  throw missingLoginError(login);
+}
 
-  throw new SafeError(
+function missingLoginError(login: unknown) {
+  return new SafeError(
     login ? RECONNECT_SUBSCRIPTION_MESSAGE : CONNECT_SUBSCRIPTION_MESSAGE,
   );
 }

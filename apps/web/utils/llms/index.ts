@@ -66,8 +66,8 @@ import {
 import { Provider } from "@/utils/llms/config";
 import {
   type CliLoginScope,
+  checkUserCliLogin,
   createClaudeCodeLanguageModelWithBridgedTools,
-  hasConnectedCliLogin,
 } from "@/utils/llms/cli-provider";
 import {
   appendOllamaOnlySystemGuidance,
@@ -1400,15 +1400,14 @@ async function resolveModelCandidates({
   modelOptions: SelectModel;
   modelCandidates: ResolvedModel[];
 }> {
-  // getModel can't tell whether an owner's subscription will run on their own
-  // connected login or the server's, so spend guards check it here.
+  // Checked before the call starts, so a missing login fails up front with
+  // the connect prompt, and so spend guards know whether an owner's
+  // subscription runs on their own login (getModel can't tell).
+  const usesOwnCliLogin = modelOptions.cliLogin
+    ? await checkUserCliLogin(modelOptions.provider, modelOptions.cliLogin)
+    : false;
   const ownModelOptions =
-    !modelOptions.hasUserApiKey &&
-    modelOptions.cliLogin?.allowServerLogin &&
-    (await hasConnectedCliLogin(
-      modelOptions.cliLogin.userId,
-      modelOptions.provider,
-    ))
+    usesOwnCliLogin && !modelOptions.hasUserApiKey
       ? { ...modelOptions, hasUserApiKey: true }
       : modelOptions;
 

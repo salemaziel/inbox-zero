@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import prisma from "@/utils/__mocks__/prisma";
 import { Provider } from "@/utils/llms/config";
+import { CONNECT_SUBSCRIPTION_MESSAGE } from "@/utils/llms/cli-provider";
 import { assertTrialAiUsageAllowed } from "@/utils/llms/model-usage-guard";
 import { LlmUseCase } from "@/utils/llms/use-cases";
 import { toolCallAgentStream } from "./index";
@@ -208,6 +209,46 @@ describe("toolCallAgentStream spend guards for an owner's subscription", () => {
         expect.objectContaining({ hasUserApiKey }),
       );
     }
+  });
+});
+
+describe("toolCallAgentStream with a missing subscription login", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("fails before streaming when a user's own login isn't connected", async () => {
+    prisma.aiSubscriptionLogin.findUnique.mockResolvedValue(null);
+    mockGetModelForUseCase.mockReturnValue({
+      provider: Provider.CLAUDE_CODE,
+      modelName: "sonnet",
+      model: createTextModel(),
+      cliLogin: { userId: "user-1", allowServerLogin: false },
+      fallbackModels: [],
+      hasUserApiKey: true,
+    });
+
+    await expect(
+      toolCallAgentStream({
+        userAi: {
+          id: "user-1",
+          email: "user@test.com",
+          emailVerified: true,
+          aiProvider: Provider.CLAUDE_CODE,
+          aiModel: null,
+          aiApiKey: null,
+          aiTaskModels: null,
+        },
+        userEmail: "user@test.com",
+        emailAccountId: "email-account-id",
+        useCase: LlmUseCase.AssistantChat,
+        usageLabel: "test",
+        promptHardening: { trust: "untrusted", level: "full" },
+        messages: [{ role: "user", content: "Hi" }],
+        tools: {},
+      }),
+    ).rejects.toThrow(CONNECT_SUBSCRIPTION_MESSAGE);
+    expect(mockClaudeCode).not.toHaveBeenCalled();
   });
 });
 
