@@ -92,6 +92,16 @@ describe("email utils", () => {
         ["john@example.com", "jane@example.com"],
       ],
       [
+        "comment-form addresses with a comma in the comment",
+        "john@example.com (Doe, John), jane@example.com (Jane)",
+        ["john@example.com", "jane@example.com"],
+      ],
+      [
+        "angle-addr inside a trailing comment with a comma",
+        "<real@x.example> (a, <b@y.example>)",
+        ["real@x.example"],
+      ],
+      [
         "whitespace around addresses",
         "  john@example.com  ,  jane@example.com  ",
         ["john@example.com", "jane@example.com"],
@@ -186,6 +196,11 @@ describe("email utils", () => {
         '"John \\"JD\\", Doe" <john@example.com>, jane@example.com',
         ['"John \\"JD\\", Doe" <john@example.com>', "jane@example.com"],
       ],
+      [
+        "comma inside a comment",
+        "john@example.com (Doe, John), jane@example.com",
+        ["john@example.com (Doe, John)", "jane@example.com"],
+      ],
     ])("splits %s", (_caseName, input, expected) => {
       expect(splitRecipientList(input)).toEqual(expected);
     });
@@ -200,16 +215,12 @@ describe("email utils", () => {
       ],
       ["simple email", "hello@example.com", "hello@example.com"],
       ["plain Gmail address", "john.doe@gmail.com", "john.doe@gmail.com"],
-      [
-        "nested angle brackets",
-        "Hacker <fake@email.com> <real@email.com>",
-        "real@email.com",
-      ],
+      ["two angle-addrs", "Hacker <fake@email.com> <real@email.com>", ""],
       ["malformed angle brackets", "Bad <<not@an@email>>", ""],
       [
         "valid bracketed email mixed with invalid ones",
         "Test <not@valid@email> <valid@email.com>",
-        "valid@email.com",
+        "",
       ],
       ["empty angle brackets", "Test <>", ""],
       ["multiple @ symbols", "Test <user@@domain.com>", ""],
@@ -235,7 +246,72 @@ describe("email utils", () => {
         "real@other.example",
       ],
       ["unclosed angle-addr", "Name <name@example.com", ""],
-      ["address followed by a comment", "name@example.com (Name)", ""],
+      [
+        "address followed by a comment",
+        "name@example.com (Name)",
+        "name@example.com",
+      ],
+      [
+        "address followed by a nested comment",
+        "name@example.com (Name (Sales))",
+        "name@example.com",
+      ],
+      ["comment with no address", "(name@example.com)", ""],
+      [
+        "angle-addr inside a trailing comment",
+        "<real@x.example> (<b@y.example>)",
+        "real@x.example",
+      ],
+      [
+        "angle-addr inside trailing quoted text",
+        '<real@x.example> "<b@y.example>"',
+        "real@x.example",
+      ],
+      [
+        "angle-addr inside an escaped-paren comment",
+        "<real@x.example> (\\) <b@y.example>)",
+        "real@x.example",
+      ],
+      [
+        "bare address inside a trailing comment",
+        "real@x.example (b@y.example)",
+        "real@x.example",
+      ],
+      [
+        "comment after the angle-addr",
+        "Name <name@example.com> (Sales)",
+        "name@example.com",
+      ],
+      ["unclosed comment", "Name <name@example.com> (Sales", ""],
+      ["unclosed quoted display name", '"Name <name@example.com>', ""],
+      [
+        "quoted display name containing an angle-addr",
+        '"<b@y.example>" <real@x.example>',
+        "real@x.example",
+      ],
+      [
+        "quoted display name containing @ and a comma",
+        '"Doe, John @ Acme" <john@example.com>',
+        "john@example.com",
+      ],
+      [
+        "quoted display name with an escaped quote",
+        '"John \\"JD\\" Doe" <john@example.com>',
+        "john@example.com",
+      ],
+      [
+        "uppercase address",
+        "John <John.Doe@Example.COM>",
+        "John.Doe@Example.COM",
+      ],
+      [
+        "spaces inside the angle-addr",
+        "Name < name@example.com >",
+        "name@example.com",
+      ],
+      ["stray closing bracket", "Name > <name@example.com>", ""],
+      ["display name without brackets", "Name name@example.com", ""],
+      ["plain text", "not an address", ""],
       ["hyphen in local part", "no-reply@example.com", "no-reply@example.com"],
       [
         "hyphen in bracketed local part",
@@ -502,6 +578,17 @@ describe("email utils", () => {
       cases,
     )("formats %s", (_caseName, displayName, address, expected) => {
       expect(formatEmailWithName(displayName, address)).toBe(expected);
+    });
+
+    it.each([
+      ["parentheses", "Support (EU)", '"Support (EU)" <a@example.com>'],
+      ["an unbalanced parenthesis", "Sale :(", '"Sale :(" <a@example.com>'],
+      ["angle brackets", "<b@y.example>", '"<b@y.example>" <a@example.com>'],
+      ["a quote", 'The "Best"', '"The \\"Best\\"" <a@example.com>'],
+    ])("quotes a name containing %s", (_caseName, name, expected) => {
+      const formatted = formatEmailWithName(name, "a@example.com");
+      expect(formatted).toBe(expected);
+      expect(extractEmailAddress(formatted)).toBe("a@example.com");
     });
 
     it("is the inverse of extractNameFromEmail and extractEmailAddress", () => {

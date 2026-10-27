@@ -32,10 +32,15 @@ export function splitRecipientList(recipientList: string): string[] {
   const recipients: string[] = [];
   let start = 0;
   let inQuotes = false;
+  let commentDepth = 0;
   for (let index = 0; index < recipientList.length; index++) {
     const char = recipientList[index];
-    if (inQuotes && char === "\\") index++;
-    else if (char === '"') inQuotes = !inQuotes;
+    if ((inQuotes || commentDepth > 0) && char === "\\") index++;
+    else if (commentDepth > 0) {
+      if (char === "(") commentDepth++;
+      else if (char === ")") commentDepth--;
+    } else if (char === '"') inQuotes = !inQuotes;
+    else if (char === "(" && !inQuotes) commentDepth = 1;
     else if (char === "," && !inQuotes) {
       recipients.push(recipientList.slice(start, index));
       start = index + 1;
@@ -47,25 +52,58 @@ export function splitRecipientList(recipientList: string): string[] {
 }
 
 // Converts "John Doe <john.doe@gmail>" to "john.doe@gmail"
+// and "john.doe@gmail (John Doe)" to "john.doe@gmail"
 export function extractEmailAddress(email: string): string {
   if (!email) return "";
 
-  // Trim the input once at the start to handle leading/trailing spaces
-  const trimmedEmail = email.trim();
+  // One pass that skips quoted strings and (nested) comments, so only the
+  // header's real structure can supply the address. Display text and comments
+  // are chosen by the sender and ignored by DMARC, so an address inside them
+  // must never stand in for the mailbox. Anything ambiguous returns "".
+  const angleAddrs: string[] = [];
+  let outside = "";
+  let current: string | null = null;
+  let inQuotes = false;
+  let commentDepth = 0;
 
-  // When the header has an angle-addr, that is the mailbox. Everything else is
-  // display text the sender chooses, so an address there must never stand in
-  // for an angle-addr we can't validate.
-  if (trimmedEmail.includes("<")) {
-    const candidate = trimmedEmail
-      .match(/<[^<>]*>/g)
-      ?.at(-1)
-      ?.slice(1, -1);
-    const address = candidate?.trim() ?? "";
-    return isValidEmail(address) ? address : "";
+  for (let index = 0; index < email.length; index++) {
+    const char = email[index];
+    if ((inQuotes || commentDepth > 0) && char === "\\") {
+      index++;
+      continue;
+    }
+    if (inQuotes) {
+      if (char === '"') inQuotes = false;
+      continue;
+    }
+    if (commentDepth > 0) {
+      if (char === "(") commentDepth++;
+      else if (char === ")") commentDepth--;
+      continue;
+    }
+    if (current !== null) {
+      if (char === ">") {
+        angleAddrs.push(current);
+        current = null;
+      } else if (char === "<") {
+        return "";
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"') inQuotes = true;
+    else if (char === "(") commentDepth = 1;
+    else if (char === "<") current = "";
+    else if (char === ">") return "";
+    else outside += char;
   }
 
-  return isValidEmail(trimmedEmail) ? trimmedEmail : "";
+  if (inQuotes || commentDepth > 0 || current !== null) return "";
+  if (angleAddrs.length > 1) return "";
+
+  const candidate = (angleAddrs[0] ?? outside).trim();
+  return isValidEmail(candidate) ? candidate : "";
 }
 
 export function canonicalizeEmailAddress(email: string): string {
@@ -195,6 +233,11 @@ export function formatEmailWithName(
 ): string {
   if (!address) return "";
   if (!name || name === address) return address;
+  // Quote names the From parser would otherwise read as structure, so a
+  // display name can't open a comment or supply an angle-addr.
+  if (/["()<>\\]/.test(name)) {
+    return `"${name.replace(/["\\]/g, "\\$&")}" <${address}>`;
+  }
   return `${name} <${address}>`;
 }
 
