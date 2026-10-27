@@ -9,9 +9,21 @@ const emailSchema = z.string().email();
 // Converts "john.doe@gmail" to "john.doe@gmail"
 export function extractNameFromEmail(email: string) {
   if (!email) return "";
-  const firstPart = email.split("<")[0]?.trim();
+  // A quoted name may itself contain "<", so find the first one outside quotes.
+  let angleStart = email.length;
+  let inQuotes = false;
+  for (let index = 0; index < email.length; index++) {
+    const char = email[index];
+    if (inQuotes && char === "\\") index++;
+    else if (char === '"') inQuotes = !inQuotes;
+    else if (char === "<" && !inQuotes) {
+      angleStart = index;
+      break;
+    }
+  }
+  const firstPart = email.slice(0, angleStart).trim();
   if (firstPart) return unquoteDisplayName(firstPart);
-  const secondPart = email.split("<")?.[1]?.trim();
+  const secondPart = email.slice(angleStart + 1).trim();
   if (secondPart) return secondPart.split(">")[0];
   return email;
 }
@@ -237,9 +249,9 @@ export function formatEmailWithName(
 ): string {
   if (!address) return "";
   if (!name || name === address) return address;
-  // Quote names the From parser would otherwise read as structure, so a
-  // display name can't open a comment or supply an angle-addr.
-  if (/["()<>\\]/.test(name)) {
+  // Quote any RFC 5322 special, so a display name can't open a comment, supply
+  // an angle-addr, split a recipient list or read as group syntax.
+  if (/["()<>[\]:;@\\,.]/.test(name)) {
     return `"${name.replace(/["\\]/g, "\\$&")}" <${address}>`;
   }
   return `${name} <${address}>`;

@@ -44,6 +44,11 @@ describe("email utils", () => {
         '"John \\"JD\\" Doe" <john@example.com>',
         'John "JD" Doe',
       ],
+      [
+        "quoted name with an angle bracket",
+        '"A <b" <john@example.com>',
+        "A <b",
+      ],
       ["empty input", "", ""],
     ])("handles %s", (_caseName, input, expected) => {
       expect(extractNameFromEmail(input)).toBe(expected);
@@ -628,7 +633,7 @@ describe("email utils", () => {
         "special characters in name",
         "O'Brien, John",
         "john@example.com",
-        "O'Brien, John <john@example.com>",
+        `"O'Brien, John" <john@example.com>`,
       ],
       [
         "unicode name",
@@ -662,10 +667,21 @@ describe("email utils", () => {
       ["an unbalanced parenthesis", "Sale :(", '"Sale :(" <a@example.com>'],
       ["angle brackets", "<Team>", '"<Team>" <a@example.com>'],
       ["a quote", 'The "Best"', '"The \\"Best\\"" <a@example.com>'],
+      ["a backslash", "back\\slash", '"back\\\\slash" <a@example.com>'],
+      ["a comma", "Doe, John", '"Doe, John" <a@example.com>'],
+      ["a colon and a dot", "Dr. Who: Time", '"Dr. Who: Time" <a@example.com>'],
+      ["a semicolon", "Acme; Inc", '"Acme; Inc" <a@example.com>'],
+      ["square brackets", "[Team]", '"[Team]" <a@example.com>'],
+      ["an at sign", "b@y.example", '"b@y.example" <a@example.com>'],
     ])("quotes a name containing %s", (_caseName, name, expected) => {
       const formatted = formatEmailWithName(name, "a@example.com");
       expect(formatted).toBe(expected);
       expect(extractEmailAddress(formatted)).toBe("a@example.com");
+      expect(extractNameFromEmail(formatted)).toBe(name);
+      expect(splitRecipientList(`${formatted}, c@example.com`)).toEqual([
+        formatted,
+        "c@example.com",
+      ]);
     });
 
     it("is the inverse of extractNameFromEmail and extractEmailAddress", () => {
