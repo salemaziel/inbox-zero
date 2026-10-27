@@ -31,6 +31,7 @@ function getEmailAccount(overrides = {}): EmailAccountForDigest {
       aiModel: "gpt-4",
       aiProvider: "openai",
       aiApiKey: process.env.OPENAI_API_KEY || null,
+      aiReasoningEffort: null,
       aiTaskModels: null,
     },
     ...overrides,

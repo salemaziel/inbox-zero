@@ -92,6 +92,7 @@ describe("validateWebhookAccount", () => {
         aiProvider: null,
         aiModel: null,
         aiApiKey: null,
+        aiReasoningEffort: null,
         aiTaskModels: null,
         premium: {
           appleExpiresAt: null,
@@ -132,6 +133,7 @@ describe("validateWebhookAccount", () => {
           aiProvider: null,
           aiModel: null,
           aiApiKey: null,
+          aiReasoningEffort: null,
           aiTaskModels: null,
           premium: null,
         },
@@ -186,6 +188,7 @@ describe("validateWebhookAccount", () => {
           aiProvider: null,
           aiModel: null,
           aiApiKey: null,
+          aiReasoningEffort: null,
           aiTaskModels: null,
           premium: null,
         },

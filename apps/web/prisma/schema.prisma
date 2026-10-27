@@ -96,8 +96,11 @@ model User {
   aiProvider        String?
   aiModel           String?
   aiApiKey          String?
-  aiTaskModels      Json? // per model type { provider, model }; shape in utils/llms/config.ts
+  aiReasoningEffort String? // subscription providers only; null is the model's own default
+  aiTaskModels      Json? // per model type { provider, model, reasoningEffort }; shape in utils/llms/config.ts
   decisionModelEnabled Boolean? // null follows DEFAULT_DECISION_MODEL_ENABLED
+  decisionTypesafeApiKey   String? // encrypted; used instead of TYPESAFE_API_KEY for this user's decision-model calls
+  decisionOpenrouterApiKey String? // encrypted; used instead of OPENROUTER_API_KEY for this user's decision-model calls
   webhookSecret     String?
 
   // referral system

@@ -62,6 +62,7 @@ describe("resolveVoiceRuntime", () => {
         aiProvider: Provider.OPEN_AI,
         aiModel: "gpt-5.4-mini",
         aiApiKey: "sk-user",
+        aiReasoningEffort: null,
         aiTaskModels: null,
       },
     });
@@ -78,6 +79,7 @@ describe("resolveVoiceRuntime", () => {
         aiProvider: Provider.ANTHROPIC,
         aiModel: "claude",
         aiApiKey: "sk-anth",
+        aiReasoningEffort: null,
         aiTaskModels: null,
       },
     });

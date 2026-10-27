@@ -76,6 +76,7 @@ export const scanFollowUpRemindersAction = actionClient
             aiProvider: true,
             aiModel: true,
             aiApiKey: true,
+            aiReasoningEffort: true,
             aiTaskModels: true,
           },
         },
