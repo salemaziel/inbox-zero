@@ -3,6 +3,7 @@ import { z } from "zod";
 import { captureException } from "@/utils/error";
 import { createScopedLogger } from "@/utils/logger";
 import { getQueueRetryBackoffSeconds } from "@/utils/queue/retry";
+import { vercelQueueOnly } from "@/utils/queue/vercel";
 import { processFollowUpRemindersForEmailAccountId } from "@/utils/follow-up/process";
 
 export const maxDuration = 800;
@@ -58,4 +59,6 @@ const queueHandler = handleCallback<z.infer<typeof queuePayloadSchema>>(
   },
 );
 
-export const POST = (request: Request) => queueHandler(request);
+export const POST = vercelQueueOnly((request: Request) =>
+  queueHandler(request),
+);

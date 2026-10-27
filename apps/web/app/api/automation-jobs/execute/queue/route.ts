@@ -7,6 +7,7 @@ import {
 import { captureException } from "@/utils/error";
 import { createScopedLogger } from "@/utils/logger";
 import { getQueueRetryBackoffSeconds } from "@/utils/queue/retry";
+import { vercelQueueOnly } from "@/utils/queue/vercel";
 
 export const maxDuration = 300;
 
@@ -56,4 +57,6 @@ const queueHandler = handleCallback<z.infer<typeof executeAutomationJobBody>>(
   },
 );
 
-export const POST = (request: Request) => queueHandler(request);
+export const POST = vercelQueueOnly((request: Request) =>
+  queueHandler(request),
+);

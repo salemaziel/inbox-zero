@@ -3,6 +3,7 @@ import type { z } from "zod";
 import { createScopedLogger } from "@/utils/logger";
 import { forwardQueueMessageToInternalApi } from "@/utils/queue/forward-to-internal-api";
 import { getQueueRetryBackoffSeconds } from "@/utils/queue/retry";
+import { vercelQueueOnly } from "@/utils/queue/vercel";
 
 type QueueMetadata = {
   messageId: string;
@@ -87,5 +88,5 @@ export function createForwardingQueueHandler<TSchema extends z.ZodTypeAny>({
     },
   );
 
-  return (request: Request) => queueHandler(request);
+  return vercelQueueOnly((request: Request) => queueHandler(request));
 }
