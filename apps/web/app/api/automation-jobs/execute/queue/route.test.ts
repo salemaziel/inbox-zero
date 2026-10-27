@@ -39,7 +39,7 @@ vi.mock("@/utils/automation-jobs/execute", async (importOriginal) => {
   };
 });
 
-import "./route";
+import { POST } from "./route";
 
 const queueCallback = handleCallbackMock.mock.calls[0]?.[0] as
   | QueueCallback
@@ -53,6 +53,21 @@ describe("automation job queue route", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("returns 404 without running a job when not deployed on Vercel", async () => {
+    vi.stubEnv("VERCEL", "");
+
+    const response = await POST(
+      new Request("http://localhost/api/automation-jobs/execute/queue", {
+        method: "POST",
+        body: JSON.stringify({ automationJobRunId: "run-1" }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(executeAutomationJobRunMock).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
   });
 
   it("ignores invalid queue payloads without executing a job run", async () => {

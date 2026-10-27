@@ -795,14 +795,14 @@ describe("queryBatchMessages", () => {
     await queryBatchMessages(
       client,
       {
-        fromEmail: "o'connor@example.com",
+        fromEmail: "o'connor+news@example.com",
         maxResults: 20,
       },
       createTestLogger(),
     );
 
     expect(request.filter).toHaveBeenCalledWith(
-      "from/emailAddress/address eq 'o''connor%40example.com'",
+      "from/emailAddress/address eq 'o''connor%2Bnews%40example.com'",
     );
     expect(request.orderby).not.toHaveBeenCalled();
   });
