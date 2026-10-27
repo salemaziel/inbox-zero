@@ -458,6 +458,30 @@ describe("isColdEmail", () => {
     expect(createGenerateObject).not.toHaveBeenCalled();
   });
 
+  it("does not assume prior contact or search the provider when the From address is unparseable", async () => {
+    vi.mocked(prisma.groupItem.findFirst).mockResolvedValue(null);
+
+    const result = await checkColdEmailGuards({
+      logger,
+      email: {
+        id: "msg-unparseable-from",
+        from: "known@example.com <bad!local@other.example>",
+        to: "user@test.com",
+        subject: "Hello",
+        content: "Hello",
+        date: new Date(),
+      },
+      emailAccount: getEmailAccount({ id: "test-account-id" }),
+      provider: mockProvider as never,
+      coldEmailRule: { instructions: "test instructions", groupId: "group-id" },
+    });
+
+    expect(result).toBeNull();
+    expect(
+      mockProvider.hasPreviousCommunicationsWithSenderOrDomain,
+    ).not.toHaveBeenCalled();
+  });
+
   it("isColdEmail runs the AI check when the guards are undecided", async () => {
     vi.mocked(prisma.groupItem.findFirst).mockResolvedValue(null);
     const generateObject = vi

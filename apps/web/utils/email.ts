@@ -53,33 +53,19 @@ export function extractEmailAddress(email: string): string {
   // Trim the input once at the start to handle leading/trailing spaces
   const trimmedEmail = email.trim();
 
-  // Try to extract from angle brackets first
-  const bracketMatch = trimmedEmail.match(/<([^<>]+)>$/);
-  if (bracketMatch) {
-    const candidate = bracketMatch[1].trim();
-    if (isValidEmail(candidate)) {
-      return candidate;
-    }
+  // When the header has an angle-addr, that is the mailbox. Everything else is
+  // display text the sender chooses, so an address there must never stand in
+  // for an angle-addr we can't validate.
+  if (trimmedEmail.includes("<")) {
+    const candidate = trimmedEmail
+      .match(/<[^<>]*>/g)
+      ?.at(-1)
+      ?.slice(1, -1);
+    const address = candidate?.trim() ?? "";
+    return isValidEmail(address) ? address : "";
   }
 
-  // If no brackets or invalid email in brackets, try the whole string
-  if (isValidEmail(trimmedEmail)) {
-    return trimmedEmail;
-  }
-
-  // As a last resort, look for any email-like pattern in the string
-  const emailPattern = /\b[^\s<>]+@[^\s<>]+\.[^\s<>]+\b/g;
-  const matches = trimmedEmail.match(emailPattern);
-  if (matches) {
-    // Try each match to find a valid email
-    for (const match of matches) {
-      if (isValidEmail(match)) {
-        return match;
-      }
-    }
-  }
-
-  return "";
+  return isValidEmail(trimmedEmail) ? trimmedEmail : "";
 }
 
 export function canonicalizeEmailAddress(email: string): string {

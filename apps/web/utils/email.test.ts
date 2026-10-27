@@ -215,10 +215,27 @@ describe("email utils", () => {
       ["multiple @ symbols", "Test <user@@domain.com>", ""],
       ["non-email bracket content", "Test <notanemail>", ""],
       [
-        "raw email after invalid bracket content",
+        "address after invalid bracket content",
         "Test <invalid> valid@email.com",
-        "valid@email.com",
+        "",
       ],
+      [
+        "address in display name when the angle-addr is invalid",
+        "trusted@example.com <bad!local@other.example>",
+        "",
+      ],
+      [
+        "quoted address in display name when the angle-addr is invalid",
+        '"trusted@example.com" <not-an-address>',
+        "",
+      ],
+      [
+        "address in display name when the angle-addr is valid",
+        "trusted@example.com <real@other.example>",
+        "real@other.example",
+      ],
+      ["unclosed angle-addr", "Name <name@example.com", ""],
+      ["address followed by a comment", "name@example.com (Name)", ""],
       ["hyphen in local part", "no-reply@example.com", "no-reply@example.com"],
       [
         "hyphen in bracketed local part",

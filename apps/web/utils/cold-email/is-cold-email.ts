@@ -117,13 +117,18 @@ export async function checkColdEmailGuards({
     return { isColdEmail: false, reason: "excluded" };
   }
 
-  const hasPreviousEmail = await hasPriorContactOrAssumeYes({
-    provider,
-    from: extractEmailAddress(email.from) || email.from,
-    date: email.date,
-    messageId: email.id,
-    logger,
-  });
+  // An unparseable From is sender-controlled, so it must not reach the
+  // provider search or the assume-prior-contact path; let the AI decide.
+  const fromAddress = extractEmailAddress(email.from);
+  const hasPreviousEmail = fromAddress
+    ? await hasPriorContactOrAssumeYes({
+        provider,
+        from: fromAddress,
+        date: email.date,
+        messageId: email.id,
+        logger,
+      })
+    : false;
 
   if (hasPreviousEmail) {
     logger.info("Has previous email");
