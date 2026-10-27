@@ -121,9 +121,11 @@ export async function getThreadParticipantMessagesInBatches({
     const requestId = `thread-${index}`;
     requestIdToThreadId.set(requestId, threadId);
 
+    // URLSearchParams URL-encodes the filter, so the literal only needs its
+    // quotes doubled here.
     const searchParams = new URLSearchParams({
       // Unsent drafts would otherwise appear as senders in thread names.
-      $filter: `conversationId eq '${escapeODataString(threadId)}' and isDraft eq false`,
+      $filter: `conversationId eq '${threadId.replaceAll("'", "''")}' and isDraft eq false`,
       $select: THREAD_PARTICIPANT_SELECT_FIELDS,
       $top: "100",
     });

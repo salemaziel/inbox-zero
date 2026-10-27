@@ -2359,9 +2359,11 @@ export class OutlookProvider implements EmailProvider {
     // For exact email matching, use $filter with eq (case-insensitive for email addresses)
     if (!isFullEmail) {
       // Domain-based search - use $search for both sent and received
-      const escapedKqlDomain = searchTerm
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"');
+      // The Graph SDK puts $search into the URL as-is, so the term is
+      // URL-encoded after KQL escaping.
+      const escapedKqlDomain = encodeURIComponent(
+        searchTerm.replace(/\\/g, "\\\\").replace(/"/g, '\\"'),
+      );
 
       const [sentResponse, receivedResponse] = await Promise.all([
         this.client
@@ -2405,9 +2407,9 @@ export class OutlookProvider implements EmailProvider {
     const receivedFilter = `from/emailAddress/address eq '${escapedSearchTerm}' and receivedDateTime lt ${dateString}`;
 
     // Use $search for sent messages as $filter on toRecipients is unreliable
-    const escapedKqlSearchTerm = searchTerm
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"');
+    const escapedKqlSearchTerm = encodeURIComponent(
+      searchTerm.replace(/\\/g, "\\\\").replace(/"/g, '\\"'),
+    );
     const sentSearch = `"to:${escapedKqlSearchTerm}"`;
 
     const [sentResponse, receivedResponse] = await Promise.all([

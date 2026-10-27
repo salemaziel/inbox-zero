@@ -798,7 +798,7 @@ describe("queryBatchMessages", () => {
     );
 
     expect(request.filter).toHaveBeenCalledWith(
-      "from/emailAddress/address eq 'o''connor@example.com'",
+      "from/emailAddress/address eq 'o''connor%40example.com'",
     );
     expect(request.orderby).not.toHaveBeenCalled();
   });

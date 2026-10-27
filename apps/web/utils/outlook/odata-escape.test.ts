@@ -4,19 +4,16 @@ import { escapeODataString } from "@/utils/outlook/odata-escape";
 describe("OData String Escaping", () => {
   it("should escape single quotes by doubling them", () => {
     expect(escapeODataString("O'Brien")).toBe("O''Brien");
-    expect(escapeODataString("test' or 1=1 --")).toBe("test'' or 1=1 --");
-    expect(escapeODataString("it's a test")).toBe("it''s a test");
-  });
-
-  it("should handle strings without quotes", () => {
-    expect(escapeODataString("normal string")).toBe("normal string");
-    expect(escapeODataString("test@example.com")).toBe("test@example.com");
-  });
-
-  it("should handle multiple quotes", () => {
     expect(escapeODataString("'test'")).toBe("''test''");
-    expect(escapeODataString("test's 'quoted' text")).toBe(
-      "test''s ''quoted'' text",
+  });
+
+  it("should URL-encode the literal so Graph decodes it back unchanged", () => {
+    expect(escapeODataString("test@example.com")).toBe("test%40example.com");
+    expect(escapeODataString("a+tag@example.com")).toBe(
+      "a%2Btag%40example.com",
+    );
+    expect(decodeURIComponent(escapeODataString("it's a test"))).toBe(
+      "it''s a test",
     );
   });
 
@@ -30,29 +27,21 @@ describe("OData String Escaping", () => {
     expect(escapeODataString(123 as any)).toBe("");
   });
 
-  it("should prevent OData injection attacks", () => {
-    // Simulated malicious inputs
-    const maliciousEmail = "attacker@example.com' or subject eq 'sensitive";
-    const escaped = escapeODataString(maliciousEmail);
-
-    // The escaped version should have doubled quotes
-    expect(escaped).toBe("attacker@example.com'' or subject eq ''sensitive");
-
-    // When used in a filter, it should be safe
-    const filter = `from/emailAddress/address eq '${escaped}'`;
-    expect(filter).toBe(
-      "from/emailAddress/address eq 'attacker@example.com'' or subject eq ''sensitive'",
+  it("should keep a literal quote inside the string after Graph URL-decodes the filter", () => {
+    const filters = [
+      "x' or true or 'x",
+      "x%27 or true or %27x",
+      "x'&$top=999",
+    ].map(
+      (value) =>
+        `conversationId eq '${decodeURIComponent(escapeODataString(value))}'`,
     );
 
-    // The filter should not allow breaking out of the string literal
-    // Check that there are no unescaped single quotes followed by " or "
-    // (All quotes should be doubled, so we shouldn't see a single quote followed by " or ")
-    expect(filter).toContain(
-      "attacker@example.com'' or subject eq ''sensitive",
-    );
-    // Verify the malicious pattern has been neutralized
-    expect(filter).toBe(
-      "from/emailAddress/address eq 'attacker@example.com'' or subject eq ''sensitive'",
-    );
+    for (const filter of filters) {
+      const literal = filter.slice("conversationId eq '".length, -1);
+      expect(literal.replaceAll("''", "")).not.toContain("'");
+    }
+    expect(filters[1]).toBe("conversationId eq 'x%27 or true or %27x'");
+    expect(escapeODataString("x'&$top=999")).not.toContain("&");
   });
 });

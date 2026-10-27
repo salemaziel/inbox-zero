@@ -8,6 +8,7 @@ import { withMicrosoftGraphRetry } from "@/utils/outlook/retry";
 const OUTLOOK_THREAD_WRITE_CONCURRENCY = 3;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 const MAX_THREAD_MESSAGE_PAGES = 50;
+const GRAPH_ID_PATTERN = /^[A-Za-z0-9+/=_-]+$/;
 
 // Thrown when a conversation can't be listed past its first page. Callers'
 // fallbacks are for Graph rejecting the conversation filter itself; running
@@ -55,19 +56,31 @@ export async function listThreadMessages<TMessage extends { id: string }>({
   folderId?: string;
   logger: Logger;
 }): Promise<TMessage[]> {
+  // Graph conversation IDs are base64 or base64url. Anything else is not a
+  // real thread, and callers mutate whatever this returns.
+  if (!GRAPH_ID_PATTERN.test(threadId)) {
+    throw new Error("Invalid Outlook thread ID");
+  }
+
   const conversationFilter = `conversationId eq '${escapeODataString(threadId)}'`;
   const filter = folderId
     ? `${conversationFilter} and parentFolderId eq '${escapeODataString(folderId)}'`
     : conversationFilter;
 
-  type MessagePage = { value: TMessage[]; "@odata.nextLink"?: string };
+  type MessagePage = {
+    value: (TMessage & { conversationId?: string | null })[];
+    "@odata.nextLink"?: string;
+  };
+  const selectFields = select.split(",").includes("conversationId")
+    ? select
+    : `${select},conversationId`;
   let page: MessagePage = await withMicrosoftGraphRetry(
     () =>
       client
         .getClient()
         .api("/me/messages")
         .filter(filter)
-        .select(select)
+        .select(selectFields)
         .top(THREAD_MESSAGE_PAGE_SIZE)
         .get(),
     logger,
@@ -75,8 +88,15 @@ export async function listThreadMessages<TMessage extends { id: string }>({
 
   const messages = new Map<string, TMessage>();
   const visitedPages = new Set<string>();
+  let otherConversationCount = 0;
   while (true) {
     for (const message of page.value) {
+      // Callers trash, archive, or relabel every message returned, so a
+      // filter Graph read more broadly than intended must not reach them.
+      if (message.conversationId && message.conversationId !== threadId) {
+        otherConversationCount++;
+        continue;
+      }
       if (message.id) messages.set(message.id, message);
     }
 
@@ -87,6 +107,12 @@ export async function listThreadMessages<TMessage extends { id: string }>({
       nextPageToken,
       visitedPages,
       logger,
+    });
+  }
+
+  if (otherConversationCount > 0) {
+    logger.warn("Dropped messages from other conversations in thread listing", {
+      otherConversationCount,
     });
   }
 

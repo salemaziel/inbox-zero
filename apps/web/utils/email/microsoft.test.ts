@@ -1024,7 +1024,8 @@ describe("OutlookProvider.searchMessages", () => {
       .getRequestLog()
       .find(
         (entry: { filter?: string }) =>
-          entry.filter === "from/emailAddress/address eq 'sender@example.com'",
+          entry.filter ===
+          "from/emailAddress/address eq 'sender%40example.com'",
       );
     expect(senderFilterRequest).toMatchObject({ apiPath: "/me/messages" });
     // Graph rejects $orderby combined with a sender $filter (InefficientFilter)
@@ -1052,9 +1053,11 @@ describe("OutlookProvider reply history", () => {
       categoryMapCache: new Map(),
       responsesByApiPath: {
         "/me/messages": ({ filter }) => {
-          const sender = filter?.match(
+          const encodedSender = filter?.match(
             /^from\/emailAddress\/address eq '(.+)'$/,
           )?.[1];
+          // Graph URL-decodes the query before reading the filter.
+          const sender = encodedSender && decodeURIComponent(encodedSender);
           const count = sender ? (receivedFrom[sender] ?? 0) : 0;
           return {
             value: Array.from({ length: Math.min(count, 10) }, (_, i) =>

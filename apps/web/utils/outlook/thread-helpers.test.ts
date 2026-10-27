@@ -18,26 +18,68 @@ describe("listThreadMessages", () => {
   it("lists every page of a conversation within the requested folder", async () => {
     const { client, get, filters } = createListClient([
       {
-        value: [{ id: "m1" }, { id: "m2" }],
+        value: [
+          { id: "m1", conversationId: "conv1=" },
+          { id: "m2", conversationId: "conv1=" },
+        ],
         "@odata.nextLink":
           "https://graph.microsoft.com/v1.0/me/messages?$skip=100",
       },
-      { value: [{ id: "m2" }, { id: "m3" }] },
+      {
+        value: [
+          { id: "m2", conversationId: "conv1=" },
+          { id: "m3", conversationId: "conv1=" },
+        ],
+      },
     ]);
 
     const messages = await listThreadMessages({
       client,
-      threadId: "conv'1",
+      threadId: "conv1=",
       select: "id",
-      folderId: "inbox-id",
+      folderId: "inbox'id",
       logger: createTestLogger(),
     });
 
     expect(messages.map((message) => message.id)).toEqual(["m1", "m2", "m3"]);
     expect(get).toHaveBeenCalledTimes(2);
     expect(filters).toEqual([
-      "conversationId eq 'conv''1' and parentFolderId eq 'inbox-id'",
+      "conversationId eq 'conv1%3D' and parentFolderId eq 'inbox''id'",
     ]);
+  });
+
+  it("rejects a thread ID outside Graph's ID alphabet without calling Graph", async () => {
+    const { client, get } = createListClient([{ value: [] }]);
+
+    await expect(
+      listThreadMessages({
+        client,
+        threadId: "conv1%27 or true or %27",
+        select: "id",
+        logger: createTestLogger(),
+      }),
+    ).rejects.toThrow("Invalid Outlook thread ID");
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("drops messages from other conversations before returning them", async () => {
+    const { client } = createListClient([
+      {
+        value: [
+          { id: "m1", conversationId: "conv1" },
+          { id: "other", conversationId: "conv2" },
+        ],
+      },
+    ]);
+
+    const messages = await listThreadMessages({
+      client,
+      threadId: "conv1",
+      select: "id",
+      logger: createTestLogger(),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual(["m1"]);
   });
 
   it("refuses to follow a next page link outside Microsoft Graph", async () => {
@@ -251,7 +293,10 @@ function mockClient(messages: { id: string; conversationId: string }[]) {
 }
 
 function createListClient(
-  pages: { value: { id: string }[]; "@odata.nextLink"?: string }[],
+  pages: {
+    value: { id: string; conversationId?: string }[];
+    "@odata.nextLink"?: string;
+  }[],
 ) {
   const filters: string[] = [];
   const get = vi.fn();
