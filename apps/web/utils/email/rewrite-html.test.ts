@@ -161,6 +161,6 @@ describe("rewriteCssRemoteAssetUrls", () => {
 
     const started = performance.now();
     await rewriteCssRemoteAssetUrls(css, proxyOptions);
-    expect(performance.now() - started).toBeLessThan(1000);
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });

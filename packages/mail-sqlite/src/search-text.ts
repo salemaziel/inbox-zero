@@ -9,9 +9,9 @@ export function searchableBody(content: {
   if (content.text?.trim()) return searchableText(content.text);
   if (content.html) {
     // Bodies can be megabytes; the visible words are near the top, and the
-    // cap bounds indexing time inside the sync write.
-    const html = content.html.slice(0, MAX_INDEXED_HTML_LENGTH);
-    return searchableText(htmlToSearchText(html));
+    // cap bounds indexing time inside the sync write. Text past the cap is
+    // not searchable.
+    return searchableText(htmlToSearchText(capHtml(content.html)));
   }
   return "";
 }
@@ -60,6 +60,18 @@ export function htmlToSearchText(html: string): string {
 }
 
 const MAX_INDEXED_HTML_LENGTH = 256 * 1024;
+
+// Drops a tag the cut left open, which would otherwise be indexed as words,
+// and a lone high surrogate at the cut.
+function capHtml(html: string): string {
+  if (html.length <= MAX_INDEXED_HTML_LENGTH) return html;
+  let capped = html.slice(0, MAX_INDEXED_HTML_LENGTH);
+  const lastOpen = capped.lastIndexOf("<");
+  if (lastOpen > capped.lastIndexOf(">")) capped = capped.slice(0, lastOpen);
+  const lastCode = capped.charCodeAt(capped.length - 1);
+  if (lastCode >= 0xd8_00 && lastCode <= 0xdb_ff) capped = capped.slice(0, -1);
+  return capped;
+}
 
 // unicode61's default token characters: letters, numbers, and private use.
 const TOKEN_CHARACTER = /[\p{L}\p{N}\p{Co}]/u;
