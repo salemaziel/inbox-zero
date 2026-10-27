@@ -213,22 +213,23 @@ const aiTaskModelEntry = z.object({
 
 // Stored in User.aiTaskModels. Which providers, models and levels an entry may
 // use is checked on save, against the user's main provider, connected
-// subscriptions and the subscription's model list.
+// subscriptions and the subscription's model list. null means the task
+// follows the main model; a missing entry means the user never saved one.
 export const aiTaskModelsSchema = z.object({
-  chat: aiTaskModelEntry.optional(),
-  draft: aiTaskModelEntry.optional(),
-  default: aiTaskModelEntry.optional(),
-  economy: aiTaskModelEntry.optional(),
-  nano: aiTaskModelEntry.optional(),
+  chat: aiTaskModelEntry.nullish(),
+  draft: aiTaskModelEntry.nullish(),
+  default: aiTaskModelEntry.nullish(),
+  economy: aiTaskModelEntry.nullish(),
+  nano: aiTaskModelEntry.nullish(),
 });
 export type AiTaskModels = z.infer<typeof aiTaskModelsSchema>;
 export type AiTaskModelEntry = z.infer<typeof aiTaskModelEntry>;
 
-// What a task with no entry of its own runs on when the main provider is a
-// subscription: high-volume tasks get the light model with low thinking when
-// the user's model list offers them, the rest (and every task when it
-// doesn't) the main model. The settings form and getModel both pass the list
-// the user is offered, so what the form shows is what runs.
+// The recommended model for a task when the main provider is a subscription:
+// high-volume tasks get the light model with low thinking when the list
+// offers them, the rest (and every task when it doesn't) the main model.
+// Saving resolves it against the user's own list; a task never saved uses the
+// built-in list.
 export function getRecommendedTaskModel(
   provider: SubscriptionProvider,
   type: AiTaskModelType,
@@ -245,7 +246,7 @@ export function getRecommendedTaskModel(
 }
 
 // Each entry is read on its own, so an unreadable one (a level this version
-// doesn't know, a hand edit) only sends that task back to the main model.
+// doesn't know, a hand edit) only sends that task back to its default.
 export function parseAiTaskModels(value: unknown): {
   models: AiTaskModels;
   invalid: AiTaskModelType[];
@@ -257,7 +258,11 @@ export function parseAiTaskModels(value: unknown): {
   const models: AiTaskModels = {};
   const invalid: AiTaskModelType[] = [];
   for (const type of AI_TASK_MODEL_TYPES) {
-    if (record[type] === undefined || record[type] === null) continue;
+    if (record[type] === undefined) continue;
+    if (record[type] === null) {
+      models[type] = null;
+      continue;
+    }
     const parsed = aiTaskModelEntry.safeParse(record[type]);
     if (parsed.success) models[type] = parsed.data;
     else invalid.push(type);

@@ -1564,36 +1564,73 @@ describe("Models", () => {
       });
     });
 
-    it("runs high-volume work on the main model when the user's ChatGPT list lacks the light model, as the settings form shows", () => {
+    it("decides high-volume work from what's saved, the same with an empty or a filled ChatGPT list cache", () => {
       const listedModels = getCodexModelsCache();
       const codexUser = defaultUserAi({
         aiProvider: Provider.CODEX_CLI,
         aiModel: "gpt-6.1-sol",
         aiReasoningEffort: "medium",
+        aiTaskModels: { economy: null },
       });
-      const builtIn = SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models;
+      const run = () =>
+        (["default", "economy", "nano"] as const).map((modelType) => {
+          const { modelName, reasoningEffort } = getModel(codexUser, modelType);
+          return { modelName, reasoningEffort };
+        });
 
+      listedModels.clear();
+      const withEmptyCache = run();
+      // A listing without the light model, as right after a plan change.
       listedModels.set("user:user-1", {
-        models: builtIn.filter((m) => m.value !== "gpt-6-luna"),
-        expiresAt: 0,
+        models: SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models.filter(
+          (m) => m.value !== "gpt-6-luna",
+        ),
+        expiresAt: Date.now() + 60_000,
       });
-      expect(getModel(codexUser, "default")).toMatchObject({
+      const withFilledCache = run();
+      listedModels.clear();
+
+      expect(withFilledCache).toEqual(withEmptyCache);
+      // Never saved: the built-in recommendation. Saved as follow-main: main.
+      expect(withEmptyCache).toEqual([
+        { modelName: "gpt-6-luna", reasoningEffort: "low" },
+        { modelName: "gpt-6.1-sol", reasoningEffort: "medium" },
+        { modelName: "gpt-6-luna", reasoningEffort: "low" },
+      ]);
+    });
+
+    it("keeps a task saved as follow-main on the main model after the main model changes", () => {
+      const aiTaskModels = { nano: null };
+
+      const before = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CODEX_CLI,
+          aiModel: "gpt-6.1-sol",
+          aiReasoningEffort: "medium",
+          aiTaskModels,
+        }),
+        "nano",
+      );
+      const after = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CLAUDE_CODE,
+          aiModel: "opus",
+          aiReasoningEffort: "high",
+          aiTaskModels,
+        }),
+        "nano",
+      );
+
+      expect(before).toMatchObject({
+        provider: Provider.CODEX_CLI,
         modelName: "gpt-6.1-sol",
         reasoningEffort: "medium",
       });
-
-      // Listed, but without the low level.
-      listedModels.set("user:user-1", {
-        models: builtIn.map((m) =>
-          m.value === "gpt-6-luna" ? { ...m, efforts: ["medium"] } : m,
-        ),
-        expiresAt: 0,
+      expect(after).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "opus",
+        reasoningEffort: "high",
       });
-      expect(getModel(codexUser, "economy")).toMatchObject({
-        modelName: "gpt-6-luna",
-        reasoningEffort: null,
-      });
-      listedModels.clear();
     });
 
     it("keeps the other task entries when one saved entry can't be read", () => {

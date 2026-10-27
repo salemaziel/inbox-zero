@@ -14,6 +14,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
 import {
+  type AiTaskModelEntry,
   getRecommendedTaskModel,
   isSubscriptionProvider,
   parseAiTaskModels,
@@ -22,7 +23,6 @@ import {
   reasoningEffortSchema,
   SUBSCRIPTION_MODELS,
 } from "@/utils/llms/config";
-import { getKnownSubscriptionModels } from "@/utils/llms/subscription-models";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
@@ -109,7 +109,12 @@ export function getModel(
       }
     : userAi.aiApiKey || usesOwnCliLogin
       ? {
-          primaryModel: selectUserModel(userAi, modelType, cliLogin),
+          primaryModel: selectUserModel(
+            userAi,
+            modelType,
+            cliLogin,
+            taskModel === undefined,
+          ),
           fallbackModels: [],
         }
       : selectDeploymentModelByType(modelType, allowServerCliLogin);
@@ -133,17 +138,21 @@ export function getModel(
 }
 
 // A per-task entry only applies while its provider is still usable: the main
-// provider (with the main API key) or a CLI subscription.
-function getUserTaskModel(userAi: UserAIFields, modelType: ModelType) {
+// provider (with the main API key) or a CLI subscription. null means the task
+// follows the main model; undefined means it has no usable entry.
+function getUserTaskModel(
+  userAi: UserAIFields,
+  modelType: ModelType,
+): AiTaskModelEntry | null | undefined {
   const { models, invalid } = parseAiTaskModels(userAi.aiTaskModels);
   if (invalid.includes(modelType)) {
     logger.warn("Ignoring an unreadable task model entry", { modelType });
   }
   const entry = models[modelType];
-  if (!entry) return null;
+  if (!entry) return entry;
   if (isCliSubscriptionProvider(entry.provider)) return entry;
   if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
-  return null;
+  return;
 }
 
 function selectModel(
@@ -492,11 +501,12 @@ function selectUserModel(
   userAi: UserAIFields,
   modelType: ModelType,
   cliLogin: CliLoginScope,
+  useRecommended: boolean,
 ): ResolvedModel {
   const configuredDefault = getFirstSupportedModelListEntry("default");
   const aiProvider = userAi.aiProvider || configuredDefault?.provider;
   const { aiModel, reasoningEffort } = userAi.aiProvider
-    ? getUserModelChoice(userAi, userAi.aiProvider, modelType, cliLogin)
+    ? getUserModelChoice(userAi, userAi.aiProvider, modelType, useRecommended)
     : { aiModel: configuredDefault?.modelName || null, reasoningEffort: null };
 
   if (!aiProvider) {
@@ -518,20 +528,24 @@ function selectUserModel(
 
 // High-volume tasks on a user's own subscription use the recommended light
 // model and thinking level so they don't burn through the plan's limits.
+// Saving settings writes that choice per task, resolved against the user's
+// own list; a task never saved uses the built-in list, as the form shows.
 function getUserModelChoice(
   userAi: UserAIFields,
   aiProvider: string,
   modelType: ModelType,
-  cliLogin: CliLoginScope,
+  useRecommended: boolean,
 ): { aiModel: string | null; reasoningEffort: ReasoningEffort | null } {
   if (!isSubscriptionProvider(aiProvider))
     return { aiModel: userAi.aiModel || null, reasoningEffort: null };
 
-  const recommended = getRecommendedTaskModel(
-    aiProvider,
-    modelType,
-    getKnownSubscriptionModels(aiProvider, cliLogin),
-  );
+  const recommended = useRecommended
+    ? getRecommendedTaskModel(
+        aiProvider,
+        modelType,
+        SUBSCRIPTION_MODELS[aiProvider].models,
+      )
+    : null;
   if (recommended)
     return {
       aiModel: recommended.model,

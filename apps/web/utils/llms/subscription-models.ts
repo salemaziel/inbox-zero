@@ -12,7 +12,6 @@ import {
   type ReasoningEffort,
   SUBSCRIPTION_MODELS,
   type SubscriptionModel,
-  type SubscriptionProvider,
 } from "@/utils/llms/config";
 import { createScopedLogger } from "@/utils/logger";
 
@@ -53,23 +52,6 @@ export async function getSubscriptionModels(
   if (!isSubscriptionProvider(provider)) return [];
   if (provider === Provider.CODEX_CLI) return getCodexModels(cliLogin);
   return [...SUBSCRIPTION_MODELS[provider].models];
-}
-
-// The list getSubscriptionModels last gave this user, without running the
-// CLI, for code that can't wait on it: their own login's Codex list, else the
-// server login's for owners, else the built-in list. An expired list still
-// beats the built-in one.
-export function getKnownSubscriptionModels(
-  provider: SubscriptionProvider,
-  cliLogin: CliLoginScope,
-): readonly SubscriptionModel[] {
-  if (provider === Provider.CODEX_CLI) {
-    const cached =
-      codexModelsCache.get(getCodexModelsKey("user", cliLogin.userId)) ??
-      (cliLogin.allowServerLogin ? codexModelsCache.get("server") : undefined);
-    if (cached) return cached.models;
-  }
-  return SUBSCRIPTION_MODELS[provider].models;
 }
 
 export async function getAllSubscriptionModels(cliLogin: CliLoginScope) {

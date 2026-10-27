@@ -59,7 +59,6 @@ describe("parseAiTaskModels", () => {
         model: "gpt-6-luna",
         reasoningEffort: "ultra",
       },
-      nano: null,
     });
 
     expect(parsed).toEqual({
@@ -67,6 +66,24 @@ describe("parseAiTaskModels", () => {
       invalid: ["economy"],
     });
     expect(parseAiTaskModels(null)).toEqual({ models: {}, invalid: [] });
+  });
+
+  it("reads rows saved before follow-main existed, and tells follow-main apart from no entry", () => {
+    // An old row: entries without a thinking level, and tasks never saved.
+    expect(
+      parseAiTaskModels({
+        economy: { provider: Provider.CODEX_CLI, model: "gpt-6-astra" },
+      }),
+    ).toEqual({
+      models: {
+        economy: { provider: Provider.CODEX_CLI, model: "gpt-6-astra" },
+      },
+      invalid: [],
+    });
+
+    const parsed = parseAiTaskModels({ nano: null });
+    expect(parsed.models.nano).toBeNull();
+    expect("default" in parsed.models).toBe(false);
   });
 });
 

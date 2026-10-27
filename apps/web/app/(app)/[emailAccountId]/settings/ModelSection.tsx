@@ -20,7 +20,6 @@ import type { GetAiSubscriptionResponse } from "@/app/api/user/ai-subscription/r
 import { AlertBasic, AlertError } from "@/components/Alert";
 import {
   AI_TASK_MODEL_TYPES,
-  type AiTaskModels,
   type AiTaskModelType,
   DEFAULT_PROVIDER,
   getRecommendedTaskModel,
@@ -68,6 +67,9 @@ const EFFORT_LABELS: Record<ReasoningEffort, string> = {
   xhigh: "Extra high",
   max: "Max",
 };
+
+// The per-task choice saved as null: follow the main model.
+const SAME_AS_MAIN = "same-as-main";
 
 const WEIGHT_NOTES: Record<ModelWeight, string> = {
   light: "light on your limits",
@@ -151,20 +153,11 @@ function ModelSectionForm(props: {
       ? getModels(provider).find((m) => m.value === model)
       : undefined;
   // Background work starts on the light model with little thinking until the
-  // user picks otherwise; getModel does the same for tasks with no entry,
-  // against the same list.
+  // user picks otherwise.
   const getRecommended = (provider: string, type: AiTaskModelType) =>
     isSubscriptionProvider(provider)
       ? getRecommendedTaskModel(provider, type, getModels(provider))
       : null;
-  const getRecommendedTaskModels = (provider: string): AiTaskModels =>
-    Object.fromEntries(
-      HIGH_VOLUME_TASK_TYPES.flatMap((type) => {
-        const recommended = getRecommended(provider, type);
-        return recommended ? [[type, { provider, ...recommended }]] : [];
-      }),
-    );
-  const hasSavedTaskModels = Object.keys(savedTaskModels).length > 0;
 
   const {
     register,
@@ -183,9 +176,7 @@ function ModelSectionForm(props: {
           : (props.aiModel ?? ""),
       aiApiKey: undefined,
       aiReasoningEffort: savedEffort.success ? savedEffort.data : null,
-      aiTaskModels: hasSavedTaskModels
-        ? savedTaskModels
-        : getRecommendedTaskModels(initialProvider),
+      aiTaskModels: savedTaskModels,
     },
   });
 
@@ -225,10 +216,13 @@ function ModelSectionForm(props: {
 
   const onSubmit: SubmitHandler<SaveAiSettingsBody> = async (data) => {
     // Entries left on a provider that is no longer allowed (the main
-    // provider changed or the account was disconnected) fall back to main.
+    // provider changed or the account was disconnected) are dropped, so the
+    // task goes back to its default. Tasks with no entry are resolved and
+    // saved by the server.
     const allowedTaskModels = Object.fromEntries(
       Object.entries(data.aiTaskModels ?? {}).filter(
-        ([, entry]) => entry && isAllowedTaskProvider(entry.provider),
+        ([, entry]) =>
+          entry === null || (!!entry && isAllowedTaskProvider(entry.provider)),
       ),
     );
     const res = await updateAiSettingsAction({
@@ -278,15 +272,28 @@ function ModelSectionForm(props: {
         };
   };
 
-  // What a task with no entry runs on, named the same way the runtime picks it.
-  const getNoEntryLabel = (type: AiTaskModelType) => {
-    const recommended = getRecommended(aiProvider, type);
-    if (!recommended) return "Same as main";
+  // The choices for a task without a model of its own. A task never saved
+  // runs the recommendation from the built-in list, as getModel does; saving
+  // resolves it against the user's list.
+  const getNoEntryOptions = (type: AiTaskModelType) => {
+    const sameAsMain = [{ label: "Same as main", value: "" }];
+    if (!isSubscriptionProvider(aiProvider)) return sameAsMain;
+    const builtIn: readonly SubscriptionModel[] =
+      SUBSCRIPTION_MODELS[aiProvider].models;
+    const recommended = getRecommendedTaskModel(aiProvider, type, builtIn);
+    if (!recommended) return sameAsMain;
     const label =
-      findModel(aiProvider, recommended.model)?.label ?? recommended.model;
-    return recommended.reasoningEffort
-      ? `Recommended (${label}, ${EFFORT_LABELS[recommended.reasoningEffort].toLowerCase()} thinking)`
-      : `Recommended (${label})`;
+      builtIn.find((m) => m.value === recommended.model)?.label ??
+      recommended.model;
+    return [
+      {
+        label: recommended.reasoningEffort
+          ? `Recommended (${label}, ${EFFORT_LABELS[recommended.reasoningEffort].toLowerCase()} thinking)`
+          : `Recommended (${label})`,
+        value: "",
+      },
+      { label: "Same as main", value: SAME_AS_MAIN },
+    ];
   };
   const hasLightModel = !!getRecommended(aiProvider, "default");
 
@@ -304,9 +311,6 @@ function ModelSectionForm(props: {
               setValue("aiModel", "");
             }
             setValue("aiReasoningEffort", null);
-            if (!hasSavedTaskModels) {
-              setValue("aiTaskModels", getRecommendedTaskModels(provider));
-            }
           },
         })}
         error={errors.aiProvider}
@@ -413,7 +417,6 @@ function ModelSectionForm(props: {
                   ...Object.fromEntries(
                     HIGH_VOLUME_TASK_TYPES.map((type) => [type, undefined]),
                   ),
-                  ...getRecommendedTaskModels(aiProvider),
                 })
               }
             >
@@ -426,6 +429,10 @@ function ModelSectionForm(props: {
               entry && isAllowedTaskProvider(entry.provider)
                 ? entry.provider
                 : "";
+            const noEntryOptions = getNoEntryOptions(type);
+            const followsMain =
+              entry === null &&
+              noEntryOptions.some((option) => option.value === SAME_AS_MAIN);
             const taskModel = entry
               ? findModel(provider, entry.model)
               : undefined;
@@ -444,19 +451,20 @@ function ModelSectionForm(props: {
                   <Select
                     name={`aiTaskModels.${type}.provider`}
                     label={TASK_LABELS[type]}
-                    options={[
-                      { label: getNoEntryLabel(type), value: "" },
-                      ...taskProviderOptions,
-                    ]}
-                    value={provider}
+                    options={[...noEntryOptions, ...taskProviderOptions]}
+                    value={followsMain ? SAME_AS_MAIN : provider}
                     onChange={(event) => {
                       const nextProvider = event.target.value;
-                      setValue(
-                        `aiTaskModels.${type}`,
-                        nextProvider
-                          ? getDefaultTaskEntry(nextProvider, type)
-                          : undefined,
-                      );
+                      if (nextProvider === SAME_AS_MAIN) {
+                        setValue(`aiTaskModels.${type}`, null);
+                      } else if (nextProvider) {
+                        setValue(
+                          `aiTaskModels.${type}`,
+                          getDefaultTaskEntry(nextProvider, type),
+                        );
+                      } else {
+                        setValue(`aiTaskModels.${type}`, undefined);
+                      }
                     }}
                   />
                   {provider &&

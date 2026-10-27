@@ -12,9 +12,12 @@ import {
   toggleDigestBody,
 } from "@/utils/actions/settings.validation";
 import {
+  AI_TASK_MODEL_TYPES,
   type AiTaskModelEntry,
   type AiTaskModelType,
   DEFAULT_PROVIDER,
+  getRecommendedTaskModel,
+  HIGH_VOLUME_TASK_TYPES,
   isSubscriptionProvider,
   parseAiTaskModels,
   Provider,
@@ -145,20 +148,44 @@ export const updateAiSettingsAction = actionClientUser
         }
       }
 
-      // Thinking levels only apply to subscription providers.
-      const nextAiTaskModels = taskEntries.length
-        ? Object.fromEntries(
-            taskEntries.map(([type, entry]) => [
-              type,
-              {
-                provider: entry.provider,
-                model: entry.model,
-                reasoningEffort: isSubscriptionProvider(entry.provider)
-                  ? (entry.reasoningEffort ?? null)
-                  : null,
-              },
-            ]),
-          )
+      // High-volume tasks left on the recommendation are resolved against the
+      // user's own list now and saved, so what runs never depends on a list
+      // read later: the light model if it's offered, else the main model.
+      const mainSubscription = isSubscriptionProvider(aiProvider)
+        ? {
+            provider: aiProvider,
+            models: await getSubscriptionModels(aiProvider, cliLogin),
+          }
+        : null;
+      const resolvedTaskEntries = AI_TASK_MODEL_TYPES.flatMap(
+        (type): [AiTaskModelType, AiTaskModelEntry | null][] => {
+          const entry = aiTaskModels?.[type];
+          if (entry) {
+            return [
+              [
+                type,
+                {
+                  provider: entry.provider,
+                  model: entry.model,
+                  // Thinking levels only apply to subscription providers.
+                  reasoningEffort: isSubscriptionProvider(entry.provider)
+                    ? (entry.reasoningEffort ?? null)
+                    : null,
+                },
+              ],
+            ];
+          }
+          if (!mainSubscription || !HIGH_VOLUME_TASK_TYPES.includes(type)) {
+            return [];
+          }
+          if (entry === null) return [[type, null]];
+          const { provider, models } = mainSubscription;
+          const recommended = getRecommendedTaskModel(provider, type, models);
+          return [[type, recommended ? { provider, ...recommended } : null]];
+        },
+      );
+      const nextAiTaskModels = resolvedTaskEntries.length
+        ? Object.fromEntries(resolvedTaskEntries)
         : Prisma.DbNull;
 
       const providedAiApiKey = aiApiKey?.trim() || null;
@@ -521,7 +548,7 @@ async function assertSubscriptionChoice(
     model: string;
     reasoningEffort: ReasoningEffort | null;
   },
-  saved: AiTaskModelEntry | undefined,
+  saved: AiTaskModelEntry | null | undefined,
 ) {
   if (
     saved?.provider === provider &&

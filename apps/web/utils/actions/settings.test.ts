@@ -141,7 +141,12 @@ describe("updateAiSettingsAction", () => {
         aiModel: "opus",
         aiApiKey: null,
         aiReasoningEffort: null,
-        aiTaskModels: Prisma.DbNull,
+        // Email work left on the recommendation is saved as Haiku.
+        aiTaskModels: {
+          default: haiku,
+          economy: haiku,
+          nano: haiku,
+        },
       },
     });
   });
@@ -177,7 +182,9 @@ describe("updateAiSettingsAction", () => {
         aiApiKey: null,
         aiReasoningEffort: null,
         aiTaskModels: {
+          default: luna,
           economy: { ...aiTaskModels.economy, reasoningEffort: null },
+          nano: luna,
         },
       },
     });
@@ -378,15 +385,33 @@ describe("updateAiSettingsAction", () => {
         aiModel: "gpt-6.1-sol",
         aiApiKey: null,
         aiReasoningEffort: "high",
-        aiTaskModels: {
-          economy: {
-            provider: Provider.CODEX_CLI,
-            model: "gpt-6-luna",
-            reasoningEffort: "low",
-          },
-        },
+        aiTaskModels: { default: luna, economy: luna, nano: luna },
       },
     });
+  });
+
+  it("saves email work left on the recommendation as the light model when the user's list has it, and as the main model when it doesn't", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+    const settings = {
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+      // Nothing for general or quick checks; background set to the main model.
+      aiTaskModels: { economy: null },
+    };
+
+    await updateAiSettingsAction(settings);
+    vi.mocked(getSubscriptionModels).mockResolvedValue([
+      codexModel("gpt-6.1-sol", ["low", "medium", "high"]),
+    ]);
+    await updateAiSettingsAction(settings);
+
+    const saved = vi
+      .mocked(prisma.user.updateMany)
+      .mock.calls.map(([args]) => args.data.aiTaskModels);
+    expect(saved).toEqual([
+      { default: luna, economy: null, nano: luna },
+      { default: null, economy: null, nano: null },
+    ]);
   });
 
   it("rejects a thinking level the model doesn't offer", async () => {
@@ -569,6 +594,17 @@ describe("updateSensitiveDataPolicyAction", () => {
     expect(prisma.emailAccount.update).not.toHaveBeenCalled();
   });
 });
+
+const luna = {
+  provider: Provider.CODEX_CLI,
+  model: "gpt-6-luna",
+  reasoningEffort: "low",
+};
+const haiku = {
+  provider: Provider.CLAUDE_CODE,
+  model: "haiku",
+  reasoningEffort: null,
+};
 
 function mockConnectedLogins(providers: string[]) {
   prisma.aiSubscriptionLogin.findMany.mockResolvedValue(

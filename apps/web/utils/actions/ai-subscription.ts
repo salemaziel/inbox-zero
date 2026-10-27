@@ -55,7 +55,8 @@ export const disconnectAiSubscriptionAction = actionClientUser
     const taskModels = parseAiTaskModels(user.aiTaskModels).models;
     const remainingTaskModels = Object.fromEntries(
       Object.entries(taskModels).filter(
-        ([, entry]) => entry && entry.provider !== provider,
+        // A task following the main model (null) keeps doing so.
+        ([, entry]) => entry?.provider !== provider,
       ),
     );
     const usedProvider = user.aiProvider === provider;
