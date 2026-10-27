@@ -732,6 +732,16 @@ describe("email utils", () => {
       ]);
     });
 
+    it.each([
+      ["a different address", "b@y.example"],
+      ["a different address in parentheses", "Jane (jane@y.example) via Jira"],
+      ["a different address in brackets", "Jane <jane@y.example>"],
+    ])("drops a name holding %s so the address still parses", (_caseName, name) => {
+      const formatted = formatEmailWithName(name, "a@example.com");
+      expect(formatted).toBe("a@example.com");
+      expect(extractEmailAddress(formatted)).toBe("a@example.com");
+    });
+
     it("is the inverse of extractNameFromEmail and extractEmailAddress", () => {
       const formatted = formatEmailWithName("John Doe", "john@example.com");
       expect(extractNameFromEmail(formatted)).toBe("John Doe");

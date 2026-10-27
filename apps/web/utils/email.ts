@@ -264,7 +264,11 @@ export function formatEmailWithName(
   address: string | null | undefined,
 ): string {
   if (!address) return "";
-  if (!name || name === address) return address;
+  // A name holding a different address would make our own parser treat the
+  // header as ambiguous, and the given address is the one that counts.
+  if (!name || name === address || containsOtherAddress(name, address)) {
+    return address;
+  }
   // Quote any RFC 5322 special, so a display name can't open a comment, supply
   // an angle-addr, split a recipient list or read as group syntax.
   if (/["()<>[\]:;@\\,.]/.test(name)) {
