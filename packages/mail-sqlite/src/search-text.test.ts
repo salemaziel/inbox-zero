@@ -70,6 +70,14 @@ describe("htmlToSearchText on hostile markup", () => {
     expect(searchableBody({ text: null, html })).toBe("visible");
   });
 
+  it("does not index half an emoji cut by the size cap", () => {
+    const head = `<p>visible</p>${" ".repeat(256 * 1024 - 15)}`;
+
+    expect(searchableBody({ text: null, html: `${head}😀 later` })).toBe(
+      "visible",
+    );
+  });
+
   it("bounds indexing time on a multi-megabyte body", () => {
     const html = `<a${"b".repeat(5_000_000)}`;
 
