@@ -12,6 +12,7 @@ const config = {
   provider: "typesafe" as const,
   modelId: "jev-latest",
   model: {} as never,
+  usesUserApiKey: false,
 };
 
 describe("decideUnsubscribePageState", () => {

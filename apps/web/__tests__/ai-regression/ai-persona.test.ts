@@ -36,6 +36,7 @@ describe.runIf(isAiTest)(
           aiModel: null,
           aiProvider: null,
           aiApiKey: null,
+          aiReasoningEffort: null,
           aiTaskModels: null,
         },
         account: {

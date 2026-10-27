@@ -63,6 +63,7 @@ const webhookEmailAccountSelect = {
       aiProvider: true,
       aiModel: true,
       aiApiKey: true,
+      aiReasoningEffort: true,
       aiTaskModels: true,
       premium: {
         select: premiumEntitlementSelect,

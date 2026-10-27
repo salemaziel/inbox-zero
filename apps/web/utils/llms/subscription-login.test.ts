@@ -342,6 +342,11 @@ describe("subscription login sessions", () => {
     vi.setSystemTime(Date.now() + SUBSCRIPTION_LOGIN_START_COOLDOWN_MS);
     const child = mockSpawnedChild();
     prisma.aiSubscriptionLogin.upsert.mockResolvedValue({} as never);
+    const listedModels = getCodexModelsCache();
+    listedModels.set("user:user1", {
+      models: [],
+      expiresAt: Number.POSITIVE_INFINITY,
+    });
     await startSubscriptionLogin({
       userId: "user1",
       provider: Provider.CODEX_CLI,
@@ -363,9 +368,27 @@ describe("subscription login sessions", () => {
         create: expect.objectContaining({ credential: fakeAuthJson }),
       }),
     );
+    // The new sign-in's plan may offer other models.
+    expect(listedModels.has("user:user1")).toBe(false);
     await expect(access(home)).rejects.toThrow();
+
+    listedModels.set("user:user1", {
+      models: [],
+      expiresAt: Number.POSITIVE_INFINITY,
+    });
+    await disconnectSubscriptionLogin({
+      userId: "user1",
+      provider: Provider.CODEX_CLI,
+    });
+    expect(listedModels.has("user:user1")).toBe(false);
   });
 });
+
+function getCodexModelsCache() {
+  const store = globalThis as { inboxZeroCodexModels?: Map<string, unknown> };
+  store.inboxZeroCodexModels ??= new Map();
+  return store.inboxZeroCodexModels;
+}
 
 function mockSpawnedChild() {
   const child = Object.assign(new EventEmitter(), {

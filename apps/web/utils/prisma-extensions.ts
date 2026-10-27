@@ -23,7 +23,12 @@ const ENCRYPTED_FIELDS = {
   // queries use normalizedMeetingUrl and activeKey, never this field, so
   // encrypting it does not break any lookup.
   meetingRecording: ["meetingUrl"],
-  user: ["aiApiKey", "webhookSecret"],
+  user: [
+    "aiApiKey",
+    "webhookSecret",
+    "decisionTypesafeApiKey",
+    "decisionOpenrouterApiKey",
+  ],
   aiSubscriptionLogin: ["credential"],
 } as const satisfies Record<string, readonly string[]>;
 

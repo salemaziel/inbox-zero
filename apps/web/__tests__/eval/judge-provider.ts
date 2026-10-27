@@ -20,6 +20,7 @@ export function getEvalJudgeUserAi() {
     aiProvider,
     aiModel,
     aiApiKey,
+    aiReasoningEffort: null,
     aiTaskModels: null,
   };
 }

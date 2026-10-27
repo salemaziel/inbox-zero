@@ -31,6 +31,7 @@ describe.runIf(isAiTest)("Eval: unavailable LLM model fallback", () => {
         aiProvider: "openrouter",
         aiModel: PRIMARY_MODEL,
         aiApiKey: apiKey,
+        aiReasoningEffort: null,
         aiTaskModels: null,
       });
       const fallbackModel = getModel({
@@ -40,6 +41,7 @@ describe.runIf(isAiTest)("Eval: unavailable LLM model fallback", () => {
         aiProvider: "openrouter",
         aiModel: FALLBACK_MODEL,
         aiApiKey: apiKey,
+        aiReasoningEffort: null,
         aiTaskModels: null,
       });
       const modelOptions = {

@@ -28,6 +28,7 @@ describe("disconnectAiSubscriptionAction", () => {
       aiTaskModels: {
         chat: { provider: Provider.CLAUDE_CODE, model: "opus" },
         economy: { provider: Provider.CODEX_CLI, model: "gpt-6-luna" },
+        nano: null,
       },
     });
 
@@ -39,8 +40,10 @@ describe("disconnectAiSubscriptionAction", () => {
         aiProvider: null,
         aiModel: null,
         aiApiKey: null,
+        // A task set to follow the main model keeps following it.
         aiTaskModels: {
           economy: { provider: Provider.CODEX_CLI, model: "gpt-6-luna" },
+          nano: null,
         },
       },
     });

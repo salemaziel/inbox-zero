@@ -4,7 +4,7 @@ import {
   getModel,
   getResolvedDeploymentRolePrimaryModelEntry,
 } from "./model";
-import { Provider } from "./config";
+import { Provider, SUBSCRIPTION_MODELS } from "./config";
 import { env } from "@/env";
 import type { UserAIFields } from "./types";
 import { createAzure } from "@ai-sdk/azure";
@@ -1506,6 +1506,7 @@ describe("Models", () => {
 
       const result = getModel(
         defaultUserAi({ aiProvider: Provider.CLAUDE_CODE }),
+        "chat",
       );
 
       expect(result.provider).toBe(Provider.CLAUDE_CODE);
@@ -1518,39 +1519,151 @@ describe("Models", () => {
       expect(result.hasUserApiKey).toBe(true);
     });
 
-    it("uses the chosen model for main work and the fast model for background work", () => {
+    it("uses the chosen model and thinking level for chat and drafts, and the recommended light settings for high-volume work", () => {
       const scope = { userId: "user-1", allowServerLogin: false };
+      const claudeUser = defaultUserAi({
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "opus",
+        aiReasoningEffort: "max",
+      });
 
-      for (const modelType of ["default", "chat", "draft"] as const) {
-        const result = getModel(
-          defaultUserAi({ aiProvider: Provider.CLAUDE_CODE, aiModel: "opus" }),
-          modelType,
-        );
-        expect(result.modelName).toBe("opus");
-        expect(result.cliLogin).toEqual(scope);
+      for (const modelType of ["chat", "draft"] as const) {
+        const result = getModel(claudeUser, modelType);
+        expect(result).toMatchObject({
+          modelName: "opus",
+          reasoningEffort: "max",
+          cliLogin: scope,
+        });
       }
 
-      for (const modelType of ["economy", "nano"] as const) {
-        const result = getModel(
-          defaultUserAi({ aiProvider: Provider.CLAUDE_CODE, aiModel: "opus" }),
-          modelType,
-        );
-        expect(result.modelName).toBe("haiku");
-        expect(result.cliLogin).toEqual(scope);
+      // Haiku takes no thinking level.
+      for (const modelType of ["default", "economy", "nano"] as const) {
+        const result = getModel(claudeUser, modelType);
+        expect(result).toMatchObject({
+          modelName: "haiku",
+          reasoningEffort: null,
+          cliLogin: scope,
+        });
       }
 
-      const codexEconomy = getModel(
-        defaultUserAi({ aiProvider: Provider.CODEX_CLI, aiModel: null }),
-        "economy",
-      );
-      expect(codexEconomy.modelName).toBe("gpt-6-luna");
-      expect(codexEconomy.cliLogin).toEqual(scope);
+      const codexUser = defaultUserAi({
+        aiProvider: Provider.CODEX_CLI,
+        aiModel: null,
+        aiReasoningEffort: "xhigh",
+      });
+      for (const modelType of ["default", "economy", "nano"] as const) {
+        expect(getModel(codexUser, modelType)).toMatchObject({
+          modelName: "gpt-6-luna",
+          reasoningEffort: "low",
+          cliLogin: scope,
+        });
+      }
+      expect(getModel(codexUser, "chat")).toMatchObject({
+        modelName: "gpt-6.1-sol",
+        reasoningEffort: "xhigh",
+      });
+    });
 
-      const codexDefault = getModel(
-        defaultUserAi({ aiProvider: Provider.CODEX_CLI }),
+    it("decides high-volume work from what's saved, the same with an empty or a filled ChatGPT list cache", () => {
+      const listedModels = getCodexModelsCache();
+      const codexUser = defaultUserAi({
+        aiProvider: Provider.CODEX_CLI,
+        aiModel: "gpt-6.1-sol",
+        aiReasoningEffort: "medium",
+        aiTaskModels: { economy: null },
+      });
+      const run = () =>
+        (["default", "economy", "nano"] as const).map((modelType) => {
+          const { modelName, reasoningEffort } = getModel(codexUser, modelType);
+          return { modelName, reasoningEffort };
+        });
+
+      listedModels.clear();
+      const withEmptyCache = run();
+      // A listing without the light model, as right after a plan change.
+      listedModels.set("user:user-1", {
+        models: SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models.filter(
+          (m) => m.value !== "gpt-6-luna",
+        ),
+        expiresAt: Date.now() + 60_000,
+      });
+      const withFilledCache = run();
+      listedModels.clear();
+
+      expect(withFilledCache).toEqual(withEmptyCache);
+      // Never saved: the built-in recommendation. Saved as follow-main: main.
+      expect(withEmptyCache).toEqual([
+        { modelName: "gpt-6-luna", reasoningEffort: "low" },
+        { modelName: "gpt-6.1-sol", reasoningEffort: "medium" },
+        { modelName: "gpt-6-luna", reasoningEffort: "low" },
+      ]);
+    });
+
+    it("keeps a task saved as follow-main on the main model after the main model changes", () => {
+      const aiTaskModels = { nano: null };
+
+      const before = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CODEX_CLI,
+          aiModel: "gpt-6.1-sol",
+          aiReasoningEffort: "medium",
+          aiTaskModels,
+        }),
+        "nano",
       );
-      expect(codexDefault.modelName).toBe("gpt-6.1-sol");
-      expect(codexDefault.cliLogin).toEqual(scope);
+      const after = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CLAUDE_CODE,
+          aiModel: "opus",
+          aiReasoningEffort: "high",
+          aiTaskModels,
+        }),
+        "nano",
+      );
+
+      expect(before).toMatchObject({
+        provider: Provider.CODEX_CLI,
+        modelName: "gpt-6.1-sol",
+        reasoningEffort: "medium",
+      });
+      expect(after).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "opus",
+        reasoningEffort: "high",
+      });
+    });
+
+    it("keeps the other task entries when one saved entry can't be read", () => {
+      const userAi = defaultUserAi({
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "sonnet",
+        aiTaskModels: {
+          chat: { provider: Provider.CLAUDE_CODE, model: "opus" },
+          economy: {
+            provider: Provider.CODEX_CLI,
+            model: "gpt-6-luna",
+            reasoningEffort: "ultra",
+          },
+        },
+      });
+
+      expect(getModel(userAi, "chat").modelName).toBe("opus");
+      expect(getModel(userAi, "economy")).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "haiku",
+      });
+    });
+
+    it("runs a saved thinking level only if it is a known level", () => {
+      const result = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CODEX_CLI,
+          aiReasoningEffort: "--config=evil",
+        }),
+        "chat",
+      );
+
+      expect(result.reasoningEffort).toBeNull();
     });
 
     it("lets an owner's chosen subscription provider fall back to the server login", () => {
@@ -1606,13 +1719,25 @@ describe("Models", () => {
         aiProvider: Provider.CLAUDE_CODE,
         aiModel: "sonnet",
         aiTaskModels: {
-          chat: { provider: Provider.CLAUDE_CODE, model: "opus" },
+          chat: {
+            provider: Provider.CLAUDE_CODE,
+            model: "opus",
+            reasoningEffort: "medium",
+          },
+          // Saved before thinking levels existed.
           economy: { provider: Provider.CODEX_CLI, model: "gpt-6-astra" },
         },
       });
 
-      expect(getModel(userAi, "chat").modelName).toBe("opus");
-      expect(getModel(userAi, "default").modelName).toBe("sonnet");
+      expect(getModel(userAi, "chat")).toMatchObject({
+        modelName: "opus",
+        reasoningEffort: "medium",
+      });
+      expect(getModel(userAi, "economy")).toMatchObject({
+        provider: Provider.CODEX_CLI,
+        modelName: "gpt-6-astra",
+        reasoningEffort: null,
+      });
       expect(getModel(userAi, "draft").modelName).toBe("sonnet");
       // nano has no entry and the main provider is a subscription, so it
       // keeps the main provider's fast model.
@@ -1714,6 +1839,7 @@ function defaultUserAi(overrides: Partial<UserAIFields> = {}): UserAIFields {
     aiApiKey: null,
     aiProvider: null,
     aiModel: null,
+    aiReasoningEffort: null,
     aiTaskModels: null,
     ...overrides,
   };
@@ -1781,4 +1907,10 @@ function restoreProcessEnv(values: {
       process.env[key] = value;
     }
   }
+}
+
+function getCodexModelsCache() {
+  const store = globalThis as { inboxZeroCodexModels?: Map<string, unknown> };
+  store.inboxZeroCodexModels ??= new Map();
+  return store.inboxZeroCodexModels;
 }

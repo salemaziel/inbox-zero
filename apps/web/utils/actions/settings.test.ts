@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
 import {
+  updateDecisionModelApiKeyAction,
   updateSensitiveDataPolicyAction,
   updateAiSettingsAction,
 } from "./settings";
 import { Prisma } from "@/generated/prisma/client";
-import { Provider } from "@/utils/llms/config";
+import {
+  Provider,
+  SUBSCRIPTION_MODELS,
+  type SubscriptionModel,
+} from "@/utils/llms/config";
+import { getSubscriptionModels } from "@/utils/llms/subscription-models";
+import { isDecisionModelApiKeyRejected } from "@/utils/decision-model/decision-model";
 
 vi.mock("@/utils/prisma");
 vi.mock("@/utils/auth", () => ({
@@ -31,6 +38,16 @@ vi.mock("@/env", () => ({
   env: mockEnv,
 }));
 
+// The real list comes from the Codex CLI; tests use the built-in one unless a
+// test sets its own.
+vi.mock("@/utils/llms/subscription-models", () => ({
+  getSubscriptionModels: vi.fn(),
+}));
+
+vi.mock("@/utils/decision-model/decision-model", () => ({
+  isDecisionModelApiKeyRejected: vi.fn(),
+}));
+
 vi.mock("@/utils/error-messages", async (importActual) => {
   const actual = await importActual<typeof import("@/utils/error-messages")>();
 
@@ -50,6 +67,9 @@ describe("updateAiSettingsAction", () => {
     mockEnv.CLI_LLM_OWNER_EMAILS = "owner@example.com";
     mockEnv.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED = false;
     mockEnv.NEXT_PUBLIC_SENSITIVE_DATA_POLICY_LOCKED = false;
+    vi.mocked(getSubscriptionModels).mockImplementation(async (provider) => [
+      ...(SUBSCRIPTION_MODELS[provider]?.models ?? []),
+    ]);
   });
 
   it("keeps the stored API key when the provider is unchanged and the form leaves it blank", async () => {
@@ -65,6 +85,7 @@ describe("updateAiSettingsAction", () => {
         aiProvider: Provider.OPEN_AI,
         aiModel: "gpt-5.1",
         aiApiKey: "stored-api-key",
+        aiReasoningEffort: null,
         aiTaskModels: Prisma.DbNull,
       },
     });
@@ -119,7 +140,13 @@ describe("updateAiSettingsAction", () => {
         aiProvider: Provider.CLAUDE_CODE,
         aiModel: "opus",
         aiApiKey: null,
-        aiTaskModels: Prisma.DbNull,
+        aiReasoningEffort: null,
+        // Email work left on the recommendation is saved as Haiku.
+        aiTaskModels: {
+          default: haiku,
+          economy: haiku,
+          nano: haiku,
+        },
       },
     });
   });
@@ -153,7 +180,12 @@ describe("updateAiSettingsAction", () => {
         aiProvider: Provider.CODEX_CLI,
         aiModel: "gpt-6.1-sol",
         aiApiKey: null,
-        aiTaskModels,
+        aiReasoningEffort: null,
+        aiTaskModels: {
+          default: luna,
+          economy: { ...aiTaskModels.economy, reasoningEffort: null },
+          nano: luna,
+        },
       },
     });
   });
@@ -185,8 +217,12 @@ describe("updateAiSettingsAction", () => {
       },
     });
 
-    expect(mainResult?.validationErrors).toBeDefined();
-    expect(taskResult?.validationErrors).toBeDefined();
+    expect(mainResult?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
+    expect(taskResult?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 
@@ -209,7 +245,11 @@ describe("updateAiSettingsAction", () => {
         aiProvider: Provider.OPEN_AI,
         aiModel: "gpt-5.1",
         aiApiKey: "stored-api-key",
-        aiTaskModels,
+        aiReasoningEffort: null,
+        aiTaskModels: {
+          chat: { ...aiTaskModels.chat, reasoningEffort: null },
+          economy: { ...aiTaskModels.economy, reasoningEffort: null },
+        },
       },
     });
   });
@@ -237,6 +277,215 @@ describe("updateAiSettingsAction", () => {
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 
+  it("accepts a model the CLI lists even when the built-in list lacks it", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+    vi.mocked(getSubscriptionModels).mockResolvedValue([
+      codexModel("gpt-7-nova", ["low", "medium", "high"]),
+    ]);
+
+    const listed = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-7-nova",
+    });
+    const unlisted = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+    });
+
+    expect(listed?.serverError).toBeUndefined();
+    // Checked against this user's own list, read with their own login.
+    expect(getSubscriptionModels).toHaveBeenCalledWith(Provider.CODEX_CLI, {
+      userId: "user-1",
+      allowServerLogin: false,
+    });
+    expect(unlisted?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
+    expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps saved models the current list lacks while they're left unchanged, and nothing new", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: "user@example.com",
+      emailVerified: true,
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.2-x",
+      aiReasoningEffort: "high",
+      aiTaskModels: {
+        economy: {
+          provider: Provider.CODEX_CLI,
+          model: "gpt-6.2-x-mini",
+          reasoningEffort: "low",
+        },
+      },
+    } as Awaited<ReturnType<typeof prisma.user.findUnique>>);
+    const saved = {
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.2-x",
+      aiReasoningEffort: "high" as const,
+      aiTaskModels: {
+        economy: {
+          provider: Provider.CODEX_CLI,
+          model: "gpt-6.2-x-mini",
+          reasoningEffort: "low" as const,
+        },
+      },
+    };
+
+    // The listing timed out, so only the built-in list is known.
+    const unchanged = await updateAiSettingsAction(saved);
+    const newLevel = await updateAiSettingsAction({
+      ...saved,
+      aiReasoningEffort: "medium",
+    });
+    const newTaskModel = await updateAiSettingsAction({
+      ...saved,
+      aiTaskModels: {
+        nano: { provider: Provider.CODEX_CLI, model: "gpt-6.2-x-mini" },
+      },
+    });
+
+    expect(unchanged?.serverError).toBeUndefined();
+    expect(newLevel?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
+    expect(newTaskModel?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
+    expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ aiModel: "gpt-6.2-x" }),
+      }),
+    );
+  });
+
+  it("saves thinking levels the model offers, for the main model and per task", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+      aiReasoningEffort: "high",
+      aiTaskModels: {
+        economy: {
+          provider: Provider.CODEX_CLI,
+          model: "gpt-6-luna",
+          reasoningEffort: "low",
+        },
+      },
+    });
+
+    expect(result?.serverError).toBeUndefined();
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: {
+        aiProvider: Provider.CODEX_CLI,
+        aiModel: "gpt-6.1-sol",
+        aiApiKey: null,
+        aiReasoningEffort: "high",
+        aiTaskModels: { default: luna, economy: luna, nano: luna },
+      },
+    });
+  });
+
+  it("saves email work left on the recommendation as the light model when the user's list has it, and as the main model when it doesn't", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+    const settings = {
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+      // Nothing for general or quick checks; background set to the main model.
+      aiTaskModels: { economy: null },
+    };
+
+    await updateAiSettingsAction(settings);
+    vi.mocked(getSubscriptionModels).mockResolvedValue([
+      codexModel("gpt-6.1-sol", ["low", "medium", "high"]),
+    ]);
+    await updateAiSettingsAction(settings);
+
+    const saved = vi
+      .mocked(prisma.user.updateMany)
+      .mock.calls.map(([args]) => args.data.aiTaskModels);
+    expect(saved).toEqual([
+      { default: luna, economy: null, nano: luna },
+      { default: null, economy: null, nano: null },
+    ]);
+  });
+
+  it("rejects a thinking level the model doesn't offer", async () => {
+    mockConnectedLogins([Provider.CLAUDE_CODE]);
+
+    const main = await updateAiSettingsAction({
+      aiProvider: Provider.CLAUDE_CODE,
+      aiModel: "haiku",
+      aiReasoningEffort: "low",
+    });
+    const task = await updateAiSettingsAction({
+      aiProvider: Provider.CLAUDE_CODE,
+      aiModel: "sonnet",
+      aiTaskModels: {
+        nano: {
+          provider: Provider.CLAUDE_CODE,
+          model: "haiku",
+          reasoningEffort: "max",
+        },
+      },
+    });
+
+    expect(main?.serverError).toBe(
+      "Haiku doesn't offer that thinking level. Pick another one.",
+    );
+    expect(task?.serverError).toBe(
+      "Haiku doesn't offer that thinking level. Pick another one.",
+    );
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects thinking levels outside the known set before they reach the CLI", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.1-sol",
+      aiReasoningEffort: "ultra --dangerously-bypass" as never,
+    });
+
+    expect(result?.validationErrors).toBeDefined();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("drops thinking levels on API key providers", async () => {
+    await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-5.1",
+      aiReasoningEffort: "high",
+      aiTaskModels: {
+        chat: {
+          provider: Provider.OPEN_AI,
+          model: "gpt-5.1",
+          reasoningEffort: "high",
+        },
+      },
+    });
+
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          aiReasoningEffort: null,
+          aiTaskModels: {
+            chat: {
+              provider: Provider.OPEN_AI,
+              model: "gpt-5.1",
+              reasoningEffort: null,
+            },
+          },
+        }),
+      }),
+    );
+  });
+
   it("rejects subscription providers when the server has them turned off", async () => {
     mockEnv.CLI_LLM_ENABLED = false;
     mockConnectedLogins([Provider.CLAUDE_CODE]);
@@ -250,6 +499,61 @@ describe("updateAiSettingsAction", () => {
       "AI subscriptions aren't enabled on this server.",
     );
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateDecisionModelApiKeyAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnv.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED = false;
+  });
+
+  it("saves and removes the user's own key for the chosen provider only", async () => {
+    await updateDecisionModelApiKeyAction({
+      provider: "typesafe",
+      apiKey: "  fake-typesafe-key  ",
+    });
+    await updateDecisionModelApiKeyAction({
+      provider: "openrouter",
+      apiKey: null,
+    });
+
+    expect(prisma.user.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "user-1" },
+      data: { decisionTypesafeApiKey: "fake-typesafe-key" },
+    });
+    expect(prisma.user.update).toHaveBeenNthCalledWith(2, {
+      where: { id: "user-1" },
+      data: { decisionOpenrouterApiKey: null },
+    });
+  });
+
+  it("doesn't save a key the provider turns down", async () => {
+    vi.mocked(isDecisionModelApiKeyRejected).mockResolvedValueOnce(true);
+
+    const result = await updateDecisionModelApiKeyAction({
+      provider: "openrouter",
+      apiKey: "fake-bad-key",
+    });
+
+    expect(isDecisionModelApiKeyRejected).toHaveBeenCalledWith(
+      "openrouter",
+      "fake-bad-key",
+    );
+    expect(result?.serverError).toBe(
+      "OpenRouter turned down this key. Check it and try again.",
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a blank key", async () => {
+    const result = await updateDecisionModelApiKeyAction({
+      provider: "typesafe",
+      apiKey: "   ",
+    });
+
+    expect(result?.validationErrors).toBeDefined();
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });
 
@@ -291,6 +595,17 @@ describe("updateSensitiveDataPolicyAction", () => {
   });
 });
 
+const luna = {
+  provider: Provider.CODEX_CLI,
+  model: "gpt-6-luna",
+  reasoningEffort: "low",
+};
+const haiku = {
+  provider: Provider.CLAUDE_CODE,
+  model: "haiku",
+  reasoningEffort: null,
+};
+
 function mockConnectedLogins(providers: string[]) {
   prisma.aiSubscriptionLogin.findMany.mockResolvedValue(
     providers.map((provider) => ({ provider })) as Awaited<
@@ -312,4 +627,18 @@ function mockUser({
     aiProvider: Provider.OPEN_AI,
     aiApiKey: "stored-api-key",
   } as Awaited<ReturnType<typeof prisma.user.findUnique>>);
+}
+
+function codexModel(
+  value: string,
+  efforts: SubscriptionModel["efforts"],
+): SubscriptionModel {
+  return {
+    value,
+    label: value,
+    description: null,
+    efforts,
+    defaultEffort: null,
+    weight: null,
+  };
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger, getEmailAccount } from "@/__tests__/helpers";
 
 const envMock = vi.hoisted(() => ({
@@ -21,6 +21,7 @@ import prisma from "@/utils/__mocks__/prisma";
 import { saveAiUsage } from "@/utils/usage";
 import {
   getDecisionModelConfig,
+  isDecisionModelApiKeyRejected,
   runDecisionModel,
   runDecisionModelOrFallback,
 } from "./decision-model";
@@ -31,6 +32,7 @@ const config = {
   provider: "typesafe" as const,
   modelId: "test-model",
   model: new Experimental_DecisionMockModelV4({ doDecide }),
+  usesUserApiKey: false,
 };
 const appliesQuestion = {
   applies: { type: "boolean", instructions: "Does it apply?" },
@@ -51,11 +53,47 @@ describe("getDecisionModelConfig", () => {
   function mockUserSetting(
     decisionModelEnabled: boolean | null,
     aiApiKey: string | null = null,
+    userKeys: {
+      decisionTypesafeApiKey?: string | null;
+      decisionOpenrouterApiKey?: string | null;
+    } = {},
   ) {
     prisma.user.findUnique.mockResolvedValue({
       decisionModelEnabled,
       aiApiKey,
+      decisionTypesafeApiKey: null,
+      decisionOpenrouterApiKey: null,
+      ...userKeys,
     } as never);
+  }
+
+  // The bearer token the model sends, read from one stubbed request.
+  async function getSentApiKey(
+    model: NonNullable<Awaited<ReturnType<typeof getDecisionModelConfig>>>,
+  ) {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        model: "m",
+        usage: { input_tokens: 1 },
+        answers: { applies: { type: "noul", noul: 0.9 } },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await model.model.doDecide({
+        state: [{ type: "json", value: {} }],
+        questions: {
+          applies: { type: "boolean", instructions: "Does it apply?" },
+        },
+      } as never);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const headers = fetchMock.mock.calls[0][1].headers as Record<
+      string,
+      string
+    >;
+    return headers.Authorization.replace("Bearer ", "");
   }
 
   it("returns null without a database lookup when no decision model is configured", async () => {
@@ -121,6 +159,49 @@ describe("getDecisionModelConfig", () => {
 
     mockUserSetting(false);
     expect(await getDecisionModelConfig(getEmailAccount())).toBeNull();
+  });
+
+  it("uses the user's own TypeSafe key instead of the server's", async () => {
+    mockUserSetting(true, null, { decisionTypesafeApiKey: "user-typesafe" });
+
+    const config = await getDecisionModelConfig(getEmailAccount());
+
+    expect(config).toMatchObject({
+      provider: "typesafe",
+      usesUserApiKey: true,
+    });
+    expect(await getSentApiKey(config!)).toBe("user-typesafe");
+  });
+
+  it("uses the user's own OpenRouter key instead of the server's", async () => {
+    envMock.DEFAULT_DECISION_MODEL = "openrouter:cloudflare/clef";
+    envMock.OPENROUTER_API_KEY = "server-openrouter";
+    mockUserSetting(true, null, {
+      decisionOpenrouterApiKey: "user-openrouter",
+    });
+
+    const config = await getDecisionModelConfig(getEmailAccount());
+
+    expect(config).toMatchObject({
+      provider: "openrouter",
+      usesUserApiKey: true,
+    });
+    expect(await getSentApiKey(config!)).toBe("user-openrouter");
+  });
+
+  it("falls back to the server's key without a user key for this provider", async () => {
+    mockUserSetting(true, null, {
+      decisionTypesafeApiKey: "  ",
+      decisionOpenrouterApiKey: "user-openrouter",
+    });
+
+    const config = await getDecisionModelConfig(getEmailAccount());
+
+    expect(config).toMatchObject({
+      provider: "typesafe",
+      usesUserApiKey: false,
+    });
+    expect(await getSentApiKey(config!)).toBe("key");
   });
 
   it("does not enroll users with their own AI key through the deployment default", async () => {
@@ -324,6 +405,49 @@ describe("runDecisionModelOrFallback", () => {
     expect(result).toBe("llm");
     expect(decide).not.toHaveBeenCalled();
     expect(fallback).toHaveBeenCalledOnce();
+  });
+});
+
+describe("isDecisionModelApiKeyRejected", () => {
+  beforeEach(() => {
+    envMock.DEFAULT_DECISION_MODEL = "typesafe:jev-latest";
+    envMock.TYPESAFE_API_KEY = "server-key";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks the provider once with the new key and reports only a refusal", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await isDecisionModelApiKeyRejected("typesafe", "fake-key")).toBe(
+      true,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.typesafe.ai/v1/systemone",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer fake-key" }),
+      }),
+    );
+
+    // An outage doesn't stop the key being saved.
+    fetchMock.mockResolvedValue(new Response("{}", { status: 503 }));
+    expect(await isDecisionModelApiKeyRejected("typesafe", "fake-key")).toBe(
+      false,
+    );
+  });
+
+  it("doesn't check a key for a provider the deployment doesn't use", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await isDecisionModelApiKeyRejected("openrouter", "fake-key")).toBe(
+      false,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

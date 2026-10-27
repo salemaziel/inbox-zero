@@ -1,8 +1,9 @@
 import { createGateway } from "@ai-sdk/gateway";
 import { createOpenAI } from "@ai-sdk/openai";
-import type {
-  Experimental_DecisionModelV4,
-  JSONObject,
+import {
+  APICallError,
+  type Experimental_DecisionModelV4,
+  type JSONObject,
 } from "@ai-sdk/provider";
 import {
   type Experimental_DecisionQuestion,
@@ -45,21 +46,38 @@ export type DecisionModelConfig = {
   provider: "typesafe" | "openrouter" | "aigateway" | "openai";
   modelId: string;
   model: Experimental_DecisionModelV4;
+  // The call runs on the user's own key rather than the server's.
+  usesUserApiKey: boolean;
+};
+
+// A user's own TypeSafe or OpenRouter key, used instead of the server's for
+// that user's decision-model calls.
+type UserDecisionModelKeys = {
+  typesafe?: string | null;
+  openrouter?: string | null;
 };
 
 /** The optional decision model for this account, or null for the LLM path. */
 export async function getDecisionModelConfig(
   emailAccount: Pick<EmailAccountWithAI, "userId">,
 ): Promise<DecisionModelConfig | null> {
-  const config = getDeploymentDecisionModelConfig();
-  if (!config) return null;
+  if (!env.DEFAULT_DECISION_MODEL) return null;
 
   const user = await prisma.user.findUnique({
     where: { id: emailAccount.userId },
-    select: { decisionModelEnabled: true, aiApiKey: true },
+    select: {
+      decisionModelEnabled: true,
+      aiApiKey: true,
+      decisionTypesafeApiKey: true,
+      decisionOpenrouterApiKey: true,
+    },
   });
+  if (!user || !isDecisionModelEnabledForUser(user)) return null;
 
-  return user && isDecisionModelEnabledForUser(user) ? config : null;
+  return createDecisionModelConfig(env.DEFAULT_DECISION_MODEL, {
+    typesafe: user.decisionTypesafeApiKey,
+    openrouter: user.decisionOpenrouterApiKey,
+  });
 }
 
 /**
@@ -76,6 +94,48 @@ export function isDecisionModelEnabledForUser(
 
 export function isDecisionModelAvailable() {
   return !!getDeploymentDecisionModelConfig();
+}
+
+/** The provider the deployment's decision model runs on, if any. */
+export function getDecisionModelProvider() {
+  return getDeploymentDecisionModelConfig()?.provider ?? null;
+}
+
+/**
+ * Asks the deployment's decision model one tiny question with a key a user is
+ * about to save. True only when the provider turned the key down; an outage
+ * or any other failure doesn't block saving it.
+ */
+export async function isDecisionModelApiKeyRejected(
+  provider: "typesafe" | "openrouter",
+  apiKey: string,
+): Promise<boolean> {
+  const providerAndModel = env.DEFAULT_DECISION_MODEL;
+  if (!providerAndModel?.startsWith(`${provider}:`)) return false;
+  const config = createDecisionModelConfig(providerAndModel, {
+    [provider]: apiKey,
+  });
+  if (!config) return false;
+
+  try {
+    await experimental_decide({
+      model: config.model,
+      state: { text: "Checking an API key." },
+      questions: {
+        isKeyCheck: {
+          type: "boolean",
+          instructions: "Is `text` about checking an API key?",
+        },
+      },
+      maxRetries: 0,
+    });
+    return false;
+  } catch (error) {
+    return (
+      APICallError.isInstance(error) &&
+      (error.statusCode === 401 || error.statusCode === 403)
+    );
+  }
 }
 
 /**
@@ -99,7 +159,7 @@ export async function runDecisionModel({
 }): Promise<DecisionModelResponse> {
   await assertTrialAiUsageAllowed({
     userEmail: emailAccount.email,
-    hasUserApiKey: false,
+    hasUserApiKey: config.usesUserApiKey,
     label,
     userId: emailAccount.userId,
     emailAccountId: emailAccount.id,
@@ -213,6 +273,7 @@ export async function runDecisionModelOrFallback<T>({
  */
 export function createDecisionModelConfig(
   providerAndModel: string,
+  userKeys: UserDecisionModelKeys = {},
 ): DecisionModelConfig | null {
   const separatorIndex = providerAndModel.indexOf(":");
   const provider = providerAndModel.slice(0, separatorIndex);
@@ -220,12 +281,14 @@ export function createDecisionModelConfig(
 
   switch (provider) {
     case "typesafe": {
+      const userApiKey = userKeys.typesafe?.trim();
       // Not an LLM provider, so LLM_API_KEY is never a TypeSafe key.
-      const apiKey = env.TYPESAFE_API_KEY?.trim();
+      const apiKey = userApiKey || env.TYPESAFE_API_KEY?.trim();
       if (!apiKey) return null;
       return {
         provider,
         modelId,
+        usesUserApiKey: !!userApiKey,
         model: createSystemOneDecisionModel({
           provider,
           url: "https://api.typesafe.ai/v1/systemone",
@@ -235,11 +298,13 @@ export function createDecisionModelConfig(
       };
     }
     case "openrouter": {
-      const apiKey = resolveApiKey(env.OPENROUTER_API_KEY);
+      const userApiKey = userKeys.openrouter?.trim();
+      const apiKey = userApiKey || resolveApiKey(env.OPENROUTER_API_KEY);
       if (!apiKey) return null;
       return {
         provider,
         modelId,
+        usesUserApiKey: !!userApiKey,
         model: createSystemOneDecisionModel({
           provider,
           url: "https://openrouter.ai/api/alpha/decisions",
@@ -254,6 +319,7 @@ export function createDecisionModelConfig(
       return {
         provider,
         modelId,
+        usesUserApiKey: false,
         model: createGateway({ apiKey }).decisionModel(modelId),
       };
     }
@@ -263,6 +329,7 @@ export function createDecisionModelConfig(
       return {
         provider,
         modelId,
+        usesUserApiKey: false,
         model: createOpenAI({ apiKey }).decisionModel(modelId),
       };
     }

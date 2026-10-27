@@ -14,8 +14,13 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
 import {
-  aiTaskModelsSchema,
+  type AiTaskModelEntry,
+  getRecommendedTaskModel,
+  isSubscriptionProvider,
+  parseAiTaskModels,
   Provider,
+  type ReasoningEffort,
+  reasoningEffortSchema,
   SUBSCRIPTION_MODELS,
 } from "@/utils/llms/config";
 import type { UserAIFields } from "@/utils/llms/types";
@@ -48,6 +53,8 @@ export type ResolvedModel = {
   modelName: string;
   model: LanguageModelV4;
   cliLogin?: CliLoginScope;
+  // Subscription providers only; null runs the model's own default.
+  reasoningEffort?: ReasoningEffort | null;
   // biome-ignore lint/suspicious/noExplicitAny: existing loose external shape
   providerOptions?: Record<string, any>;
 };
@@ -93,6 +100,7 @@ export function getModel(
             aiModel: taskModel.model,
             aiApiKey: usesOwnCliLogin ? null : userAi.aiApiKey,
             cliLogin,
+            reasoningEffort: taskModel.reasoningEffort,
           },
           modelType,
           getOpenRouterProviderOptions(modelType, taskModel.provider),
@@ -101,7 +109,12 @@ export function getModel(
       }
     : userAi.aiApiKey || usesOwnCliLogin
       ? {
-          primaryModel: selectUserModel(userAi, modelType, cliLogin),
+          primaryModel: selectUserModel(
+            userAi,
+            modelType,
+            cliLogin,
+            taskModel === undefined,
+          ),
           fallbackModels: [],
         }
       : selectDeploymentModelByType(modelType, allowServerCliLogin);
@@ -125,14 +138,21 @@ export function getModel(
 }
 
 // A per-task entry only applies while its provider is still usable: the main
-// provider (with the main API key) or a CLI subscription.
-function getUserTaskModel(userAi: UserAIFields, modelType: ModelType) {
-  const parsed = aiTaskModelsSchema.safeParse(userAi.aiTaskModels ?? {});
-  const entry = parsed.success ? parsed.data[modelType] : undefined;
-  if (!entry) return null;
+// provider (with the main API key) or a CLI subscription. null means the task
+// follows the main model; undefined means it has no usable entry.
+function getUserTaskModel(
+  userAi: UserAIFields,
+  modelType: ModelType,
+): AiTaskModelEntry | null | undefined {
+  const { models, invalid } = parseAiTaskModels(userAi.aiTaskModels);
+  if (invalid.includes(modelType)) {
+    logger.warn("Ignoring an unreadable task model entry", { modelType });
+  }
+  const entry = models[modelType];
+  if (!entry) return entry;
   if (isCliSubscriptionProvider(entry.provider)) return entry;
   if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
-  return null;
+  return;
 }
 
 function selectModel(
@@ -141,11 +161,13 @@ function selectModel(
     aiModel,
     aiApiKey,
     cliLogin,
+    reasoningEffort,
   }: {
     aiProvider: string;
     aiModel: string | null;
     aiApiKey: string | null;
     cliLogin?: CliLoginScope;
+    reasoningEffort?: ReasoningEffort | null;
   },
   modelType: ModelType,
   // biome-ignore lint/suspicious/noExplicitAny: existing loose external shape
@@ -358,8 +380,10 @@ function selectModel(
           provider: Provider.CODEX_CLI,
           modelName,
           cliLogin,
+          reasoningEffort,
         }),
         cliLogin,
+        reasoningEffort: reasoningEffort ?? null,
       };
     }
     case Provider.CLAUDE_CODE: {
@@ -372,8 +396,10 @@ function selectModel(
           provider: Provider.CLAUDE_CODE,
           modelName,
           cliLogin,
+          reasoningEffort,
         }),
         cliLogin,
+        reasoningEffort: reasoningEffort ?? null,
       };
     }
 
@@ -475,12 +501,13 @@ function selectUserModel(
   userAi: UserAIFields,
   modelType: ModelType,
   cliLogin: CliLoginScope,
+  useRecommended: boolean,
 ): ResolvedModel {
   const configuredDefault = getFirstSupportedModelListEntry("default");
   const aiProvider = userAi.aiProvider || configuredDefault?.provider;
-  const aiModel = userAi.aiProvider
-    ? getUserModelName(userAi.aiProvider, userAi.aiModel, modelType)
-    : configuredDefault?.modelName || null;
+  const { aiModel, reasoningEffort } = userAi.aiProvider
+    ? getUserModelChoice(userAi, userAi.aiProvider, modelType, useRecommended)
+    : { aiModel: configuredDefault?.modelName || null, reasoningEffort: null };
 
   if (!aiProvider) {
     throw new Error("No configured default LLM model is available");
@@ -492,24 +519,44 @@ function selectUserModel(
       aiModel,
       aiApiKey: userAi.aiApiKey,
       cliLogin,
+      reasoningEffort,
     },
     modelType,
     getOpenRouterProviderOptions(modelType, aiProvider),
   );
 }
 
-// Background jobs on a user's own subscription use the provider's fast model so
-// they don't burn through the plan's limits.
-function getUserModelName(
+// High-volume tasks on a user's own subscription use the recommended light
+// model and thinking level so they don't burn through the plan's limits.
+// Saving settings writes that choice per task, resolved against the user's
+// own list; a task never saved uses the built-in list, as the form shows.
+function getUserModelChoice(
+  userAi: UserAIFields,
   aiProvider: string,
-  aiModel: string | null,
   modelType: ModelType,
-) {
-  if (aiProvider !== Provider.CLAUDE_CODE && aiProvider !== Provider.CODEX_CLI)
-    return aiModel || null;
-  if (modelType === "economy" || modelType === "nano")
-    return SUBSCRIPTION_MODELS[aiProvider].fastModel;
-  return aiModel || null;
+  useRecommended: boolean,
+): { aiModel: string | null; reasoningEffort: ReasoningEffort | null } {
+  if (!isSubscriptionProvider(aiProvider))
+    return { aiModel: userAi.aiModel || null, reasoningEffort: null };
+
+  const recommended = useRecommended
+    ? getRecommendedTaskModel(
+        aiProvider,
+        modelType,
+        SUBSCRIPTION_MODELS[aiProvider].models,
+      )
+    : null;
+  if (recommended)
+    return {
+      aiModel: recommended.model,
+      reasoningEffort: recommended.reasoningEffort,
+    };
+
+  const savedEffort = reasoningEffortSchema.safeParse(userAi.aiReasoningEffort);
+  return {
+    aiModel: userAi.aiModel || null,
+    reasoningEffort: savedEffort.success ? savedEffort.data : null,
+  };
 }
 
 function resolveRoleModelList(

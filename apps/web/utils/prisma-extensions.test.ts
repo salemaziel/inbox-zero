@@ -149,4 +149,17 @@ describe("buildQuery handlers", () => {
     expect(args.update.credential).toMatch(/^v1:[0-9a-f]+$/);
     expect(args.create.provider).toBe("claude-code");
   });
+
+  it("encrypts a user's own decision-model keys and keeps a removal null", async () => {
+    const handlers = buildQuery(__testing__.ENCRYPTED_FIELDS);
+    const args = {
+      data: {
+        decisionTypesafeApiKey: "fake-typesafe-key",
+        decisionOpenrouterApiKey: null,
+      },
+    };
+    await handlers.user.update({ args, query: queryFn });
+    expect(args.data.decisionTypesafeApiKey).toMatch(/^v1:[0-9a-f]+$/);
+    expect(args.data.decisionOpenrouterApiKey).toBeNull();
+  });
 });

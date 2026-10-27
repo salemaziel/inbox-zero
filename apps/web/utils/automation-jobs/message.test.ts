@@ -26,6 +26,7 @@ const emailAccount: AutomationCheckInEmailAccount = {
       aiProvider: "openai",
       aiModel: "gpt-5.1",
       aiApiKey: null,
+      aiReasoningEffort: null,
       aiTaskModels: null,
     },
   }),

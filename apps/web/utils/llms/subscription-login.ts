@@ -11,6 +11,7 @@ import {
   CLI_SUBSCRIPTION_PROVIDERS,
   writeCodexHome,
 } from "@/utils/llms/cli-provider";
+import { clearCodexModels } from "@/utils/llms/subscription-models";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 
@@ -200,6 +201,7 @@ export async function disconnectSubscriptionLogin({
 }) {
   await cancelSubscriptionLogin({ userId, provider });
   await prisma.aiSubscriptionLogin.deleteMany({ where: { userId, provider } });
+  if (provider === Provider.CODEX_CLI) clearCodexModels(userId);
 }
 
 export function parseClaudeLoginUrl(text: string): string | null {
@@ -491,6 +493,7 @@ async function saveLogin(
     create: { userId, provider, ...data },
     update: data,
   });
+  if (provider === Provider.CODEX_CLI) clearCodexModels(userId);
   logger.info("Connected CLI subscription login", { provider });
 }
 
