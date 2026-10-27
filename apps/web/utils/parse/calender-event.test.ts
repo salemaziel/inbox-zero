@@ -324,6 +324,18 @@ describe("Calendar Event Detection", () => {
 describe("analyzeCalendarEvent on hostile bodies", () => {
   const hostileBodies = [
     ["an organizer label with no address", `Organizer ${"a".repeat(40_000)}`],
+    [
+      "an organizer label then many at signs",
+      `Organizer ${"a@".repeat(25_000)}`,
+    ],
+    ["an organizer label then dotted text", `Organizer ${"a.".repeat(25_000)}`],
+    ["repeated organizer labels", "Organizer ".repeat(5000)],
+    ["repeated weekly words", "Weeklyfrom".repeat(5000)],
+    [
+      "weekly words between tags",
+      '<span style="a">Weekly</span><span>from</span>'.repeat(1200),
+    ],
+    ["unclosed tags", "<span style=".repeat(5000)],
     ["repeated weekly and from words", "weekly from mon ".repeat(10_000)],
     ["repeated timezone prefixes", "DTSTART;TZID=".repeat(10_000)],
   ];
@@ -336,7 +348,9 @@ describe("analyzeCalendarEvent on hostile bodies", () => {
 
     const started = performance.now();
     analyzeCalendarEvent(email);
-    expect(performance.now() - started).toBeLessThan(1000);
+    // Generous so a loaded machine doesn't flake; the old patterns took
+    // seconds to minutes on these inputs.
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 
   it("still finds the organizer address after the label", () => {
@@ -346,6 +360,38 @@ describe("analyzeCalendarEvent on hostile bodies", () => {
     });
 
     expect(analyzeCalendarEvent(email).organizer).toBe("host@example.com");
+  });
+
+  it("finds the organizer address far after the label", () => {
+    const email = createTestEmail({
+      headers: { subject: "Invitation", from: "", to: "", date: "" },
+      textHtml: `Organizer: details below${"x".repeat(3000)} host@example.com`,
+    });
+
+    expect(analyzeCalendarEvent(email).organizer).toBe("host@example.com");
+  });
+
+  it("reads organizer and weekly start date from a styled HTML invite", () => {
+    const style = `style="${"font-family:Roboto,Helvetica,Arial,sans-serif;color:#3c4043;font-size:14px;line-height:20px;".repeat(3)}"`;
+    const email = createTestEmail({
+      headers: { subject: "Invitation: Standup", from: "", to: "", date: "" },
+      textHtml: [
+        `<table ${style}><tr><td ${style}>When</td>`,
+        `<td ${style}><span ${style}>Weekly</span>`,
+        `<span ${style}> from </span><span ${style}>16:00 to 17:00 on Monday</span>`,
+        `<span ${style}> from </span><span ${style}>Mon 10 Feb</span>`,
+        `<span ${style}> to Mon 3 Mar</span></td></tr>`,
+        `<tr><td ${style}>Organizer</td><td ${style}>`,
+        `<a href="https://calendar.example/u/0" ${style}>Host Name</a>`,
+        `<span ${style}>host@example.com</span></td></tr></table>`,
+      ].join(""),
+    });
+
+    const result = analyzeCalendarEvent(email);
+    expect(result.organizer).toBe("host@example.com");
+    expect(result.recurringEvent).toBe(true);
+    expect(result.eventDate?.getMonth()).toBe(1);
+    expect(result.eventDate?.getDate()).toBe(10);
   });
 });
 

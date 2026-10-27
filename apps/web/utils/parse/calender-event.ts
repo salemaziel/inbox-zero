@@ -12,7 +12,10 @@ interface CalendarEventInfo {
 }
 
 const MAX_ANALYZED_BODY_LENGTH = 50 * 1024;
-const ORGANIZER_SEARCH_WINDOW = 2000;
+// Only tries an address where one could start, so a long run of address
+// characters with no "@" is scanned once rather than from every position.
+const ORGANIZER_EMAIL_PATTERN =
+  /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 
 export type CalendarEventStatus = {
   isEvent: boolean;
@@ -198,7 +201,9 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
       // gaps rescan it from every "Weekly" and every "from".
       const weeklyPattern =
         /Weekly.{0,200}?from.{0,200}?(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
-      const weeklyMatch = body.match(weeklyPattern);
+      // Matched on the text without tags: inline styles in HTML invites would
+      // otherwise push the words past the gaps.
+      const weeklyMatch = body.replace(/<[^<>]*>/g, " ").match(weeklyPattern);
 
       if (weeklyMatch) {
         const day = Number.parseInt(weeklyMatch[1]);
@@ -309,19 +314,14 @@ function hasICalendarContent(email: ParsedMessage): boolean {
   return body.includes("DTSTART") || body.includes("METHOD:");
 }
 
-// Looks for the organizer's address shortly after the label, so a body with
-// the label and no address nearby can't be scanned to the end from every
-// position.
+// The first address after the first label, "Organiser" before "Organizer".
 function findOrganizerEmail(body: string) {
   for (const label of [/Organiser/i, /Organizer/i]) {
     const labelMatch = label.exec(body);
     if (!labelMatch) continue;
 
     const start = labelMatch.index + labelMatch[0].length;
-    const window = body.slice(start, start + ORGANIZER_SEARCH_WINDOW);
-    const email = window.match(
-      /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,
-    )?.[0];
+    const email = body.slice(start).match(ORGANIZER_EMAIL_PATTERN)?.[0];
     if (email) return email;
   }
 }
