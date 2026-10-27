@@ -116,7 +116,7 @@ async function getCodexModels(
 
   const listLogin = await getCodexModelListLogin(cliLogin);
   if (!listLogin) return fallback;
-  const key = listLogin === "user" ? `user:${cliLogin.userId}` : "server";
+  const key = getCodexModelsKey(listLogin, cliLogin.userId);
 
   const cached = codexModelsCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.models;
@@ -137,18 +137,31 @@ async function loadCodexModels(
   fallback: SubscriptionModel[],
 ): Promise<SubscriptionModel[]> {
   const listed = await listCodexModels(cliLogin);
-  const models = listed ? parseCodexModels(listed) : [];
-  if (listed && !models.length) logger.warn("Codex listed no models to offer");
+  // The login can change between the check above and the listing, so the
+  // list is kept under the login it was actually read with.
+  const listedKey = listed.login
+    ? getCodexModelsKey(listed.login, cliLogin.userId)
+    : key;
+  const models = listed.models ? parseCodexModels(listed.models) : [];
+  if (listed.models && !models.length) {
+    logger.warn("Codex listed no models to offer");
+  }
 
   // After a failed lookup, a list read earlier beats the built-in one.
   const found = models.length > 0;
-  const next = found ? models : (codexModelsCache.get(key)?.models ?? fallback);
-  codexModelsCache.set(key, {
+  const next = found
+    ? models
+    : (codexModelsCache.get(listedKey)?.models ?? fallback);
+  codexModelsCache.set(listedKey, {
     models: next,
     expiresAt:
       Date.now() + (found ? CODEX_MODELS_TTL_MS : CODEX_MODELS_RETRY_MS),
   });
   return next;
+}
+
+function getCodexModelsKey(login: "user" | "server", userId: string) {
+  return login === "user" ? `user:${userId}` : "server";
 }
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {

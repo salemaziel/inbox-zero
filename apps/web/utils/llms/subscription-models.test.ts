@@ -89,7 +89,7 @@ describe("getSubscriptionModels", () => {
   });
 
   it("lists Codex models with the user's login, including ones the built-in list lacks, and caches them", async () => {
-    listCodexModels.mockResolvedValue(CODEX_MODEL_LIST);
+    listCodexModels.mockResolvedValue(listedWith("user", CODEX_MODEL_LIST));
 
     const first = await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
     const second = await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
@@ -106,9 +106,12 @@ describe("getSubscriptionModels", () => {
 
   it("keeps one list per user login and one shared by owners on the server login", async () => {
     listCodexModels.mockImplementation(async (scope) =>
-      scope.userId === USER_B.userId
-        ? [codexEntry("gpt-5.6-luna", "GPT-5.6-Luna", "medium", 9)]
-        : CODEX_MODEL_LIST,
+      listedWith(
+        scope.allowServerLogin ? "server" : "user",
+        scope.userId === USER_B.userId
+          ? [codexEntry("gpt-5.6-luna", "GPT-5.6-Luna", "medium", 9)]
+          : CODEX_MODEL_LIST,
+      ),
     );
 
     const a = await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
@@ -125,6 +128,30 @@ describe("getSubscriptionModels", () => {
     expect(listCodexModels).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps a list under the login it was actually read with", async () => {
+    // The owner connected their own login after the check but before the
+    // listing read it.
+    getCodexModelListLogin.mockResolvedValueOnce("server");
+    listCodexModels.mockResolvedValueOnce(
+      listedWith("user", [
+        codexEntry("gpt-5.6-luna", "GPT-5.6-Luna", "medium", 9),
+      ]),
+    );
+    listCodexModels.mockResolvedValueOnce(
+      listedWith("server", CODEX_MODEL_LIST),
+    );
+
+    const own = await getSubscriptionModels(Provider.CODEX_CLI, OWNER);
+    const otherOwner = await getSubscriptionModels(Provider.CODEX_CLI, {
+      userId: "owner2",
+      allowServerLogin: true,
+    });
+
+    expect(own.map((m) => m.value)).toEqual(["gpt-5.6-luna"]);
+    expect(otherOwner.map((m) => m.value)).toContain("gpt-6.1-terra");
+    expect(listCodexModels).toHaveBeenCalledTimes(2);
+  });
+
   it("offers the built-in list without running the CLI when the user has no login to list with", async () => {
     getCodexModelListLogin.mockResolvedValue(null);
 
@@ -137,18 +164,18 @@ describe("getSubscriptionModels", () => {
   });
 
   it("falls back to the built-in list when listing fails, keeps a list read earlier, and retries sooner", async () => {
-    listCodexModels.mockResolvedValueOnce(null);
+    listCodexModels.mockResolvedValueOnce(listedWith("user", null));
 
     const fallback = await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
     expect(fallback.map((m) => m.value)).toEqual(
       SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models.map((m) => m.value),
     );
 
-    listCodexModels.mockResolvedValueOnce(CODEX_MODEL_LIST);
+    listCodexModels.mockResolvedValueOnce(listedWith("user", CODEX_MODEL_LIST));
     vi.advanceTimersByTime(5 * 60 * 1000 + 1);
     const listed = await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
 
-    listCodexModels.mockResolvedValueOnce(null);
+    listCodexModels.mockResolvedValueOnce(listedWith("user", null));
     vi.advanceTimersByTime(6 * 60 * 60 * 1000 + 1);
     expect(await getSubscriptionModels(Provider.CODEX_CLI, USER_A)).toBe(
       listed,
@@ -157,7 +184,7 @@ describe("getSubscriptionModels", () => {
   });
 
   it("shares one CLI lookup per login between calls that arrive together", async () => {
-    listCodexModels.mockResolvedValue(CODEX_MODEL_LIST);
+    listCodexModels.mockResolvedValue(listedWith("user", CODEX_MODEL_LIST));
 
     await Promise.all([
       getSubscriptionModels(Provider.CODEX_CLI, USER_A),
@@ -208,6 +235,10 @@ function codexEntry(
     })),
     default_reasoning_level: defaultReasoningLevel,
   };
+}
+
+function listedWith(login: "user" | "server", models: unknown[] | null) {
+  return { login, models };
 }
 
 function clearCache() {

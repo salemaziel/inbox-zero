@@ -1450,12 +1450,16 @@ describe("createCliLanguageModel", () => {
       allowServerLogin: true,
     });
 
-    expect(models).toEqual([{ slug: "gpt-6-luna" }]);
+    expect(models).toEqual({
+      login: "user",
+      models: [{ slug: "gpt-6-luna" }],
+    });
     expect(spawn).toHaveBeenCalledWith(
       "/opt/codex",
       ["debug", "models"],
       expect.objectContaining({
         env: expect.objectContaining({ CODEX_HOME: expect.any(String) }),
+        stdio: ["ignore", "pipe", "pipe"],
       }),
     );
     expect(authSeen).toBe(FAKE_CODEX_AUTH);
@@ -1496,40 +1500,234 @@ describe("createCliLanguageModel", () => {
 
     expect(await getCodexModelListLogin(owner)).toBe("server");
     expect(await getCodexModelListLogin(nonOwner)).toBeNull();
-    expect(await listCodexModels(nonOwner)).toBeNull();
+    expect(await listCodexModels(nonOwner)).toEqual({
+      login: null,
+      models: null,
+    });
     expect(spawn).not.toHaveBeenCalled();
 
-    expect(await listCodexModels(owner)).toEqual([]);
+    expect(await listCodexModels(owner)).toEqual({
+      login: "server",
+      models: [],
+    });
     expect(authLink).toBe(path.join(hostHome, "auth.json"));
     await rm(hostHome, { recursive: true, force: true });
   });
 
-  it("marks a rejected login for reconnect and offers no list", async () => {
+  it("marks a login for reconnect when a failed listing says its sign-in was rejected", async () => {
     prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
       status: "connected",
       credential: FAKE_CODEX_AUTH,
       connectedAt,
     });
     const spawn = fakeCodexSpawn(async () => ({
-      stdout: JSON.stringify({ models: [{ slug: "gpt-5.5" }] }),
+      stdout: "",
       stderr: "error: 401 Unauthorized while refreshing models",
+      exitCode: 1,
     }));
     const { listCodexModels } = await loadCliProviderModule({
       envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
       spawn,
     });
 
-    const models = await listCodexModels({
+    const listed = await listCodexModels({
       userId: "user1",
       allowServerLogin: false,
     });
 
-    expect(models).toBeNull();
+    expect(listed).toEqual({ login: "user", models: null });
     expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "needs-reconnect" }),
       }),
     );
+  });
+
+  it("keeps the login of a listing that succeeded whatever Codex logged, and runs it without the host's tracing", async () => {
+    vi.stubEnv("RUST_LOG", "debug");
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+    const spawn = fakeCodexSpawn(async ({ codexHome }) => {
+      await writeFile(path.join(codexHome, "models_cache.json"), "{}");
+      return {
+        stdout: JSON.stringify({ models: [{ slug: "gpt-6-luna" }] }),
+        stderr: "DEBUG refresh token still valid; took 401 ms",
+      };
+    });
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      spawn,
+    });
+
+    const listed = await listCodexModels({
+      userId: "user1",
+      allowServerLogin: false,
+    });
+
+    expect(listed).toEqual({ login: "user", models: [{ slug: "gpt-6-luna" }] });
+    expect(prismaMock.aiSubscriptionLogin.updateMany).not.toHaveBeenCalled();
+    const { env } = spawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(env).not.toHaveProperty("RUST_LOG");
+  });
+
+  it("keeps the host's Codex API keys only for a listing on the server login", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "fake-host-openai-key");
+    vi.stubEnv("CODEX_API_KEY", "fake-host-codex-key");
+    const hostHome = await mkdtemp(path.join(os.tmpdir(), "codex-host-"));
+    vi.stubEnv("CODEX_HOME", hostHome);
+    prismaMock.aiSubscriptionLogin.findUnique
+      .mockResolvedValueOnce({
+        status: "connected",
+        credential: FAKE_CODEX_AUTH,
+        connectedAt,
+      })
+      .mockResolvedValueOnce(null);
+    const spawn = fakeCodexSpawn(async ({ codexHome }) => {
+      await writeFile(path.join(codexHome, "models_cache.json"), "{}");
+      return { stdout: JSON.stringify({ models: [] }) };
+    });
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      spawn,
+    });
+
+    await listCodexModels({ userId: "user1", allowServerLogin: true });
+    await listCodexModels({ userId: "owner1", allowServerLogin: true });
+
+    const [userEnv, serverEnv] = spawn.mock.calls.map(
+      (call) => (call[2] as { env: Record<string, string> }).env,
+    );
+    expect(userEnv).toMatchObject({ OPENAI_API_KEY: "", CODEX_API_KEY: "" });
+    expect(serverEnv).toMatchObject({
+      OPENAI_API_KEY: "fake-host-openai-key",
+      CODEX_API_KEY: "fake-host-codex-key",
+    });
+    await rm(hostHome, { recursive: true, force: true });
+  });
+
+  it("saves a refreshed login back before freeing the user's queue", async () => {
+    const refreshed = '{"tokens":{"refresh_token":"fake-refresh-2"}}';
+    let finishSave = () => {};
+    prismaMock.aiSubscriptionLogin.updateMany.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+    const spawn = fakeCodexSpawn(async ({ codexHome }) => {
+      await writeFile(path.join(codexHome, "auth.json"), refreshed);
+      await writeFile(path.join(codexHome, "models_cache.json"), "{}");
+      return { stdout: JSON.stringify({ models: [] }) };
+    });
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      spawn,
+    });
+
+    let settled = false;
+    const listing = listCodexModels({
+      userId: "user1",
+      allowServerLogin: false,
+    }).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() =>
+      expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalled(),
+    );
+    await flushFileWork();
+    expect(settled).toBe(false);
+    expect(getCodexRunQueues().has("user1")).toBe(true);
+
+    finishSave();
+    await listing;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getCodexRunQueues().has("user1")).toBe(false);
+  });
+
+  it("stops a listing past its time limit, killing Codex's whole process group, and frees the queue even if its output never closes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 4242,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(),
+    });
+    const spawn = vi.fn(() => child);
+    const { listCodexModels, CLI_STOP_WAIT_MS } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex/bin/codex.js" },
+      spawn,
+    });
+
+    let settled = false;
+    const listing = listCodexModels({
+      userId: "user1",
+      allowServerLogin: false,
+    }).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    expect(spawn).toHaveBeenCalledWith(
+      process.execPath,
+      ["/opt/codex/bin/codex.js", "debug", "models"],
+      expect.objectContaining({ detached: true }),
+    );
+
+    await vi.advanceTimersByTimeAsync(20 * 1000);
+    expect(kill).toHaveBeenCalledWith(-4242, "SIGTERM");
+    await vi.advanceTimersByTimeAsync(CLI_STOP_WAIT_MS);
+    expect(kill).toHaveBeenCalledWith(-4242, "SIGKILL");
+    // A failed kill doesn't count as the CLI having exited.
+    child.emit("error", new Error("kill EPERM"));
+    await flushFileWork();
+    expect(settled).toBe(false);
+    expect(getCodexRunQueues().has("user1")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(CLI_STOP_WAIT_MS);
+    vi.useRealTimers();
+    expect(await listing).toEqual({ login: "user", models: null });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getCodexRunQueues().has("user1")).toBe(false);
+    kill.mockRestore();
+  });
+
+  it("gives up on a listing whose turn in the user's queue doesn't come in time", async () => {
+    const queueWait = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(queueWait.signal);
+    const spawn = fakeCodexSpawn(async () => ({ stdout: "{}" }));
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      spawn,
+    });
+    // A long Codex run holds the user's queue.
+    getCodexRunQueues().set("user1", new Promise(() => {}));
+
+    const listing = listCodexModels({
+      userId: "user1",
+      allowServerLogin: false,
+    });
+    expect(timeout).toHaveBeenCalledWith(20 * 1000);
+    queueWait.abort(new Error("timed out"));
+
+    expect(await listing).toEqual({ login: null, models: null });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(prismaMock.aiSubscriptionLogin.findUnique).not.toHaveBeenCalled();
+    timeout.mockRestore();
   });
 
   it("treats a list Codex didn't fetch for this login as no list", async () => {
@@ -1549,7 +1747,7 @@ describe("createCliLanguageModel", () => {
 
     expect(
       await listCodexModels({ userId: "user1", allowServerLogin: false }),
-    ).toBeNull();
+    ).toEqual({ login: "user", models: null });
     expect(prismaMock.aiSubscriptionLogin.updateMany).not.toHaveBeenCalled();
   });
 
@@ -1559,7 +1757,7 @@ describe("createCliLanguageModel", () => {
 
     expect(
       await listCodexModels({ userId: "owner1", allowServerLogin: true }),
-    ).toBeNull();
+    ).toEqual({ login: null, models: null });
     expect(spawn).not.toHaveBeenCalled();
   });
 });
@@ -1702,6 +1900,8 @@ function fakeCodexSpawn(
           child.stderr.end(stderr);
           setImmediate(() => child.emit("close", exitCode));
         },
+        // A failed step ends the run, so the test fails rather than hangs.
+        (error) => child.emit("error", error),
       );
       return child;
     },
