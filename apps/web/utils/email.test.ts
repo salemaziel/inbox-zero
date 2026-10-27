@@ -145,6 +145,16 @@ describe("email utils", () => {
         ["john@example.com"],
       ],
       ["all invalid addresses", "invalid, also-invalid", []],
+      [
+        "an unclosed comment in an earlier name",
+        "Sad :( <a@x.example>, bob@y.example",
+        ["bob@y.example"],
+      ],
+      [
+        "an unclosed comment before a later angle-addr",
+        "A (x <a@x.example>, B <b@y.example>",
+        ["b@y.example"],
+      ],
     ];
 
     it.each(
@@ -201,6 +211,11 @@ describe("email utils", () => {
         "comma inside a comment",
         "john@example.com (Doe, John), jane@example.com",
         ["john@example.com (Doe, John)", "jane@example.com"],
+      ],
+      [
+        "an unclosed comment in one name",
+        "Sad :( <a@x.example>, bob@y.example",
+        ["Sad :( <a@x.example>", "bob@y.example"],
       ],
     ])("splits %s", (_caseName, input, expected) => {
       expect(splitRecipientList(input)).toEqual(expected);

@@ -27,26 +27,13 @@ export function extractEmailAddresses(header: string): string[] {
 export function splitRecipientList(recipientList: string): string[] {
   if (!recipientList) return [];
 
-  // One pass rather than a quote-counting regex: headers come from senders,
-  // and this runs on every synced message.
-  const recipients: string[] = [];
-  let start = 0;
-  let inQuotes = false;
-  let commentDepth = 0;
-  for (let index = 0; index < recipientList.length; index++) {
-    const char = recipientList[index];
-    if ((inQuotes || commentDepth > 0) && char === "\\") index++;
-    else if (commentDepth > 0) {
-      if (char === "(") commentDepth++;
-      else if (char === ")") commentDepth--;
-    } else if (char === '"') inQuotes = !inQuotes;
-    else if (char === "(" && !inQuotes) commentDepth = 1;
-    else if (char === "," && !inQuotes) {
-      recipients.push(recipientList.slice(start, index));
-      start = index + 1;
-    }
-  }
-  recipients.push(recipientList.slice(start));
+  // A name with an unclosed "(" would swallow every later recipient. Lists
+  // only choose who to reply to or Cc, so recover by splitting without
+  // comments; the entry with the broken name still parses to "" on its own.
+  const recipients =
+    splitOnTopLevelCommas(recipientList, true) ??
+    splitOnTopLevelCommas(recipientList, false) ??
+    [];
 
   return recipients.map((recipient) => recipient.trim()).filter(Boolean);
 }
@@ -385,4 +372,34 @@ function recipientFirstName(recipient: string) {
     ? name.slice(name.indexOf(",") + 1).trim()
     : name;
   return givenName.split(/\s+/)[0] || name;
+}
+
+// Splits on commas outside quoted strings and, when trackComments is set,
+// outside comments. Returns null if the text ends inside a comment.
+function splitOnTopLevelCommas(
+  recipientList: string,
+  trackComments: boolean,
+): string[] | null {
+  // One pass rather than a quote-counting regex: headers come from senders,
+  // and this runs on every synced message.
+  const recipients: string[] = [];
+  let start = 0;
+  let inQuotes = false;
+  let commentDepth = 0;
+  for (let index = 0; index < recipientList.length; index++) {
+    const char = recipientList[index];
+    if ((inQuotes || commentDepth > 0) && char === "\\") index++;
+    else if (commentDepth > 0) {
+      if (char === "(") commentDepth++;
+      else if (char === ")") commentDepth--;
+    } else if (char === '"') inQuotes = !inQuotes;
+    else if (char === "(" && !inQuotes && trackComments) commentDepth = 1;
+    else if (char === "," && !inQuotes) {
+      recipients.push(recipientList.slice(start, index));
+      start = index + 1;
+    }
+  }
+  if (commentDepth > 0) return null;
+  recipients.push(recipientList.slice(start));
+  return recipients;
 }
