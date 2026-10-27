@@ -55,6 +55,15 @@ export const saveDecisionModelSettingsBody = z.object({
   decisionModelEnabled: z.boolean(),
 });
 
+// A null key removes the saved one.
+export const saveDecisionModelApiKeyBody = z.object({
+  provider: z.enum(["typesafe", "openrouter"]),
+  apiKey: z.string().trim().min(1, "Enter a key").max(500).nullable(),
+});
+export type SaveDecisionModelApiKeyBody = z.infer<
+  typeof saveDecisionModelApiKeyBody
+>;
+
 export const saveSensitiveDataPolicyBody = z.object({
   sensitiveDataPolicy: z.enum(SENSITIVE_DATA_POLICIES),
 });

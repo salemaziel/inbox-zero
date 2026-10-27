@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import prisma from "@/utils/__mocks__/prisma";
 import {
+  updateDecisionModelApiKeyAction,
   updateSensitiveDataPolicyAction,
   updateAiSettingsAction,
 } from "./settings";
@@ -406,6 +407,43 @@ describe("updateAiSettingsAction", () => {
       "AI subscriptions aren't enabled on this server.",
     );
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateDecisionModelApiKeyAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnv.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED = false;
+  });
+
+  it("saves and removes the user's own key for the chosen provider only", async () => {
+    await updateDecisionModelApiKeyAction({
+      provider: "typesafe",
+      apiKey: "  fake-typesafe-key  ",
+    });
+    await updateDecisionModelApiKeyAction({
+      provider: "openrouter",
+      apiKey: null,
+    });
+
+    expect(prisma.user.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "user-1" },
+      data: { decisionTypesafeApiKey: "fake-typesafe-key" },
+    });
+    expect(prisma.user.update).toHaveBeenNthCalledWith(2, {
+      where: { id: "user-1" },
+      data: { decisionOpenrouterApiKey: null },
+    });
+  });
+
+  it("rejects a blank key", async () => {
+    const result = await updateDecisionModelApiKeyAction({
+      provider: "typesafe",
+      apiKey: "   ",
+    });
+
+    expect(result?.validationErrors).toBeDefined();
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });
 

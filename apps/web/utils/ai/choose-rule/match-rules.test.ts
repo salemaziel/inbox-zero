@@ -3091,6 +3091,7 @@ describe("findMatchingRules - decisionModel rule selection", () => {
     provider: "typesafe" as const,
     modelId: "test-model",
     model: {} as never,
+    usesUserApiKey: false,
   };
 
   beforeEach(() => {

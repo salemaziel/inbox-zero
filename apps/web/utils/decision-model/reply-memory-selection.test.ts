@@ -16,6 +16,7 @@ const config = {
   provider: "typesafe" as const,
   modelId: "jev-latest",
   model: {} as never,
+  usesUserApiKey: false,
 };
 const candidates = Array.from({ length: 8 }, (_, index) => ({
   id: `memory-${index}`,

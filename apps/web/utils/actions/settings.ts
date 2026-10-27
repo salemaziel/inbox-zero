@@ -3,6 +3,7 @@
 import { actionClient } from "@/utils/actions/safe-action";
 import {
   saveAiSettingsBody,
+  saveDecisionModelApiKeyBody,
   saveDecisionModelSettingsBody,
   saveSensitiveDataPolicyBody,
   saveEmailUpdateSettingsBody,
@@ -232,6 +233,24 @@ export const updateDecisionModelSettingsAction = actionClientUser
       });
     },
   );
+
+export const updateDecisionModelApiKeyAction = actionClientUser
+  .metadata({ name: "updateDecisionModelApiKey" })
+  .inputSchema(saveDecisionModelApiKeyBody)
+  .action(async ({ ctx: { userId }, parsedInput: { provider, apiKey } }) => {
+    if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
+      throw new SafeError("AI model settings are managed by the deployment.");
+    }
+
+    // Encrypted at rest by the Prisma extension.
+    await prisma.user.update({
+      where: { id: userId },
+      data:
+        provider === "typesafe"
+          ? { decisionTypesafeApiKey: apiKey }
+          : { decisionOpenrouterApiKey: apiKey },
+    });
+  });
 
 export const updateSensitiveDataPolicyAction = actionClient
   .metadata({ name: "updateSensitiveDataPolicy" })

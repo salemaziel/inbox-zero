@@ -17,6 +17,7 @@ const config = {
   provider: "typesafe" as const,
   modelId: "jev-latest",
   model: {} as never,
+  usesUserApiKey: false,
 };
 const definitions = [
   { systemType: SystemType.TO_REPLY, instructions: "The user owes a reply." },

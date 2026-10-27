@@ -22,6 +22,7 @@ const decisionModel = {
   provider: "typesafe" as const,
   modelId: "test-model",
   model: {} as never,
+  usesUserApiKey: false,
 };
 
 const newsletterRule = {
