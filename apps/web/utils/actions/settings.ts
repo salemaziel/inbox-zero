@@ -42,6 +42,7 @@ import { env } from "@/env";
 import { addActionOwnershipToInput } from "@/utils/rule/rule";
 import { isSensitiveDataPolicyLocked } from "@/utils/dlp/policy.server";
 import { assertCanUseDigests } from "@/utils/premium/server";
+import { isDecisionModelApiKeyRejected } from "@/utils/decision-model/decision-model";
 
 export const updateEmailSettingsAction = actionClient
   .metadata({ name: "updateEmailSettings" })
@@ -254,6 +255,12 @@ export const updateDecisionModelApiKeyAction = actionClientUser
   .action(async ({ ctx: { userId }, parsedInput: { provider, apiKey } }) => {
     if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
       throw new SafeError("AI model settings are managed by the deployment.");
+    }
+
+    if (apiKey && (await isDecisionModelApiKeyRejected(provider, apiKey))) {
+      throw new SafeError(
+        `${provider === "typesafe" ? "TypeSafe" : "OpenRouter"} turned down this key. Check it and try again.`,
+      );
     }
 
     // Encrypted at rest by the Prisma extension.

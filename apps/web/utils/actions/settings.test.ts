@@ -12,6 +12,7 @@ import {
   type SubscriptionModel,
 } from "@/utils/llms/config";
 import { getSubscriptionModels } from "@/utils/llms/subscription-models";
+import { isDecisionModelApiKeyRejected } from "@/utils/decision-model/decision-model";
 
 vi.mock("@/utils/prisma");
 vi.mock("@/utils/auth", () => ({
@@ -41,6 +42,10 @@ vi.mock("@/env", () => ({
 // test sets its own.
 vi.mock("@/utils/llms/subscription-models", () => ({
   getSubscriptionModels: vi.fn(),
+}));
+
+vi.mock("@/utils/decision-model/decision-model", () => ({
+  isDecisionModelApiKeyRejected: vi.fn(),
 }));
 
 vi.mock("@/utils/error-messages", async (importActual) => {
@@ -496,6 +501,24 @@ describe("updateDecisionModelApiKeyAction", () => {
       where: { id: "user-1" },
       data: { decisionOpenrouterApiKey: null },
     });
+  });
+
+  it("doesn't save a key the provider turns down", async () => {
+    vi.mocked(isDecisionModelApiKeyRejected).mockResolvedValueOnce(true);
+
+    const result = await updateDecisionModelApiKeyAction({
+      provider: "openrouter",
+      apiKey: "fake-bad-key",
+    });
+
+    expect(isDecisionModelApiKeyRejected).toHaveBeenCalledWith(
+      "openrouter",
+      "fake-bad-key",
+    );
+    expect(result?.serverError).toBe(
+      "OpenRouter turned down this key. Check it and try again.",
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it("rejects a blank key", async () => {

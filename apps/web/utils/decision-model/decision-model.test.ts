@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger, getEmailAccount } from "@/__tests__/helpers";
 
 const envMock = vi.hoisted(() => ({
@@ -21,6 +21,7 @@ import prisma from "@/utils/__mocks__/prisma";
 import { saveAiUsage } from "@/utils/usage";
 import {
   getDecisionModelConfig,
+  isDecisionModelApiKeyRejected,
   runDecisionModel,
   runDecisionModelOrFallback,
 } from "./decision-model";
@@ -404,6 +405,49 @@ describe("runDecisionModelOrFallback", () => {
     expect(result).toBe("llm");
     expect(decide).not.toHaveBeenCalled();
     expect(fallback).toHaveBeenCalledOnce();
+  });
+});
+
+describe("isDecisionModelApiKeyRejected", () => {
+  beforeEach(() => {
+    envMock.DEFAULT_DECISION_MODEL = "typesafe:jev-latest";
+    envMock.TYPESAFE_API_KEY = "server-key";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks the provider once with the new key and reports only a refusal", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await isDecisionModelApiKeyRejected("typesafe", "fake-key")).toBe(
+      true,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.typesafe.ai/v1/systemone",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer fake-key" }),
+      }),
+    );
+
+    // An outage doesn't stop the key being saved.
+    fetchMock.mockResolvedValue(new Response("{}", { status: 503 }));
+    expect(await isDecisionModelApiKeyRejected("typesafe", "fake-key")).toBe(
+      false,
+    );
+  });
+
+  it("doesn't check a key for a provider the deployment doesn't use", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await isDecisionModelApiKeyRejected("openrouter", "fake-key")).toBe(
+      false,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

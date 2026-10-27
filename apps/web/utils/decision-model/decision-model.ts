@@ -1,8 +1,9 @@
 import { createGateway } from "@ai-sdk/gateway";
 import { createOpenAI } from "@ai-sdk/openai";
-import type {
-  Experimental_DecisionModelV4,
-  JSONObject,
+import {
+  APICallError,
+  type Experimental_DecisionModelV4,
+  type JSONObject,
 } from "@ai-sdk/provider";
 import {
   type Experimental_DecisionQuestion,
@@ -98,6 +99,43 @@ export function isDecisionModelAvailable() {
 /** The provider the deployment's decision model runs on, if any. */
 export function getDecisionModelProvider() {
   return getDeploymentDecisionModelConfig()?.provider ?? null;
+}
+
+/**
+ * Asks the deployment's decision model one tiny question with a key a user is
+ * about to save. True only when the provider turned the key down; an outage
+ * or any other failure doesn't block saving it.
+ */
+export async function isDecisionModelApiKeyRejected(
+  provider: "typesafe" | "openrouter",
+  apiKey: string,
+): Promise<boolean> {
+  const providerAndModel = env.DEFAULT_DECISION_MODEL;
+  if (!providerAndModel?.startsWith(`${provider}:`)) return false;
+  const config = createDecisionModelConfig(providerAndModel, {
+    [provider]: apiKey,
+  });
+  if (!config) return false;
+
+  try {
+    await experimental_decide({
+      model: config.model,
+      state: { text: "Checking an API key." },
+      questions: {
+        isKeyCheck: {
+          type: "boolean",
+          instructions: "Is `text` about checking an API key?",
+        },
+      },
+      maxRetries: 0,
+    });
+    return false;
+  } catch (error) {
+    return (
+      APICallError.isInstance(error) &&
+      (error.statusCode === 401 || error.statusCode === 403)
+    );
+  }
 }
 
 /**
