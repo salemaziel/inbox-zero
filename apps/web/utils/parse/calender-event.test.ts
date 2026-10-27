@@ -330,7 +330,8 @@ describe("analyzeCalendarEvent on hostile bodies", () => {
     ],
     ["an organizer label then dotted text", `Organizer ${"a.".repeat(25_000)}`],
     ["repeated organizer labels", "Organizer ".repeat(5000)],
-    ["repeated weekly words", "Weeklyfrom".repeat(5000)],
+    // 20 KB: the slowest case here, still about 30 seconds on the old pattern.
+    ["repeated weekly words", "Weeklyfrom".repeat(2000)],
     [
       "weekly words between tags",
       '<span style="a">Weekly</span><span>from</span>'.repeat(1200),
