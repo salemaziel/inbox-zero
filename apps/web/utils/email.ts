@@ -41,7 +41,8 @@ export function splitRecipientList(recipientList: string): string[] {
 
   // A name with an unclosed "(" would swallow every later recipient. Lists
   // only choose who to reply to or Cc, so recover by splitting without
-  // comments; the entry with the broken name still parses to "" on its own.
+  // comments. A comma inside the broken name then starts a new entry, which
+  // can yield an address, but only one the sender wrote into the header.
   const recipients =
     splitOnTopLevelCommas(recipientList, true) ??
     splitOnTopLevelCommas(recipientList, false) ??
