@@ -4,7 +4,7 @@ import {
   getModel,
   getResolvedDeploymentRolePrimaryModelEntry,
 } from "./model";
-import { Provider } from "./config";
+import { Provider, SUBSCRIPTION_MODELS } from "./config";
 import { env } from "@/env";
 import type { UserAIFields } from "./types";
 import { createAzure } from "@ai-sdk/azure";
@@ -1564,6 +1564,59 @@ describe("Models", () => {
       });
     });
 
+    it("runs high-volume work on the main model when the user's ChatGPT list lacks the light model, as the settings form shows", () => {
+      const listedModels = getCodexModelsCache();
+      const codexUser = defaultUserAi({
+        aiProvider: Provider.CODEX_CLI,
+        aiModel: "gpt-6.1-sol",
+        aiReasoningEffort: "medium",
+      });
+      const builtIn = SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models;
+
+      listedModels.set("user:user-1", {
+        models: builtIn.filter((m) => m.value !== "gpt-6-luna"),
+        expiresAt: 0,
+      });
+      expect(getModel(codexUser, "default")).toMatchObject({
+        modelName: "gpt-6.1-sol",
+        reasoningEffort: "medium",
+      });
+
+      // Listed, but without the low level.
+      listedModels.set("user:user-1", {
+        models: builtIn.map((m) =>
+          m.value === "gpt-6-luna" ? { ...m, efforts: ["medium"] } : m,
+        ),
+        expiresAt: 0,
+      });
+      expect(getModel(codexUser, "economy")).toMatchObject({
+        modelName: "gpt-6-luna",
+        reasoningEffort: null,
+      });
+      listedModels.clear();
+    });
+
+    it("keeps the other task entries when one saved entry can't be read", () => {
+      const userAi = defaultUserAi({
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "sonnet",
+        aiTaskModels: {
+          chat: { provider: Provider.CLAUDE_CODE, model: "opus" },
+          economy: {
+            provider: Provider.CODEX_CLI,
+            model: "gpt-6-luna",
+            reasoningEffort: "ultra",
+          },
+        },
+      });
+
+      expect(getModel(userAi, "chat").modelName).toBe("opus");
+      expect(getModel(userAi, "economy")).toMatchObject({
+        provider: Provider.CLAUDE_CODE,
+        modelName: "haiku",
+      });
+    });
+
     it("runs a saved thinking level only if it is a known level", () => {
       const result = getModel(
         defaultUserAi({
@@ -1817,4 +1870,10 @@ function restoreProcessEnv(values: {
       process.env[key] = value;
     }
   }
+}
+
+function getCodexModelsCache() {
+  const store = globalThis as { inboxZeroCodexModels?: Map<string, unknown> };
+  store.inboxZeroCodexModels ??= new Map();
+  return store.inboxZeroCodexModels;
 }

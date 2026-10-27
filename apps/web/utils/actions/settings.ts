@@ -13,10 +13,13 @@ import {
 } from "@/utils/actions/settings.validation";
 import {
   type AiTaskModelEntry,
+  type AiTaskModelType,
   DEFAULT_PROVIDER,
   isSubscriptionProvider,
+  parseAiTaskModels,
   Provider,
   type ReasoningEffort,
+  reasoningEffortSchema,
 } from "@/utils/llms/config";
 import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
@@ -83,7 +86,7 @@ export const updateAiSettingsAction = actionClientUser
       }
 
       const taskEntries = Object.entries(aiTaskModels ?? {}).filter(
-        (pair): pair is [string, AiTaskModelEntry] => !!pair[1],
+        (pair): pair is [AiTaskModelType, AiTaskModelEntry] => !!pair[1],
       );
       const usesCliProvider =
         isCliSubscriptionProvider(aiProvider) ||
@@ -115,21 +118,28 @@ export const updateAiSettingsAction = actionClientUser
         }
       }
 
+      const saved = usesCliProvider ? await getSavedModelChoices(userId) : null;
       if (isSubscriptionProvider(aiProvider)) {
         await assertSubscriptionChoice(
           cliLogin,
-          aiProvider,
-          aiModel,
-          aiReasoningEffort ?? null,
+          {
+            provider: aiProvider,
+            model: aiModel,
+            reasoningEffort: aiReasoningEffort ?? null,
+          },
+          saved?.main,
         );
       }
-      for (const [, entry] of taskEntries) {
+      for (const [type, entry] of taskEntries) {
         if (isSubscriptionProvider(entry.provider)) {
           await assertSubscriptionChoice(
             cliLogin,
-            entry.provider,
-            entry.model,
-            entry.reasoningEffort ?? null,
+            {
+              provider: entry.provider,
+              model: entry.model,
+              reasoningEffort: entry.reasoningEffort ?? null,
+            },
+            saved?.tasks[type],
           );
         }
       }
@@ -463,14 +473,56 @@ async function getSubscriptionAccess(userId: string): Promise<{
   };
 }
 
+// The subscription choices already saved, which passed this check when they
+// were saved.
+async function getSavedModelChoices(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      aiProvider: true,
+      aiModel: true,
+      aiReasoningEffort: true,
+      aiTaskModels: true,
+    },
+  });
+  const savedEffort = reasoningEffortSchema.safeParse(user?.aiReasoningEffort);
+  return {
+    main:
+      user?.aiProvider && user.aiModel
+        ? {
+            provider: user.aiProvider,
+            model: user.aiModel,
+            reasoningEffort: savedEffort.success ? savedEffort.data : null,
+          }
+        : undefined,
+    tasks: parseAiTaskModels(user?.aiTaskModels).models,
+  };
+}
+
 // Only a model on the subscription's current list for this user, with one of
-// that model's thinking levels, reaches the CLI.
+// that model's thinking levels, reaches the CLI. A choice left as it was
+// saved is kept even when the list can't be read right now or no longer has
+// it, so saving other settings never swaps it out.
 async function assertSubscriptionChoice(
   cliLogin: CliLoginScope,
-  provider: string,
-  model: string,
-  reasoningEffort: ReasoningEffort | null,
+  {
+    provider,
+    model,
+    reasoningEffort,
+  }: {
+    provider: string;
+    model: string;
+    reasoningEffort: ReasoningEffort | null;
+  },
+  saved: AiTaskModelEntry | undefined,
 ) {
+  if (
+    saved?.provider === provider &&
+    saved.model === model &&
+    (saved.reasoningEffort ?? null) === reasoningEffort
+  ) {
+    return;
+  }
   const models = await getSubscriptionModels(provider, cliLogin);
   const entry = models.find((m) => m.value === model);
   if (!entry) throw new SafeError("Pick a model from this account's list.");

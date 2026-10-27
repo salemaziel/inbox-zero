@@ -225,19 +225,44 @@ export type AiTaskModels = z.infer<typeof aiTaskModelsSchema>;
 export type AiTaskModelEntry = z.infer<typeof aiTaskModelEntry>;
 
 // What a task with no entry of its own runs on when the main provider is a
-// subscription: high-volume tasks get the light model with low thinking, the
-// rest the main model. Shared by the settings form and getModel so what the
-// form shows is what runs.
+// subscription: high-volume tasks get the light model with low thinking when
+// the user's model list offers them, the rest (and every task when it
+// doesn't) the main model. The settings form and getModel both pass the list
+// the user is offered, so what the form shows is what runs.
 export function getRecommendedTaskModel(
   provider: SubscriptionProvider,
   type: AiTaskModelType,
+  models: readonly SubscriptionModel[],
 ): { model: string; reasoningEffort: ReasoningEffort | null } | null {
   if (!HIGH_VOLUME_TASK_TYPES.includes(type)) return null;
-  const model = SUBSCRIPTION_MODELS[provider].fastModel;
+  const fastModel = SUBSCRIPTION_MODELS[provider].fastModel;
+  const entry = models.find((model) => model.value === fastModel);
+  if (!entry) return null;
   return {
-    model,
-    reasoningEffort: getSupportedEffort(provider, model, "low"),
+    model: entry.value,
+    reasoningEffort: entry.efforts.includes("low") ? "low" : null,
   };
+}
+
+// Each entry is read on its own, so an unreadable one (a level this version
+// doesn't know, a hand edit) only sends that task back to the main model.
+export function parseAiTaskModels(value: unknown): {
+  models: AiTaskModels;
+  invalid: AiTaskModelType[];
+} {
+  const record =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  const models: AiTaskModels = {};
+  const invalid: AiTaskModelType[] = [];
+  for (const type of AI_TASK_MODEL_TYPES) {
+    if (record[type] === undefined || record[type] === null) continue;
+    const parsed = aiTaskModelEntry.safeParse(record[type]);
+    if (parsed.success) models[type] = parsed.data;
+    else invalid.push(type);
+  }
+  return { models, invalid };
 }
 
 // True when a high-volume task is set up in a way that can drain a plan
@@ -254,17 +279,6 @@ export function isCostlyTaskChoice({
   if (!HIGH_VOLUME_TASK_TYPES.includes(type)) return false;
   if (getSubscriptionModelWeight(model) !== "light") return true;
   return !!reasoningEffort && HIGH_REASONING_EFFORTS.includes(reasoningEffort);
-}
-
-function getSupportedEffort(
-  provider: SubscriptionProvider,
-  model: string,
-  effort: ReasoningEffort,
-): ReasoningEffort | null {
-  const entry: SubscriptionModel | undefined = SUBSCRIPTION_MODELS[
-    provider
-  ].models.find((m) => m.value === model);
-  return entry?.efforts.includes(effort) ? effort : null;
 }
 
 function claudeModel(

@@ -22,13 +22,13 @@ import {
   AI_TASK_MODEL_TYPES,
   type AiTaskModels,
   type AiTaskModelType,
-  aiTaskModelsSchema,
   DEFAULT_PROVIDER,
   getRecommendedTaskModel,
   HIGH_VOLUME_TASK_TYPES,
   isCostlyTaskChoice,
   isSubscriptionProvider,
   type ModelWeight,
+  parseAiTaskModels,
   Provider,
   providerOptions,
   type ReasoningEffort,
@@ -140,9 +140,7 @@ function ModelSectionForm(props: {
   const { refetch, emailAccountId, subscriptions } = props;
   const initialProvider = (props.aiProvider ??
     DEFAULT_PROVIDER) as SaveAiSettingsBody["aiProvider"];
-  const savedTaskModels = aiTaskModelsSchema.safeParse(
-    props.aiTaskModels ?? {},
-  );
+  const savedTaskModels = parseAiTaskModels(props.aiTaskModels).models;
   const savedEffort = reasoningEffortSchema.safeParse(props.aiReasoningEffort);
   const getModels = (provider: SubscriptionProvider): SubscriptionModel[] =>
     subscriptions?.models[provider] ?? [
@@ -153,19 +151,20 @@ function ModelSectionForm(props: {
       ? getModels(provider).find((m) => m.value === model)
       : undefined;
   // Background work starts on the light model with little thinking until the
-  // user picks otherwise; getModel does the same for tasks with no entry.
-  const getRecommendedTaskModels = (provider: string): AiTaskModels => {
-    if (!isSubscriptionProvider(provider)) return {};
-    return Object.fromEntries(
+  // user picks otherwise; getModel does the same for tasks with no entry,
+  // against the same list.
+  const getRecommended = (provider: string, type: AiTaskModelType) =>
+    isSubscriptionProvider(provider)
+      ? getRecommendedTaskModel(provider, type, getModels(provider))
+      : null;
+  const getRecommendedTaskModels = (provider: string): AiTaskModels =>
+    Object.fromEntries(
       HIGH_VOLUME_TASK_TYPES.flatMap((type) => {
-        const recommended = getRecommendedTaskModel(provider, type);
-        if (!recommended || !findModel(provider, recommended.model)) return [];
-        return [[type, { provider, ...recommended }]];
+        const recommended = getRecommended(provider, type);
+        return recommended ? [[type, { provider, ...recommended }]] : [];
       }),
     );
-  };
-  const hasSavedTaskModels =
-    savedTaskModels.success && Object.keys(savedTaskModels.data).length > 0;
+  const hasSavedTaskModels = Object.keys(savedTaskModels).length > 0;
 
   const {
     register,
@@ -177,15 +176,15 @@ function ModelSectionForm(props: {
     resolver: zodResolver(saveAiSettingsBody),
     defaultValues: {
       aiProvider: initialProvider,
+      // A saved model missing from the current list is kept, not swapped.
       aiModel:
-        isSubscriptionProvider(initialProvider) &&
-        !findModel(initialProvider, props.aiModel ?? undefined)
+        isSubscriptionProvider(initialProvider) && !props.aiModel
           ? SUBSCRIPTION_MODELS[initialProvider].defaultModel
           : (props.aiModel ?? ""),
       aiApiKey: undefined,
       aiReasoningEffort: savedEffort.success ? savedEffort.data : null,
       aiTaskModels: hasSavedTaskModels
-        ? savedTaskModels.data
+        ? savedTaskModels
         : getRecommendedTaskModels(initialProvider),
     },
   });
@@ -254,7 +253,10 @@ function ModelSectionForm(props: {
   const globalError = (errors as Record<string, { message?: string }>)[""];
 
   const modelSelectOptions = isSubscription
-    ? toModelOptions(getModels(aiProvider))
+    ? withSavedModel(
+        toModelOptions(getModels(aiProvider)),
+        aiProvider === initialProvider ? props.aiModel : null,
+      )
     : aiProvider === Provider.OPEN_AI && hasAnyApiKey
       ? props.models?.map((model) => ({
           label: model.id,
@@ -266,8 +268,8 @@ function ModelSectionForm(props: {
 
   const getDefaultTaskEntry = (provider: string, type: AiTaskModelType) => {
     if (!isSubscriptionProvider(provider)) return { provider, model: aiModel };
-    const recommended = getRecommendedTaskModel(provider, type);
-    return recommended && findModel(provider, recommended.model)
+    const recommended = getRecommended(provider, type);
+    return recommended
       ? { provider, ...recommended }
       : {
           provider,
@@ -275,6 +277,18 @@ function ModelSectionForm(props: {
           reasoningEffort: null,
         };
   };
+
+  // What a task with no entry runs on, named the same way the runtime picks it.
+  const getNoEntryLabel = (type: AiTaskModelType) => {
+    const recommended = getRecommended(aiProvider, type);
+    if (!recommended) return "Same as main";
+    const label =
+      findModel(aiProvider, recommended.model)?.label ?? recommended.model;
+    return recommended.reasoningEffort
+      ? `Recommended (${label}, ${EFFORT_LABELS[recommended.reasoningEffort].toLowerCase()} thinking)`
+      : `Recommended (${label})`;
+  };
+  const hasLightModel = !!getRecommended(aiProvider, "default");
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="max-w-sm space-y-4">
@@ -349,10 +363,11 @@ function ModelSectionForm(props: {
                 />
               )}
               <p className="text-xs text-muted-foreground">
-                This model runs chat and drafts. Work that runs on every email
-                (general, background and quick checks) uses a lighter model with
-                low thinking unless you change it under Per task. More thinking
-                gives better answers but is slower and uses more of your plan.
+                {hasLightModel
+                  ? "This model runs chat and drafts. Work that runs on every email (general, background and quick checks) uses a lighter model unless you change it under Per task. "
+                  : "This model runs all AI work unless you change it under Per task. "}
+                More thinking gives better answers but is slower and uses more
+                of your plan.
               </p>
             </>
           ) : (
@@ -393,10 +408,16 @@ function ModelSectionForm(props: {
               variant="outline"
               size="sm"
               onClick={() =>
-                setValue("aiTaskModels", getRecommendedTaskModels(aiProvider))
+                setValue("aiTaskModels", {
+                  ...aiTaskModels,
+                  ...Object.fromEntries(
+                    HIGH_VOLUME_TASK_TYPES.map((type) => [type, undefined]),
+                  ),
+                  ...getRecommendedTaskModels(aiProvider),
+                })
               }
             >
-              Use recommended settings
+              Use recommended settings for email work
             </Button>
           )}
           {AI_TASK_MODEL_TYPES.map((type) => {
@@ -424,7 +445,7 @@ function ModelSectionForm(props: {
                     name={`aiTaskModels.${type}.provider`}
                     label={TASK_LABELS[type]}
                     options={[
-                      { label: "Same as main", value: "" },
+                      { label: getNoEntryLabel(type), value: "" },
                       ...taskProviderOptions,
                     ]}
                     value={provider}
@@ -442,7 +463,12 @@ function ModelSectionForm(props: {
                     (isSubscriptionProvider(provider) ? (
                       <Select
                         label="Model"
-                        options={toModelOptions(getModels(provider))}
+                        options={withSavedModel(
+                          toModelOptions(getModels(provider)),
+                          savedTaskModels[type]?.provider === provider
+                            ? savedTaskModels[type]?.model
+                            : null,
+                        )}
                         {...register(`aiTaskModels.${type}.model`, {
                           onChange: (event) => {
                             const next = findModel(
@@ -544,6 +570,21 @@ function toModelOptions(models: SubscriptionModel[]) {
     label: weight ? `${label} (${WEIGHT_NOTES[weight]})` : label,
     value,
   }));
+}
+
+// A saved model missing from the current list (the list couldn't be read, or
+// the plan changed) stays selectable instead of being swapped out.
+function withSavedModel(
+  options: { label: string; value: string }[],
+  saved: string | null | undefined,
+) {
+  if (!saved || options.some((option) => option.value === saved)) {
+    return options;
+  }
+  return [
+    ...options,
+    { label: `${saved} (not on your current list)`, value: saved },
+  ];
 }
 
 function toEffortOptions(model: SubscriptionModel) {

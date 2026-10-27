@@ -3,27 +3,70 @@ import {
   aiTaskModelsSchema,
   getRecommendedTaskModel,
   isCostlyTaskChoice,
+  parseAiTaskModels,
   Provider,
+  SUBSCRIPTION_MODELS,
 } from "@/utils/llms/config";
 
 describe("getRecommendedTaskModel", () => {
+  const codexModels = SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models;
+  const claudeModels = SUBSCRIPTION_MODELS[Provider.CLAUDE_CODE].models;
+
   it("puts high-volume tasks on the light model with low thinking, where the model takes a level", () => {
     for (const type of ["default", "economy", "nano"] as const) {
-      expect(getRecommendedTaskModel(Provider.CODEX_CLI, type)).toEqual({
-        model: "gpt-6-luna",
-        reasoningEffort: "low",
-      });
+      expect(
+        getRecommendedTaskModel(Provider.CODEX_CLI, type, codexModels),
+      ).toEqual({ model: "gpt-6-luna", reasoningEffort: "low" });
       // Haiku has no thinking levels.
-      expect(getRecommendedTaskModel(Provider.CLAUDE_CODE, type)).toEqual({
-        model: "haiku",
-        reasoningEffort: null,
-      });
+      expect(
+        getRecommendedTaskModel(Provider.CLAUDE_CODE, type, claudeModels),
+      ).toEqual({ model: "haiku", reasoningEffort: null });
     }
   });
 
   it("leaves chat and drafts on the main model", () => {
-    expect(getRecommendedTaskModel(Provider.CODEX_CLI, "chat")).toBeNull();
-    expect(getRecommendedTaskModel(Provider.CLAUDE_CODE, "draft")).toBeNull();
+    expect(
+      getRecommendedTaskModel(Provider.CODEX_CLI, "chat", codexModels),
+    ).toBeNull();
+    expect(
+      getRecommendedTaskModel(Provider.CLAUDE_CODE, "draft", claudeModels),
+    ).toBeNull();
+  });
+
+  it("follows the user's own list: no recommendation without the light model, and only a level it offers", () => {
+    const withoutLuna = codexModels.filter((m) => m.value !== "gpt-6-luna");
+    expect(
+      getRecommendedTaskModel(Provider.CODEX_CLI, "default", withoutLuna),
+    ).toBeNull();
+
+    const lunaWithoutLow = codexModels.map((m) =>
+      m.value === "gpt-6-luna"
+        ? { ...m, efforts: m.efforts.filter((e) => e !== "low") }
+        : m,
+    );
+    expect(
+      getRecommendedTaskModel(Provider.CODEX_CLI, "nano", lunaWithoutLow),
+    ).toEqual({ model: "gpt-6-luna", reasoningEffort: null });
+  });
+});
+
+describe("parseAiTaskModels", () => {
+  it("keeps the readable entries when one is not", () => {
+    const parsed = parseAiTaskModels({
+      chat: { provider: Provider.CODEX_CLI, model: "gpt-6.1-sol" },
+      economy: {
+        provider: Provider.CODEX_CLI,
+        model: "gpt-6-luna",
+        reasoningEffort: "ultra",
+      },
+      nano: null,
+    });
+
+    expect(parsed).toEqual({
+      models: { chat: { provider: Provider.CODEX_CLI, model: "gpt-6.1-sol" } },
+      invalid: ["economy"],
+    });
+    expect(parseAiTaskModels(null)).toEqual({ models: {}, invalid: [] });
   });
 });
 

@@ -8,7 +8,7 @@ import {
 } from "@/utils/actions/ai-subscription.validation";
 import { Prisma } from "@/generated/prisma/client";
 import { SafeError } from "@/utils/error";
-import { aiTaskModelsSchema } from "@/utils/llms/config";
+import { parseAiTaskModels } from "@/utils/llms/config";
 import {
   cancelSubscriptionLogin,
   disconnectSubscriptionLogin,
@@ -52,8 +52,7 @@ export const disconnectAiSubscriptionAction = actionClientUser
     });
     if (!user) return;
 
-    const parsed = aiTaskModelsSchema.safeParse(user.aiTaskModels ?? {});
-    const taskModels = parsed.success ? parsed.data : {};
+    const taskModels = parseAiTaskModels(user.aiTaskModels).models;
     const remainingTaskModels = Object.fromEntries(
       Object.entries(taskModels).filter(
         ([, entry]) => entry && entry.provider !== provider,

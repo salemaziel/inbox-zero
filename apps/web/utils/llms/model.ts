@@ -14,14 +14,15 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
 import {
-  aiTaskModelsSchema,
   getRecommendedTaskModel,
   isSubscriptionProvider,
+  parseAiTaskModels,
   Provider,
   type ReasoningEffort,
   reasoningEffortSchema,
   SUBSCRIPTION_MODELS,
 } from "@/utils/llms/config";
+import { getKnownSubscriptionModels } from "@/utils/llms/subscription-models";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
@@ -134,8 +135,11 @@ export function getModel(
 // A per-task entry only applies while its provider is still usable: the main
 // provider (with the main API key) or a CLI subscription.
 function getUserTaskModel(userAi: UserAIFields, modelType: ModelType) {
-  const parsed = aiTaskModelsSchema.safeParse(userAi.aiTaskModels ?? {});
-  const entry = parsed.success ? parsed.data[modelType] : undefined;
+  const { models, invalid } = parseAiTaskModels(userAi.aiTaskModels);
+  if (invalid.includes(modelType)) {
+    logger.warn("Ignoring an unreadable task model entry", { modelType });
+  }
+  const entry = models[modelType];
   if (!entry) return null;
   if (isCliSubscriptionProvider(entry.provider)) return entry;
   if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
@@ -492,7 +496,7 @@ function selectUserModel(
   const configuredDefault = getFirstSupportedModelListEntry("default");
   const aiProvider = userAi.aiProvider || configuredDefault?.provider;
   const { aiModel, reasoningEffort } = userAi.aiProvider
-    ? getUserModelChoice(userAi, userAi.aiProvider, modelType)
+    ? getUserModelChoice(userAi, userAi.aiProvider, modelType, cliLogin)
     : { aiModel: configuredDefault?.modelName || null, reasoningEffort: null };
 
   if (!aiProvider) {
@@ -518,11 +522,16 @@ function getUserModelChoice(
   userAi: UserAIFields,
   aiProvider: string,
   modelType: ModelType,
+  cliLogin: CliLoginScope,
 ): { aiModel: string | null; reasoningEffort: ReasoningEffort | null } {
   if (!isSubscriptionProvider(aiProvider))
     return { aiModel: userAi.aiModel || null, reasoningEffort: null };
 
-  const recommended = getRecommendedTaskModel(aiProvider, modelType);
+  const recommended = getRecommendedTaskModel(
+    aiProvider,
+    modelType,
+    getKnownSubscriptionModels(aiProvider, cliLogin),
+  );
   if (recommended)
     return {
       aiModel: recommended.model,

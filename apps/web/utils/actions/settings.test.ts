@@ -292,6 +292,63 @@ describe("updateAiSettingsAction", () => {
     expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps saved models the current list lacks while they're left unchanged, and nothing new", async () => {
+    mockConnectedLogins([Provider.CODEX_CLI]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: "user@example.com",
+      emailVerified: true,
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.2-x",
+      aiReasoningEffort: "high",
+      aiTaskModels: {
+        economy: {
+          provider: Provider.CODEX_CLI,
+          model: "gpt-6.2-x-mini",
+          reasoningEffort: "low",
+        },
+      },
+    } as Awaited<ReturnType<typeof prisma.user.findUnique>>);
+    const saved = {
+      aiProvider: Provider.CODEX_CLI,
+      aiModel: "gpt-6.2-x",
+      aiReasoningEffort: "high" as const,
+      aiTaskModels: {
+        economy: {
+          provider: Provider.CODEX_CLI,
+          model: "gpt-6.2-x-mini",
+          reasoningEffort: "low" as const,
+        },
+      },
+    };
+
+    // The listing timed out, so only the built-in list is known.
+    const unchanged = await updateAiSettingsAction(saved);
+    const newLevel = await updateAiSettingsAction({
+      ...saved,
+      aiReasoningEffort: "medium",
+    });
+    const newTaskModel = await updateAiSettingsAction({
+      ...saved,
+      aiTaskModels: {
+        nano: { provider: Provider.CODEX_CLI, model: "gpt-6.2-x-mini" },
+      },
+    });
+
+    expect(unchanged?.serverError).toBeUndefined();
+    expect(newLevel?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
+    expect(newTaskModel?.serverError).toBe(
+      "Pick a model from this account's list.",
+    );
+    expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ aiModel: "gpt-6.2-x" }),
+      }),
+    );
+  });
+
   it("saves thinking levels the model offers, for the main model and per task", async () => {
     mockConnectedLogins([Provider.CODEX_CLI]);
 
