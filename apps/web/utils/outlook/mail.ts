@@ -297,6 +297,9 @@ export async function draftEmail(
   const toRecipients = args.to
     ? (buildGraphRecipients(recipients.to) ?? [])
     : (replyToRecipients ?? [rawFromRecipient ?? fallbackToRecipient]);
+  if (!toRecipients.length) {
+    logger.warn("Draft 'to' override had no valid address");
+  }
 
   // Build CC list from reply-all and args
   const ccAddresses = mergeAndDedupeRecipients(recipients.cc, args.cc);

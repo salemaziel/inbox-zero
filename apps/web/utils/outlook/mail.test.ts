@@ -897,6 +897,53 @@ describe("draftEmail", () => {
     );
   });
 
+  it("leaves the draft unaddressed and warns when the recipient override has no valid address", async () => {
+    const updateDraft = vi.fn(async () => ({ id: "draft-1" }) as Message);
+    const client = createMockOutlookClient((path) => {
+      if (path === "/me/messages/message-1") {
+        return { get: vi.fn(async () => ({ isRead: true })) };
+      }
+      if (path === "/me/messages/message-1/createReplyAll") {
+        return {
+          post: vi.fn(
+            async () =>
+              ({ id: "draft-1", conversationId: "conversation-1" }) as Message,
+          ),
+        };
+      }
+      if (path === "/me/messages/draft-1") return { patch: updateDraft };
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+    const logger = createTestLogger();
+    const warn = vi.spyOn(logger, "warn");
+
+    await draftEmail(
+      client,
+      {
+        id: "message-1",
+        threadId: "conversation-1",
+        headers: {
+          from: "Sender <sender@example.com>",
+          to: "owner@example.com",
+          subject: "Original subject",
+          date: "2026-01-01T12:00:00.000Z",
+        },
+        textPlain: "Original body",
+        textHtml: "<p>Original body</p>",
+      } as EmailForAction,
+      { to: "a@x.example; b@y.example", content: "Draft body" },
+      "owner@example.com",
+      logger,
+    );
+
+    expect(updateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ toRecipients: [] }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "Draft 'to' override had no valid address",
+    );
+  });
+
   it("addresses the draft to Reply-To instead of From", async () => {
     const updateDraft = vi.fn(async () => ({ id: "draft-1" }) as Message);
     const client = createMockOutlookClient((path) => {
