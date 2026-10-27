@@ -35,6 +35,15 @@ export class OutlookThreadPaginationError extends Error {
   }
 }
 
+// Thrown for a thread ID that can't be a Graph conversation ID. Callers'
+// fallbacks must not run: they would match nothing and report success.
+export class InvalidOutlookThreadIdError extends Error {
+  constructor() {
+    super("Invalid Outlook thread ID");
+    this.name = "InvalidOutlookThreadIdError";
+  }
+}
+
 /**
  * Lists every message in a conversation, optionally limited to one folder.
  *
@@ -56,11 +65,12 @@ export async function listThreadMessages<TMessage extends { id: string }>({
   folderId?: string;
   logger: Logger;
 }): Promise<TMessage[]> {
+  // Messages without a conversation carry an empty thread ID; there is
+  // nothing to list for them.
+  if (!threadId) return [];
   // Graph conversation IDs are base64 or base64url. Anything else is not a
   // real thread, and callers mutate whatever this returns.
-  if (!GRAPH_ID_PATTERN.test(threadId)) {
-    throw new Error("Invalid Outlook thread ID");
-  }
+  if (!GRAPH_ID_PATTERN.test(threadId)) throw new InvalidOutlookThreadIdError();
 
   const conversationFilter = `conversationId eq '${escapeODataString(threadId)}'`;
   const filter = folderId

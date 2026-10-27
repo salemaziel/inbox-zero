@@ -10,6 +10,7 @@ import {
 } from "@/utils/outlook/retry";
 import { sleep } from "@/utils/sleep";
 import {
+  InvalidOutlookThreadIdError,
   listThreadMessages,
   OutlookThreadPaginationError,
   processThreadMessagesFallback,
@@ -419,7 +420,11 @@ export async function archiveThread({
       logger,
     });
   } catch (error) {
-    if (error instanceof OutlookThreadPaginationError) throw error;
+    if (
+      error instanceof OutlookThreadPaginationError ||
+      error instanceof InvalidOutlookThreadIdError
+    )
+      throw error;
     return archiveThreadWithFallback({
       client,
       threadId,
@@ -626,7 +631,11 @@ export async function markReadThread({
       failureMessage: "Failed to mark message as read",
     });
   } catch (error) {
-    if (error instanceof OutlookThreadPaginationError) throw error;
+    if (
+      error instanceof OutlookThreadPaginationError ||
+      error instanceof InvalidOutlookThreadIdError
+    )
+      throw error;
     // If the filter fails, try a different approach
     logger.warn("Filter failed, trying alternative approach", {
       threadId,

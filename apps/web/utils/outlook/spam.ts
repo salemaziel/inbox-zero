@@ -1,6 +1,7 @@
 import type { OutlookClient } from "@/utils/outlook/client";
 import { withMicrosoftGraphWriteRetry } from "@/utils/outlook/retry";
 import {
+  InvalidOutlookThreadIdError,
   listThreadMessages,
   OutlookThreadPaginationError,
   processThreadMessagesFallback,
@@ -80,7 +81,11 @@ async function moveThreadToSpamState({
       throwIfAllFail: true,
     });
   } catch (error) {
-    if (error instanceof OutlookThreadPaginationError) throw error;
+    if (
+      error instanceof OutlookThreadPaginationError ||
+      error instanceof InvalidOutlookThreadIdError
+    )
+      throw error;
     logger.warn("Filter failed, trying alternative approach", {
       threadId,
       error,

@@ -2,6 +2,7 @@ import type { OutlookCategory } from "@microsoft/microsoft-graph-types";
 import { describe, expect, it, vi } from "vitest";
 import type { OutlookClient } from "@/utils/outlook/client";
 import { createTestLogger } from "@/__tests__/helpers";
+import { publishArchive } from "@inboxzero/tinybird";
 import {
   archiveThread,
   createLabel,
@@ -156,6 +157,24 @@ describe("archiveThread", () => {
     ).rejects.toThrow("Access denied");
 
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it("fails without publishing an archive for a thread ID Graph can't have issued", async () => {
+    vi.mocked(publishArchive).mockClear();
+    const { client, post } = createPagingClient([{ value: [{ id: "m1" }] }]);
+
+    await expect(
+      archiveThread({
+        client,
+        threadId: "thread 1",
+        ownerEmail: "user@example.com",
+        actionSource: "user",
+        logger: createTestLogger(),
+      }),
+    ).rejects.toThrow("Invalid Outlook thread ID");
+
+    expect(post).not.toHaveBeenCalled();
+    expect(publishArchive).not.toHaveBeenCalled();
   });
 });
 

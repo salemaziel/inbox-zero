@@ -62,6 +62,37 @@ describe("listThreadMessages", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
+  it("returns no messages for an empty thread ID without calling Graph", async () => {
+    const { client, get } = createListClient([{ value: [] }]);
+
+    await expect(
+      listThreadMessages({
+        client,
+        threadId: "",
+        select: "id",
+        logger: createTestLogger(),
+      }),
+    ).resolves.toEqual([]);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("accepts every character of standard and URL-safe base64 IDs", async () => {
+    const threadId = "AQ+b/c-d_e==";
+    const { client, filters } = createListClient([
+      { value: [{ id: "m1", conversationId: threadId }] },
+    ]);
+
+    const messages = await listThreadMessages({
+      client,
+      threadId,
+      select: "id",
+      logger: createTestLogger(),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual(["m1"]);
+    expect(filters).toEqual(["conversationId eq 'AQ%2Bb%2Fc-d_e%3D%3D'"]);
+  });
+
   it("drops messages from other conversations before returning them", async () => {
     const { client } = createListClient([
       {
