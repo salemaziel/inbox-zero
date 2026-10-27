@@ -53,6 +53,7 @@ export function extractEmailAddress(email: string): string {
   let inQuotes = false;
   let commentDepth = 0;
   let skippedStart = 0;
+  let sawQuotes = false;
 
   for (let index = 0; index < email.length; index++) {
     const char = email[index];
@@ -86,15 +87,22 @@ export function extractEmailAddress(email: string): string {
       continue;
     }
     if (char === '"' || char === "(") skippedStart = index + 1;
-    if (char === '"') inQuotes = true;
-    else if (char === "(") commentDepth = 1;
-    else if (char === "<") current = "";
+    if (char === '"') {
+      inQuotes = true;
+      sawQuotes = true;
+    } else if (char === "(") {
+      commentDepth = 1;
+      // Keep a gap so text either side of a comment isn't joined into one token.
+      outside += " ";
+    } else if (char === "<") current = "";
     else if (char === ">") return "";
     else outside += char;
   }
 
   if (inQuotes || commentDepth > 0 || current !== null) return "";
   if (angleAddrs.length > 1) return "";
+  // A bare address has no display name, so quoted text means it's malformed.
+  if (!angleAddrs.length && sawQuotes) return "";
 
   const candidate = (angleAddrs[0] ?? outside).trim();
   return isValidEmail(candidate) ? candidate : "";

@@ -274,6 +274,14 @@ describe("email utils", () => {
       ],
       ["comment with no address", "(name@example.com)", ""],
       [
+        "comment before a bare address",
+        "(Name) name@example.com",
+        "name@example.com",
+      ],
+      ["comment inside a bare address", "name@exam(x)ple.com", ""],
+      ["quoted text glued to a bare address", 'name@example.com"x@y"', ""],
+      ["quoted text before a bare address", '"Name" name@example.com', ""],
+      [
         "angle-addr inside a trailing comment",
         "<real@x.example> (<b@y.example>)",
         "",
