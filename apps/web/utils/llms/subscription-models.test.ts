@@ -18,6 +18,7 @@ const USER_A = { userId: "user-a", allowServerLogin: false };
 const USER_B = { userId: "user-b", allowServerLogin: false };
 
 import {
+  clearCodexModels,
   getSubscriptionModels,
   parseCodexModels,
 } from "@/utils/llms/subscription-models";
@@ -150,6 +151,22 @@ describe("getSubscriptionModels", () => {
     expect(own.map((m) => m.value)).toEqual(["gpt-5.6-luna"]);
     expect(otherOwner.map((m) => m.value)).toContain("gpt-6.1-terra");
     expect(listCodexModels).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads a user's list again after their sign-in changes, keeping the server's", async () => {
+    listCodexModels.mockImplementation(async (scope) =>
+      listedWith(scope.allowServerLogin ? "server" : "user", CODEX_MODEL_LIST),
+    );
+    await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
+    await getSubscriptionModels(Provider.CODEX_CLI, OWNER);
+
+    clearCodexModels(USER_A.userId);
+    clearCodexModels(OWNER.userId);
+    await getSubscriptionModels(Provider.CODEX_CLI, USER_A);
+    await getSubscriptionModels(Provider.CODEX_CLI, OWNER);
+
+    // user A twice, the server login once.
+    expect(listCodexModels).toHaveBeenCalledTimes(3);
   });
 
   it("offers the built-in list without running the CLI when the user has no login to list with", async () => {

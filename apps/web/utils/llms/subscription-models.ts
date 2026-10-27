@@ -62,6 +62,14 @@ export async function getAllSubscriptionModels(cliLogin: CliLoginScope) {
   return { [Provider.CLAUDE_CODE]: claude, [Provider.CODEX_CLI]: codex };
 }
 
+// A new or removed sign-in can be on another ChatGPT plan, so the user's list
+// is read again on the next lookup.
+export function clearCodexModels(userId: string) {
+  const key = getCodexModelsKey("user", userId);
+  codexModelsCache.delete(key);
+  codexModelsPending.delete(key);
+}
+
 // The models the picker should show, from `codex debug models` entries:
 // models not marked for the picker are dropped, the rest sorted by Codex's
 // priority, and any thinking level this app doesn't offer is left out.
