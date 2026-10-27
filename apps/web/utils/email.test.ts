@@ -264,7 +264,7 @@ describe("email utils", () => {
       [
         "address in display name when the angle-addr is valid",
         "trusted@example.com <real@other.example>",
-        "real@other.example",
+        "",
       ],
       ["unclosed angle-addr", "Name <name@example.com", ""],
       [
@@ -429,7 +429,39 @@ describe("email utils", () => {
         "a quote that splits a quoted local part",
         '<t@a.example> " <"r"@b.example> ("()',
       ],
+      [
+        "a bare real address before a comment that closes early",
+        "r@b.example () <t@a.example> ()",
+      ],
+      [
+        "a bare real address after a comment that closes early",
+        "() <t@a.example> () r@b.example",
+      ],
+      [
+        "a bare real address inside a trailing comment",
+        "<t@a.example> ( r@b.example )",
+      ],
     ])("returns nothing for %s", (_caseName, input) => {
+      expect(extractEmailAddress(input)).toBe("");
+    });
+
+    // Gmail decodes an encoded-word name or comment and returns it quoted, so
+    // these come back from the API exactly like this. Each still names another
+    // address, so it fails closed.
+    it.each([
+      [
+        "a decoded name with an escaped quote",
+        '"Zé \\"<trusted@example.com>" <sender@sender.example>',
+      ],
+      [
+        "a decoded comment turned into a name",
+        '") <trusted@example.com> (" <sender@sender.example>',
+      ],
+      [
+        "a Google Groups name that is another address",
+        "\"'b@y.example' via Group\" <a@x.example>",
+      ],
+    ])("returns nothing for %s from Gmail", (_caseName, input) => {
       expect(extractEmailAddress(input)).toBe("");
     });
 
@@ -437,8 +469,20 @@ describe("email utils", () => {
       ["angle brackets", '"Sales <Team>" <a@x.example>'],
       ["parentheses", '"John (Work)" <a@x.example>'],
       ["the same address", '"a@x.example" <a@x.example>'],
-      ["another address", "\"'b@y.example' via Group\" <a@x.example>"],
-    ])("keeps the address for a quoted name with %s", (_caseName, input) => {
+      ["the same address in brackets", '"Bob <a@x.example>" <a@x.example>'],
+      [
+        "the same address in parentheses",
+        '"Bob Smith (a@x.example)" <a@x.example>',
+      ],
+      ["the same address in another case", '"A@X.Example" <a@x.example>'],
+      [
+        "the same address in escaped quotes",
+        '"\\"a@x.example\\"" <a@x.example>',
+      ],
+      ["an @ that isn't an address", '"Doe @ Acme (@jdoe)" <a@x.example>'],
+      ["the same address in a comment", "Bob (a@x.example) <a@x.example>"],
+      ["the same address unquoted", "a@x.example <a@x.example>"],
+    ])("keeps the address for a name with %s", (_caseName, input) => {
       expect(extractEmailAddress(input)).toBe("a@x.example");
     });
   });
@@ -672,7 +716,11 @@ describe("email utils", () => {
       ["a colon and a dot", "Dr. Who: Time", '"Dr. Who: Time" <a@example.com>'],
       ["a semicolon", "Acme; Inc", '"Acme; Inc" <a@example.com>'],
       ["square brackets", "[Team]", '"[Team]" <a@example.com>'],
-      ["an at sign", "b@y.example", '"b@y.example" <a@example.com>'],
+      [
+        "the same address",
+        "Bob (a@example.com)",
+        '"Bob (a@example.com)" <a@example.com>',
+      ],
     ])("quotes a name containing %s", (_caseName, name, expected) => {
       const formatted = formatEmailWithName(name, "a@example.com");
       expect(formatted).toBe(expected);

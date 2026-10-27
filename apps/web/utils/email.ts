@@ -66,6 +66,9 @@ export function extractEmailAddress(email: string): string {
   let commentDepth = 0;
   let skippedStart = 0;
   let sawQuotes = false;
+  let commentHidesMailbox = false;
+  let angleStart = 0;
+  let angleEnd = 0;
 
   for (let index = 0; index < email.length; index++) {
     const char = email[index];
@@ -74,16 +77,15 @@ export function extractEmailAddress(email: string): string {
       continue;
     }
     if (inQuotes) {
-      if (char === '"') {
-        inQuotes = false;
-        if (hidesMailbox(email.slice(skippedStart, index))) return "";
-      }
+      if (char === '"') inQuotes = false;
       continue;
     }
     if (commentDepth > 0) {
       if (char === "(") commentDepth++;
       else if (char === ")" && --commentDepth === 0) {
-        if (hidesMailbox(email.slice(skippedStart, index))) return "";
+        if (hidesMailbox(email.slice(skippedStart, index))) {
+          commentHidesMailbox = true;
+        }
       }
       continue;
     }
@@ -91,6 +93,7 @@ export function extractEmailAddress(email: string): string {
       if (char === ">") {
         angleAddrs.push(current);
         current = null;
+        angleEnd = index;
       } else if (char === "<") {
         return "";
       } else {
@@ -98,7 +101,7 @@ export function extractEmailAddress(email: string): string {
       }
       continue;
     }
-    if (char === '"' || char === "(") skippedStart = index + 1;
+    if (char === "(") skippedStart = index + 1;
     if (char === '"') {
       inQuotes = true;
       sawQuotes = true;
@@ -106,18 +109,31 @@ export function extractEmailAddress(email: string): string {
       commentDepth = 1;
       // Keep a gap so text either side of a comment isn't joined into one token.
       outside += " ";
-    } else if (char === "<") current = "";
-    else if (char === ">") return "";
+    } else if (char === "<") {
+      current = "";
+      angleStart = index;
+    } else if (char === ">") return "";
     else outside += char;
   }
 
   if (inQuotes || commentDepth > 0 || current !== null) return "";
   if (angleAddrs.length > 1) return "";
-  // A bare address has no display name, so quoted text means it's malformed.
-  if (!angleAddrs.length && sawQuotes) return "";
 
-  const candidate = (angleAddrs[0] ?? outside).trim();
-  return isValidEmail(candidate) ? candidate : "";
+  if (!angleAddrs.length) {
+    // A bare address has no display name, so quoted text means it's malformed.
+    if (sawQuotes || commentHidesMailbox) return "";
+    const bareAddress = outside.trim();
+    return isValidEmail(bareAddress) ? bareAddress : "";
+  }
+
+  // Gmail can return From with encoded words already decoded, so a quoted
+  // string or comment can swallow the real mailbox or push a trusted address
+  // into the angle-addr. Either way the real mailbox is still somewhere in
+  // the header, so any other address outside the angle-addr makes it ambiguous.
+  const angleAddress = angleAddrs[0].trim();
+  const rest = `${email.slice(0, angleStart)} ${email.slice(angleEnd + 1)}`;
+  if (containsOtherAddress(rest, angleAddress)) return "";
+  return isValidEmail(angleAddress) ? angleAddress : "";
 }
 
 export function canonicalizeEmailAddress(email: string): string {
@@ -401,13 +417,31 @@ function recipientFirstName(recipient: string) {
   return givenName.split(/\s+/)[0] || name;
 }
 
-// Gmail can return From with encoded words already decoded, so a display name
-// may carry a bare quote or parenthesis that opens a region running over the
-// real mailbox, with the region closed by a comment after it. That mailbox
-// always leaves an "@" and a bracket or parenthesis inside the region, which
-// ordinary names rarely combine.
+// With no angle-addr, a decoded comment can open early and run over the real
+// bare mailbox, leaving a trusted address outside. That mailbox always leaves
+// an "@" and a parenthesis from the raw header inside the comment.
 function hidesMailbox(skippedText: string) {
   return skippedText.includes("@") && /[()<>]/.test(skippedText);
+}
+
+// Header delimiters always sit either side of a mailbox in the raw header,
+// so splitting on them leaves the real mailbox's "@" inside one token, with a
+// character on each side. Edge quotes and backslashes are trimmed so a name
+// that just repeats the address, quoted or escaped, still matches it.
+function containsOtherAddress(text: string, address: string) {
+  const expected = address.toLowerCase();
+  return text.split(/[\s()<>,;:]+/).some((token) => {
+    if (!/[^@]@[^@]/.test(token)) return false;
+    let start = 0;
+    let end = token.length;
+    while (start < end && (token[start] === '"' || token[start] === "\\")) {
+      start++;
+    }
+    while (end > start && (token[end - 1] === '"' || token[end - 1] === "\\")) {
+      end--;
+    }
+    return token.slice(start, end).toLowerCase() !== expected;
+  });
 }
 
 // Splits on commas outside quoted strings and, when trackComments is set,
