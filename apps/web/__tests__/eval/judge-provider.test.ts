@@ -18,6 +18,7 @@ describe("getEvalJudgeUserAi", () => {
       aiProvider: "openrouter",
       aiModel: "deepseek/deepseek-v4.1-flash",
       aiApiKey: "test-key",
+      aiReasoningEffort: null,
       aiTaskModels: null,
     });
   });
@@ -34,6 +35,7 @@ describe("getEvalJudgeUserAi", () => {
       aiProvider: "google",
       aiModel: "google/test-model",
       aiApiKey: "test-key",
+      aiReasoningEffort: null,
       aiTaskModels: null,
     });
   });

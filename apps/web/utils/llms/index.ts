@@ -63,7 +63,7 @@ import {
   assertTrialAiUsageAllowed,
   shouldForceNanoModel,
 } from "@/utils/llms/model-usage-guard";
-import { Provider } from "@/utils/llms/config";
+import { Provider, type ReasoningEffort } from "@/utils/llms/config";
 import {
   type CliLoginScope,
   checkUserCliLogin,
@@ -107,6 +107,7 @@ async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
   modelName,
   model,
   cliLogin,
+  reasoningEffort,
   tools,
   activeTools,
 }: {
@@ -114,6 +115,7 @@ async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
   modelName: string;
   model: LanguageModelV4;
   cliLogin?: CliLoginScope;
+  reasoningEffort?: ReasoningEffort | null;
   tools: T | undefined;
   activeTools?: Array<string>;
 }): Promise<{
@@ -145,6 +147,7 @@ async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
     provider,
     modelName,
     cliLogin,
+    reasoningEffort,
     tools: toolsToBridge as unknown as Record<
       string,
       {
@@ -175,6 +178,7 @@ const NO_USER_AI_FIELDS: UserAIFields = {
   aiProvider: null,
   aiModel: null,
   aiApiKey: null,
+  aiReasoningEffort: null,
   aiTaskModels: null,
 };
 
@@ -359,6 +363,7 @@ export function createGenerateText({
         modelName: candidate.modelName,
         model: candidate.model,
         cliLogin: candidate.cliLogin,
+        reasoningEffort: candidate.reasoningEffort,
         tools: protectedTools,
       });
       const protectedRequestOptions = prepareOptionsForToolBridge({
@@ -810,6 +815,7 @@ export async function chatCompletionStream(
       modelName: candidate.modelName,
       model: candidate.model,
       cliLogin: candidate.cliLogin,
+      reasoningEffort: candidate.reasoningEffort,
       tools: protectedChatTools,
     });
     try {
@@ -967,6 +973,7 @@ export async function toolCallAgentStream(options: ToolCallAgentStreamOptions) {
       modelName: candidate.modelName,
       model: candidate.model,
       cliLogin: candidate.cliLogin,
+      reasoningEffort: candidate.reasoningEffort,
       tools: candidateTools,
       activeTools,
     });
@@ -1442,6 +1449,7 @@ function getModelCandidates(modelOptions: SelectModel): ResolvedModel[] {
     modelName: modelOptions.modelName,
     model: modelOptions.model,
     cliLogin: modelOptions.cliLogin,
+    reasoningEffort: modelOptions.reasoningEffort,
     providerOptions: modelOptions.providerOptions,
   };
 

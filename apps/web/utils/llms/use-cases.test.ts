@@ -124,6 +124,7 @@ function defaultUserAi(overrides?: Partial<UserAIFields>): UserAIFields {
     aiProvider: Provider.OPENROUTER,
     aiModel: null,
     aiApiKey: null,
+    aiReasoningEffort: null,
     aiTaskModels: null,
     ...overrides,
   };

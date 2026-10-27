@@ -3,6 +3,7 @@
 import { actionClient } from "@/utils/actions/safe-action";
 import {
   saveAiSettingsBody,
+  saveDecisionModelApiKeyBody,
   saveDecisionModelSettingsBody,
   saveSensitiveDataPolicyBody,
   saveEmailUpdateSettingsBody,
@@ -10,9 +11,23 @@ import {
   updateDigestItemsBody,
   toggleDigestBody,
 } from "@/utils/actions/settings.validation";
-import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
+import {
+  AI_TASK_MODEL_TYPES,
+  type AiTaskModelEntry,
+  type AiTaskModelType,
+  DEFAULT_PROVIDER,
+  getRecommendedTaskModel,
+  HIGH_VOLUME_TASK_TYPES,
+  isSubscriptionProvider,
+  parseAiTaskModels,
+  Provider,
+  type ReasoningEffort,
+  reasoningEffortSchema,
+} from "@/utils/llms/config";
+import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
   CLI_SUBSCRIPTION_PROVIDERS,
+  type CliLoginScope,
   isCliLlmOwner,
   isCliSubscriptionProvider,
 } from "@/utils/llms/cli-provider";
@@ -30,6 +45,7 @@ import { env } from "@/env";
 import { addActionOwnershipToInput } from "@/utils/rule/rule";
 import { isSensitiveDataPolicyLocked } from "@/utils/dlp/policy.server";
 import { assertCanUseDigests } from "@/utils/premium/server";
+import { isDecisionModelApiKeyRejected } from "@/utils/decision-model/decision-model";
 
 export const updateEmailSettingsAction = actionClient
   .metadata({ name: "updateEmailSettings" })
@@ -55,7 +71,13 @@ export const updateAiSettingsAction = actionClientUser
   .action(
     async ({
       ctx: { userId, logger },
-      parsedInput: { aiProvider, aiModel, aiApiKey, aiTaskModels },
+      parsedInput: {
+        aiProvider,
+        aiModel,
+        aiApiKey,
+        aiReasoningEffort,
+        aiTaskModels,
+      },
     }) => {
       if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
         throw new SafeError("AI model settings are managed by the deployment.");
@@ -68,8 +90,7 @@ export const updateAiSettingsAction = actionClientUser
       }
 
       const taskEntries = Object.entries(aiTaskModels ?? {}).filter(
-        (pair): pair is [string, { provider: string; model: string }] =>
-          !!pair[1],
+        (pair): pair is [AiTaskModelType, AiTaskModelEntry] => !!pair[1],
       );
       const usesCliProvider =
         isCliSubscriptionProvider(aiProvider) ||
@@ -79,9 +100,10 @@ export const updateAiSettingsAction = actionClientUser
       if (usesCliProvider && !env.CLI_LLM_ENABLED) {
         throw new SafeError("AI subscriptions aren't enabled on this server.");
       }
-      const usableSubscriptions = usesCliProvider
-        ? await getUsableSubscriptionProviders(userId)
-        : [];
+      const { usableSubscriptions, allowServerLogin } = usesCliProvider
+        ? await getSubscriptionAccess(userId)
+        : { usableSubscriptions: [], allowServerLogin: false };
+      const cliLogin = { userId, allowServerLogin };
 
       if (
         isCliSubscriptionProvider(aiProvider) &&
@@ -100,8 +122,70 @@ export const updateAiSettingsAction = actionClientUser
         }
       }
 
-      const nextAiTaskModels = taskEntries.length
-        ? Object.fromEntries(taskEntries)
+      const saved = usesCliProvider ? await getSavedModelChoices(userId) : null;
+      if (isSubscriptionProvider(aiProvider)) {
+        await assertSubscriptionChoice(
+          cliLogin,
+          {
+            provider: aiProvider,
+            model: aiModel,
+            reasoningEffort: aiReasoningEffort ?? null,
+          },
+          saved?.main,
+        );
+      }
+      for (const [type, entry] of taskEntries) {
+        if (isSubscriptionProvider(entry.provider)) {
+          await assertSubscriptionChoice(
+            cliLogin,
+            {
+              provider: entry.provider,
+              model: entry.model,
+              reasoningEffort: entry.reasoningEffort ?? null,
+            },
+            saved?.tasks[type],
+          );
+        }
+      }
+
+      // High-volume tasks left on the recommendation are resolved against the
+      // user's own list now and saved, so what runs never depends on a list
+      // read later: the light model if it's offered, else the main model.
+      const mainSubscription = isSubscriptionProvider(aiProvider)
+        ? {
+            provider: aiProvider,
+            models: await getSubscriptionModels(aiProvider, cliLogin),
+          }
+        : null;
+      const resolvedTaskEntries = AI_TASK_MODEL_TYPES.flatMap(
+        (type): [AiTaskModelType, AiTaskModelEntry | null][] => {
+          const entry = aiTaskModels?.[type];
+          if (entry) {
+            return [
+              [
+                type,
+                {
+                  provider: entry.provider,
+                  model: entry.model,
+                  // Thinking levels only apply to subscription providers.
+                  reasoningEffort: isSubscriptionProvider(entry.provider)
+                    ? (entry.reasoningEffort ?? null)
+                    : null,
+                },
+              ],
+            ];
+          }
+          if (!mainSubscription || !HIGH_VOLUME_TASK_TYPES.includes(type)) {
+            return [];
+          }
+          if (entry === null) return [[type, null]];
+          const { provider, models } = mainSubscription;
+          const recommended = getRecommendedTaskModel(provider, type, models);
+          return [[type, recommended ? { provider, ...recommended } : null]];
+        },
+      );
+      const nextAiTaskModels = resolvedTaskEntries.length
+        ? Object.fromEntries(resolvedTaskEntries)
         : Prisma.DbNull;
 
       const providedAiApiKey = aiApiKey?.trim() || null;
@@ -136,6 +220,7 @@ export const updateAiSettingsAction = actionClientUser
                 aiProvider: null,
                 aiModel: null,
                 aiApiKey: null,
+                aiReasoningEffort: null,
                 aiTaskModels: nextAiTaskModels,
               }
             : {
@@ -144,6 +229,9 @@ export const updateAiSettingsAction = actionClientUser
                 aiApiKey: isCliSubscriptionProvider(aiProvider)
                   ? null
                   : nextAiApiKey,
+                aiReasoningEffort: isSubscriptionProvider(aiProvider)
+                  ? (aiReasoningEffort ?? null)
+                  : null,
                 aiTaskModels: nextAiTaskModels,
               },
       });
@@ -187,6 +275,30 @@ export const updateDecisionModelSettingsAction = actionClientUser
       });
     },
   );
+
+export const updateDecisionModelApiKeyAction = actionClientUser
+  .metadata({ name: "updateDecisionModelApiKey" })
+  .inputSchema(saveDecisionModelApiKeyBody)
+  .action(async ({ ctx: { userId }, parsedInput: { provider, apiKey } }) => {
+    if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
+      throw new SafeError("AI model settings are managed by the deployment.");
+    }
+
+    if (apiKey && (await isDecisionModelApiKeyRejected(provider, apiKey))) {
+      throw new SafeError(
+        `${provider === "typesafe" ? "TypeSafe" : "OpenRouter"} turned down this key. Check it and try again.`,
+      );
+    }
+
+    // Encrypted at rest by the Prisma extension.
+    await prisma.user.update({
+      where: { id: userId },
+      data:
+        provider === "typesafe"
+          ? { decisionTypesafeApiKey: apiKey }
+          : { decisionOpenrouterApiKey: apiKey },
+    });
+  });
 
 export const updateSensitiveDataPolicyAction = actionClient
   .metadata({ name: "updateSensitiveDataPolicy" })
@@ -369,9 +481,10 @@ export const toggleDigestAction = actionClient
 
 // The subscriptions the user has connected, or all of them when the user may
 // fall back to the server's own login.
-async function getUsableSubscriptionProviders(
-  userId: string,
-): Promise<string[]> {
+async function getSubscriptionAccess(userId: string): Promise<{
+  usableSubscriptions: string[];
+  allowServerLogin: boolean;
+}> {
   const [user, logins] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -382,6 +495,74 @@ async function getUsableSubscriptionProviders(
       select: { provider: true },
     }),
   ]);
-  if (user && isCliLlmOwner(user)) return [...CLI_SUBSCRIPTION_PROVIDERS];
-  return logins.map((login) => login.provider);
+  if (user && isCliLlmOwner(user)) {
+    return {
+      usableSubscriptions: [...CLI_SUBSCRIPTION_PROVIDERS],
+      allowServerLogin: true,
+    };
+  }
+  return {
+    usableSubscriptions: logins.map((login) => login.provider),
+    allowServerLogin: false,
+  };
+}
+
+// The subscription choices already saved, which passed this check when they
+// were saved.
+async function getSavedModelChoices(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      aiProvider: true,
+      aiModel: true,
+      aiReasoningEffort: true,
+      aiTaskModels: true,
+    },
+  });
+  const savedEffort = reasoningEffortSchema.safeParse(user?.aiReasoningEffort);
+  return {
+    main:
+      user?.aiProvider && user.aiModel
+        ? {
+            provider: user.aiProvider,
+            model: user.aiModel,
+            reasoningEffort: savedEffort.success ? savedEffort.data : null,
+          }
+        : undefined,
+    tasks: parseAiTaskModels(user?.aiTaskModels).models,
+  };
+}
+
+// Only a model on the subscription's current list for this user, with one of
+// that model's thinking levels, reaches the CLI. A choice left as it was
+// saved is kept even when the list can't be read right now or no longer has
+// it, so saving other settings never swaps it out.
+async function assertSubscriptionChoice(
+  cliLogin: CliLoginScope,
+  {
+    provider,
+    model,
+    reasoningEffort,
+  }: {
+    provider: string;
+    model: string;
+    reasoningEffort: ReasoningEffort | null;
+  },
+  saved: AiTaskModelEntry | null | undefined,
+) {
+  if (
+    saved?.provider === provider &&
+    saved.model === model &&
+    (saved.reasoningEffort ?? null) === reasoningEffort
+  ) {
+    return;
+  }
+  const models = await getSubscriptionModels(provider, cliLogin);
+  const entry = models.find((m) => m.value === model);
+  if (!entry) throw new SafeError("Pick a model from this account's list.");
+  if (reasoningEffort && !entry.efforts.includes(reasoningEffort)) {
+    throw new SafeError(
+      `${entry.label} doesn't offer that thinking level. Pick another one.`,
+    );
+  }
 }

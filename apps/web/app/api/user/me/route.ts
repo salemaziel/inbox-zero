@@ -4,6 +4,7 @@ import { withError } from "@/utils/middleware";
 import { SafeError } from "@/utils/error";
 import { auth } from "@/utils/auth";
 import {
+  getDecisionModelProvider,
   isDecisionModelAvailable,
   isDecisionModelEnabledForUser,
 } from "@/utils/decision-model/decision-model";
@@ -34,8 +35,11 @@ async function getUser({
       aiProvider: true,
       aiModel: true,
       aiApiKey: true,
+      aiReasoningEffort: true,
       aiTaskModels: true,
       decisionModelEnabled: true,
+      decisionTypesafeApiKey: true,
+      decisionOpenrouterApiKey: true,
       webhookSecret: true,
       announcementDismissedAt: true,
       dismissedHints: true,
@@ -90,7 +94,13 @@ async function getUser({
     })),
   );
 
-  const { aiApiKey, webhookSecret, emailAccounts } = user;
+  const {
+    aiApiKey,
+    webhookSecret,
+    emailAccounts,
+    decisionTypesafeApiKey,
+    decisionOpenrouterApiKey,
+  } = user;
   const canManageBillingAccess = canManageBilling(user.id, user);
   let premium = null;
   if (user.premium) {
@@ -106,9 +116,14 @@ async function getUser({
     createdAt: user.createdAt,
     aiProvider: user.aiProvider,
     aiModel: user.aiModel,
+    aiReasoningEffort: user.aiReasoningEffort,
     aiTaskModels: user.aiTaskModels,
     isDecisionModelAvailable: isDecisionModelAvailable(),
+    decisionModelProvider: getDecisionModelProvider(),
     decisionModelEnabled: isDecisionModelEnabledForUser(user),
+    // Only whether a key is saved; the keys never leave the server.
+    hasDecisionTypesafeApiKey: !!decisionTypesafeApiKey,
+    hasDecisionOpenrouterApiKey: !!decisionOpenrouterApiKey,
     announcementDismissedAt: user.announcementDismissedAt,
     dismissedHints: user.dismissedHints,
     premium,

@@ -15,6 +15,7 @@ const config = {
   provider: "typesafe" as const,
   modelId: "jev-latest",
   model: {} as never,
+  usesUserApiKey: false,
 };
 const categories = [
   { name: "Newsletter", description: "Editorial subscription email" },

@@ -381,6 +381,7 @@ function getEmailAccount(): EmailAccountWithAI {
       aiProvider: null,
       aiModel: null,
       aiApiKey: null,
+      aiReasoningEffort: null,
       aiTaskModels: null,
     },
     account: { provider: "google" },

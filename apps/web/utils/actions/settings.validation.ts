@@ -1,12 +1,10 @@
 import { z } from "zod";
 import { Frequency } from "@/generated/prisma/enums";
 import {
-  AI_TASK_MODEL_TYPES,
   aiTaskModelsSchema,
   DEFAULT_PROVIDER,
-  isSubscriptionModel,
   Provider,
-  SUBSCRIPTION_MODELS,
+  reasoningEffortSchema,
 } from "@/utils/llms/config";
 import { SENSITIVE_DATA_POLICIES } from "@/utils/dlp/sensitive-content";
 
@@ -31,56 +29,40 @@ export type SaveEmailUpdateSettingsBody = z.infer<
   typeof saveEmailUpdateSettingsBody
 >;
 
-export const saveAiSettingsBody = z
-  .object({
-    aiProvider: z.enum([
-      DEFAULT_PROVIDER,
-      Provider.ANTHROPIC,
-      Provider.OPEN_AI,
-      Provider.AZURE,
-      Provider.GOOGLE,
-      Provider.GROQ,
-      Provider.CEREBRAS,
-      Provider.OPENROUTER,
-      Provider.CLAUDE_CODE,
-      Provider.CODEX_CLI,
-    ]),
-    aiModel: z.string(),
-    aiApiKey: z.string().optional(),
-    aiTaskModels: aiTaskModelsSchema.optional(),
-  })
-  .superRefine(({ aiProvider, aiModel, aiTaskModels }, ctx) => {
-    if (
-      aiProvider in SUBSCRIPTION_MODELS &&
-      !isSubscriptionModel(aiProvider, aiModel)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Pick a model from this account's list",
-        path: ["aiModel"],
-      });
-    }
-
-    for (const type of AI_TASK_MODEL_TYPES) {
-      const entry = aiTaskModels?.[type];
-      if (
-        entry &&
-        entry.provider in SUBSCRIPTION_MODELS &&
-        !isSubscriptionModel(entry.provider, entry.model)
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          message: "Pick a model from this account's list",
-          path: ["aiTaskModels", type, "model"],
-        });
-      }
-    }
-  });
+// Whether a subscription model and thinking level are on the provider's
+// current list is checked by the action, since that list comes from the CLI.
+export const saveAiSettingsBody = z.object({
+  aiProvider: z.enum([
+    DEFAULT_PROVIDER,
+    Provider.ANTHROPIC,
+    Provider.OPEN_AI,
+    Provider.AZURE,
+    Provider.GOOGLE,
+    Provider.GROQ,
+    Provider.CEREBRAS,
+    Provider.OPENROUTER,
+    Provider.CLAUDE_CODE,
+    Provider.CODEX_CLI,
+  ]),
+  aiModel: z.string(),
+  aiApiKey: z.string().optional(),
+  aiReasoningEffort: reasoningEffortSchema.nullish(),
+  aiTaskModels: aiTaskModelsSchema.optional(),
+});
 export type SaveAiSettingsBody = z.infer<typeof saveAiSettingsBody>;
 
 export const saveDecisionModelSettingsBody = z.object({
   decisionModelEnabled: z.boolean(),
 });
+
+// A null key removes the saved one.
+export const saveDecisionModelApiKeyBody = z.object({
+  provider: z.enum(["typesafe", "openrouter"]),
+  apiKey: z.string().trim().min(1, "Enter a key").max(500).nullable(),
+});
+export type SaveDecisionModelApiKeyBody = z.infer<
+  typeof saveDecisionModelApiKeyBody
+>;
 
 export const saveSensitiveDataPolicyBody = z.object({
   sensitiveDataPolicy: z.enum(SENSITIVE_DATA_POLICIES),
