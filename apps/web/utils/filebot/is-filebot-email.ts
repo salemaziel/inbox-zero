@@ -4,6 +4,7 @@ import {
   extractEmailAddresses,
   extractNameFromEmail,
   formatEmailWithName,
+  splitRecipientList,
 } from "@/utils/email";
 
 // In prod: hello+ai@example.com
@@ -34,11 +35,8 @@ export function isFilebotEmail({
 
   const pattern = buildFilebotPattern(localPart, domain);
 
-  // Split by comma to handle multiple recipients in To field
-  const recipients = emailToCheck.split(",");
-
-  for (const recipient of recipients) {
-    const extractedEmail = extractEmailAddress(recipient.trim());
+  for (const recipient of splitRecipientList(emailToCheck)) {
+    const extractedEmail = extractEmailAddress(recipient);
     if (extractedEmail && pattern.test(extractedEmail)) {
       return true;
     }

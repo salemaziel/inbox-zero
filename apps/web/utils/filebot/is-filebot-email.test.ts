@@ -98,6 +98,12 @@ describe("isFilebotEmail", () => {
       emailToCheck: "Alice <alice@example.com>, John Doe <john+ai@example.com>",
       expected: true,
     },
+    {
+      name: "filebot email with a comma in its quoted display name",
+      userEmail: "john@example.com",
+      emailToCheck: '"Doe, John" <john+ai@example.com>',
+      expected: true,
+    },
   ])("should return $expected for $name", ({
     userEmail,
     emailToCheck,
