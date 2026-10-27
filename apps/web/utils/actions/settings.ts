@@ -10,7 +10,14 @@ import {
   updateDigestItemsBody,
   toggleDigestBody,
 } from "@/utils/actions/settings.validation";
-import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
+import {
+  type AiTaskModelEntry,
+  DEFAULT_PROVIDER,
+  isSubscriptionProvider,
+  Provider,
+  type ReasoningEffort,
+} from "@/utils/llms/config";
+import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
   CLI_SUBSCRIPTION_PROVIDERS,
   isCliLlmOwner,
@@ -55,7 +62,13 @@ export const updateAiSettingsAction = actionClientUser
   .action(
     async ({
       ctx: { userId, logger },
-      parsedInput: { aiProvider, aiModel, aiApiKey, aiTaskModels },
+      parsedInput: {
+        aiProvider,
+        aiModel,
+        aiApiKey,
+        aiReasoningEffort,
+        aiTaskModels,
+      },
     }) => {
       if (env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED) {
         throw new SafeError("AI model settings are managed by the deployment.");
@@ -68,8 +81,7 @@ export const updateAiSettingsAction = actionClientUser
       }
 
       const taskEntries = Object.entries(aiTaskModels ?? {}).filter(
-        (pair): pair is [string, { provider: string; model: string }] =>
-          !!pair[1],
+        (pair): pair is [string, AiTaskModelEntry] => !!pair[1],
       );
       const usesCliProvider =
         isCliSubscriptionProvider(aiProvider) ||
@@ -100,8 +112,37 @@ export const updateAiSettingsAction = actionClientUser
         }
       }
 
+      if (isSubscriptionProvider(aiProvider)) {
+        await assertSubscriptionChoice(
+          aiProvider,
+          aiModel,
+          aiReasoningEffort ?? null,
+        );
+      }
+      for (const [, entry] of taskEntries) {
+        if (isSubscriptionProvider(entry.provider)) {
+          await assertSubscriptionChoice(
+            entry.provider,
+            entry.model,
+            entry.reasoningEffort ?? null,
+          );
+        }
+      }
+
+      // Thinking levels only apply to subscription providers.
       const nextAiTaskModels = taskEntries.length
-        ? Object.fromEntries(taskEntries)
+        ? Object.fromEntries(
+            taskEntries.map(([type, entry]) => [
+              type,
+              {
+                provider: entry.provider,
+                model: entry.model,
+                reasoningEffort: isSubscriptionProvider(entry.provider)
+                  ? (entry.reasoningEffort ?? null)
+                  : null,
+              },
+            ]),
+          )
         : Prisma.DbNull;
 
       const providedAiApiKey = aiApiKey?.trim() || null;
@@ -136,6 +177,7 @@ export const updateAiSettingsAction = actionClientUser
                 aiProvider: null,
                 aiModel: null,
                 aiApiKey: null,
+                aiReasoningEffort: null,
                 aiTaskModels: nextAiTaskModels,
               }
             : {
@@ -144,6 +186,9 @@ export const updateAiSettingsAction = actionClientUser
                 aiApiKey: isCliSubscriptionProvider(aiProvider)
                   ? null
                   : nextAiApiKey,
+                aiReasoningEffort: isSubscriptionProvider(aiProvider)
+                  ? (aiReasoningEffort ?? null)
+                  : null,
                 aiTaskModels: nextAiTaskModels,
               },
       });
@@ -384,4 +429,21 @@ async function getUsableSubscriptionProviders(
   ]);
   if (user && isCliLlmOwner(user)) return [...CLI_SUBSCRIPTION_PROVIDERS];
   return logins.map((login) => login.provider);
+}
+
+// Only a model on the subscription's current list, with one of that model's
+// thinking levels, reaches the CLI.
+async function assertSubscriptionChoice(
+  provider: string,
+  model: string,
+  reasoningEffort: ReasoningEffort | null,
+) {
+  const models = await getSubscriptionModels(provider);
+  const entry = models.find((m) => m.value === model);
+  if (!entry) throw new SafeError("Pick a model from this account's list.");
+  if (reasoningEffort && !entry.efforts.includes(reasoningEffort)) {
+    throw new SafeError(
+      `${entry.label} doesn't offer that thinking level. Pick another one.`,
+    );
+  }
 }

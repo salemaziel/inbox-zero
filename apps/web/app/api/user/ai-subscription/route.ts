@@ -6,6 +6,7 @@ import {
   isCliLlmOwner,
 } from "@/utils/llms/cli-provider";
 import { getSubscriptionLogin } from "@/utils/llms/subscription-login";
+import { getAllSubscriptionModels } from "@/utils/llms/subscription-models";
 import { withAuth } from "@/utils/middleware";
 import prisma from "@/utils/prisma";
 
@@ -18,7 +19,7 @@ export const GET = withAuth("user/ai-subscription", async (request) =>
 );
 
 async function getAiSubscriptions({ userId }: { userId: string }) {
-  const [user, logins] = await Promise.all([
+  const [user, logins, models] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -35,12 +36,15 @@ async function getAiSubscriptions({ userId }: { userId: string }) {
         connectedAt: true,
       },
     }),
+    getAllSubscriptionModels(),
   ]);
   if (!user) throw new SafeError("User not found");
 
   return {
     enabled: env.CLI_LLM_ENABLED,
     canUseServerLogin: isCliLlmOwner(user),
+    // The models and thinking levels each subscription can be set to.
+    models,
     providers: CLI_SUBSCRIPTION_PROVIDERS.map((provider) => ({
       provider,
       login: logins.find((login) => login.provider === provider) ?? null,

@@ -13,7 +13,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { asSchema } from "ai";
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
-import { Provider } from "@/utils/llms/config";
+import { Provider, type ReasoningEffort } from "@/utils/llms/config";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 
@@ -151,6 +151,7 @@ export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
 // How long a stopped CLI gets to exit before that is logged as an error, and
 // how long a CLI tool server gets to close.
 export const CLI_STOP_WAIT_MS = 10 * 1000;
+const CODEX_MODEL_LIST_TIMEOUT_MS = 20 * 1000;
 
 export function assertCliLlmEnabled(provider: CliProvider) {
   if (env.CLI_LLM_ENABLED) return;
@@ -250,10 +251,13 @@ export function createCliLanguageModel({
   provider,
   modelName,
   cliLogin,
+  reasoningEffort,
 }: {
   provider: CliProvider;
   modelName: string;
   cliLogin?: CliLoginScope;
+  // Checked against the model's supported levels when it was saved.
+  reasoningEffort?: ReasoningEffort | null;
 }): LanguageModelV4 {
   assertCliLlmEnabled(provider);
 
@@ -268,7 +272,10 @@ export function createCliLanguageModel({
             module,
             "codexExec",
             provider,
-          )(modelName, codexRunSettings(run)),
+          )(modelName, {
+            ...codexRunSettings(run),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+          }),
         }),
       });
     case Provider.CLAUDE_CODE:
@@ -283,6 +290,7 @@ export function createCliLanguageModel({
             provider,
           )(modelName, {
             ...claudeCodeRunSettings(run),
+            ...(reasoningEffort ? { effort: reasoningEffort } : {}),
             allowedTools: [],
           }),
         }),
@@ -302,17 +310,24 @@ export async function createCliLanguageModelWithBridgedTools({
   modelName,
   tools,
   cliLogin,
+  reasoningEffort,
 }: {
   provider: CliProvider;
   modelName: string;
   tools: Record<string, McpBridgedTool>;
   cliLogin?: CliLoginScope;
+  reasoningEffort?: ReasoningEffort | null;
 }): Promise<LanguageModelV4> {
   assertCliLlmEnabled(provider);
 
   const toolNames = Object.keys(tools);
   if (toolNames.length === 0) {
-    return createCliLanguageModel({ provider, modelName, cliLogin });
+    return createCliLanguageModel({
+      provider,
+      modelName,
+      cliLogin,
+      reasoningEffort,
+    });
   }
 
   switch (provider) {
@@ -340,6 +355,7 @@ export async function createCliLanguageModelWithBridgedTools({
               provider,
             )(modelName, {
               ...codexRunSettings(run),
+              ...(reasoningEffort ? { reasoningEffort } : {}),
               mcpServers: {
                 [CLI_TOOLS_MCP_SERVER_NAME]: {
                   ...server.config,
@@ -389,6 +405,7 @@ export async function createCliLanguageModelWithBridgedTools({
           return {
             model: claudeCode(modelName, {
               ...claudeCodeRunSettings(run),
+              ...(reasoningEffort ? { effort: reasoningEffort } : {}),
               allowedTools,
               mcpServers: { [CLI_TOOLS_MCP_SERVER_NAME]: mcpServer },
             }),
@@ -961,6 +978,45 @@ async function saveRefreshedCodexLogin(codexHome: string, login: UserCliLogin) {
 // Run before a call starts: throws the connect or reconnect prompt when the
 // user's own login is required but not usable, and otherwise says whether
 // the call will run on the user's own login rather than the server's.
+// Codex's model list as the app-server's model/list returns it, read with the
+// same binary and server login the runs use: the server answers by client
+// version, so another binary can see a different list. Without a server
+// login, Codex returns the list built into the binary.
+export async function listCodexModels(): Promise<unknown[]> {
+  assertCliLlmEnabled(Provider.CODEX_CLI);
+  const module = await importOptionalProviderPackage(
+    CODEX_CLI_PACKAGE,
+    Provider.CODEX_CLI,
+  );
+  const listModels = module.listModels;
+  if (typeof listModels !== "function") {
+    throw new SafeError(
+      `CLI LLM provider "${Provider.CODEX_CLI}" package does not export "listModels". Check the installed package version.`,
+    );
+  }
+
+  const run = await startCliRun(Provider.CODEX_CLI, null);
+  try {
+    const result = (await listModels({
+      ...(env.CODEX_CLI_PATH ? { codexPath: env.CODEX_CLI_PATH } : {}),
+      cwd: run.cwd,
+      env: run.env,
+      connectionTimeoutMs: CODEX_MODEL_LIST_TIMEOUT_MS,
+      requestTimeoutMs: CODEX_MODEL_LIST_TIMEOUT_MS,
+    })) as { models?: unknown };
+    return Array.isArray(result?.models) ? result.models : [];
+  } finally {
+    await run.finish();
+    // The app-server can still be writing its model cache as it shuts down,
+    // which recreates the folder after it was removed.
+    setTimeout(() => {
+      rm(path.dirname(run.cwd), { recursive: true, force: true }).catch(
+        () => {},
+      );
+    }, CLI_STOP_WAIT_MS).unref?.();
+  }
+}
+
 export async function checkUserCliLogin(
   provider: CliProvider,
   { userId, allowServerLogin }: CliLoginScope,

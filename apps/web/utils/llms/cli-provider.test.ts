@@ -1,4 +1,11 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1340,6 +1347,113 @@ describe("createCliLanguageModel", () => {
     await expect(first).resolves.toEqual({ text: "first" });
     await expect(second).resolves.toEqual({ text: "second" });
   });
+
+  it("passes a thinking level to Codex as reasoningEffort and to Claude Code as effort", async () => {
+    const codexExec = vi.fn(() => ({
+      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    }));
+    const claudeCode = vi.fn(() => ({
+      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    }));
+    const { createCliLanguageModel } = await loadCliProviderModule({
+      codexModule: { codexExec },
+      claudeModule: { claudeCode },
+    });
+
+    const codex = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-6-luna",
+      reasoningEffort: "low",
+    }) as any;
+    const claude = createCliLanguageModel({
+      provider: Provider.CLAUDE_CODE,
+      modelName: "opus",
+      reasoningEffort: "max",
+    }) as any;
+    const codexDefault = createCliLanguageModel({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-6.1-sol",
+      reasoningEffort: null,
+    }) as any;
+    await codex.doGenerate({ prompt: "p" });
+    await claude.doGenerate({ prompt: "p" });
+    await codexDefault.doGenerate({ prompt: "p" });
+
+    expect(codexExec).toHaveBeenNthCalledWith(
+      1,
+      "gpt-6-luna",
+      expect.objectContaining({ reasoningEffort: "low" }),
+    );
+    expect(claudeCode).toHaveBeenCalledWith(
+      "opus",
+      expect.objectContaining({ effort: "max" }),
+    );
+    // No level leaves the model on its own default.
+    expect(codexExec.mock.calls[1][1]).not.toHaveProperty("reasoningEffort");
+  });
+
+  it("passes the thinking level through when tools are bridged", async () => {
+    const claudeCode = vi.fn(() => ({
+      doGenerate: vi.fn().mockResolvedValue({ content: [] }),
+      doStream: vi.fn(),
+    }));
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        claudeModule: {
+          claudeCode,
+          createAiSdkMcpServer: vi.fn(() => ({ type: "mcp-server" })),
+        },
+      });
+
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CLAUDE_CODE,
+      modelName: "sonnet",
+      reasoningEffort: "medium",
+      tools: { searchInbox: { inputSchema: {}, execute: vi.fn() } },
+    })) as any;
+    await model.doGenerate({ prompt: "p" });
+
+    expect(claudeCode).toHaveBeenCalledWith(
+      "sonnet",
+      expect.objectContaining({ effort: "medium" }),
+    );
+  });
+
+  it("lists Codex models with the configured binary and the server login in a throwaway home", async () => {
+    const hostHome = await mkdtemp(path.join(os.tmpdir(), "codex-host-"));
+    vi.stubEnv("CODEX_HOME", hostHome);
+    const listModels = vi.fn(
+      async (options: { env: Record<string, string> }) => {
+        const codexHome = options.env.CODEX_HOME;
+        return {
+          models: [
+            { id: "gpt-6-luna", authLinked: await readlinkSafe(codexHome) },
+          ],
+        };
+      },
+    );
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      codexModule: { listModels },
+    });
+
+    const models = await listCodexModels();
+
+    const options = listModels.mock.calls[0][0] as unknown as {
+      codexPath: string;
+      cwd: string;
+      env: Record<string, string>;
+    };
+    expect(options.codexPath).toBe("/opt/codex");
+    expect(options.env.CODEX_HOME).toContain("inbox-zero-cli-run-");
+    expect(models).toEqual([
+      { id: "gpt-6-luna", authLinked: path.join(hostHome, "auth.json") },
+    ]);
+    await expect(access(options.cwd)).rejects.toThrow();
+    await rm(hostHome, { recursive: true, force: true });
+  });
 });
 
 async function loadCliProviderModule({
@@ -1435,4 +1549,8 @@ function codexMcpResult(server: string, tool: string, result: unknown) {
 // before its slot is freed; a run of real file calls lets that finish first.
 async function flushFileWork() {
   for (let i = 0; i < 50; i++) await access(os.tmpdir());
+}
+
+async function readlinkSafe(codexHome: string) {
+  return readlink(path.join(codexHome, "auth.json")).catch(() => null);
 }

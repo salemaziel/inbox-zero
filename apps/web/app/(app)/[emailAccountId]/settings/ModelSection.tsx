@@ -20,12 +20,22 @@ import type { GetAiSubscriptionResponse } from "@/app/api/user/ai-subscription/r
 import { AlertBasic, AlertError } from "@/components/Alert";
 import {
   AI_TASK_MODEL_TYPES,
+  type AiTaskModels,
+  type AiTaskModelType,
   aiTaskModelsSchema,
   DEFAULT_PROVIDER,
-  getSubscriptionModelLabel,
+  getRecommendedTaskModel,
+  HIGH_VOLUME_TASK_TYPES,
+  isCostlyTaskChoice,
+  isSubscriptionProvider,
+  type ModelWeight,
   Provider,
   providerOptions,
+  type ReasoningEffort,
+  reasoningEffortSchema,
   SUBSCRIPTION_MODELS,
+  type SubscriptionModel,
+  type SubscriptionProvider,
 } from "@/utils/llms/config";
 import { useUser } from "@/hooks/useUser";
 import { useAccount } from "@/providers/EmailAccountProvider";
@@ -36,19 +46,33 @@ import {
   SubscriptionConnection,
 } from "@/app/(app)/[emailAccountId]/settings/SubscriptionLoginCard";
 
-type TaskModelType = (typeof AI_TASK_MODEL_TYPES)[number];
-
 const SUBSCRIPTION_PROVIDER_OPTIONS = [
   { label: "Claude (your subscription)", value: Provider.CLAUDE_CODE },
   { label: "ChatGPT (your subscription)", value: Provider.CODEX_CLI },
 ];
 
-const TASK_LABELS: Record<TaskModelType, string> = {
+const TASK_LABELS: Record<AiTaskModelType, string> = {
   chat: "Chat",
   draft: "Drafts",
   default: "General",
   economy: "Background",
   nano: "Quick checks",
+};
+
+const EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+const WEIGHT_NOTES: Record<ModelWeight, string> = {
+  light: "light on your limits",
+  medium: "in between",
+  heavy: "uses your limits fastest",
 };
 
 export function ModelSection() {
@@ -85,6 +109,7 @@ export function ModelSection() {
             key={data.aiProvider ?? DEFAULT_PROVIDER}
             aiProvider={data.aiProvider}
             aiModel={data.aiModel}
+            aiReasoningEffort={data.aiReasoningEffort}
             aiTaskModels={data.aiTaskModels}
             hasAiApiKey={data.hasAiApiKey}
             models={dataModels}
@@ -104,6 +129,7 @@ export function ModelSection() {
 function ModelSectionForm(props: {
   aiProvider: string | null;
   aiModel: string | null;
+  aiReasoningEffort: string | null;
   aiTaskModels: unknown;
   hasAiApiKey: boolean;
   models?: OpenAiModelsResponse;
@@ -117,6 +143,29 @@ function ModelSectionForm(props: {
   const savedTaskModels = aiTaskModelsSchema.safeParse(
     props.aiTaskModels ?? {},
   );
+  const savedEffort = reasoningEffortSchema.safeParse(props.aiReasoningEffort);
+  const getModels = (provider: SubscriptionProvider): SubscriptionModel[] =>
+    subscriptions?.models[provider] ?? [
+      ...SUBSCRIPTION_MODELS[provider].models,
+    ];
+  const findModel = (provider: string, model: string | undefined) =>
+    isSubscriptionProvider(provider)
+      ? getModels(provider).find((m) => m.value === model)
+      : undefined;
+  // Background work starts on the light model with little thinking until the
+  // user picks otherwise; getModel does the same for tasks with no entry.
+  const getRecommendedTaskModels = (provider: string): AiTaskModels => {
+    if (!isSubscriptionProvider(provider)) return {};
+    return Object.fromEntries(
+      HIGH_VOLUME_TASK_TYPES.flatMap((type) => {
+        const recommended = getRecommendedTaskModel(provider, type);
+        if (!recommended || !findModel(provider, recommended.model)) return [];
+        return [[type, { provider, ...recommended }]];
+      }),
+    );
+  };
+  const hasSavedTaskModels =
+    savedTaskModels.success && Object.keys(savedTaskModels.data).length > 0;
 
   const {
     register,
@@ -129,18 +178,22 @@ function ModelSectionForm(props: {
     defaultValues: {
       aiProvider: initialProvider,
       aiModel:
-        props.aiModel ??
-        (isSubscriptionProvider(initialProvider)
+        isSubscriptionProvider(initialProvider) &&
+        !findModel(initialProvider, props.aiModel ?? undefined)
           ? SUBSCRIPTION_MODELS[initialProvider].defaultModel
-          : ""),
+          : (props.aiModel ?? ""),
       aiApiKey: undefined,
-      aiTaskModels: savedTaskModels.success ? savedTaskModels.data : {},
+      aiReasoningEffort: savedEffort.success ? savedEffort.data : null,
+      aiTaskModels: hasSavedTaskModels
+        ? savedTaskModels.data
+        : getRecommendedTaskModels(initialProvider),
     },
   });
 
   const aiProvider = watch("aiProvider");
   const aiModel = watch("aiModel");
   const aiApiKey = watch("aiApiKey");
+  const aiReasoningEffort = watch("aiReasoningEffort");
   const aiTaskModels = watch("aiTaskModels");
   const hasStoredAiApiKey =
     props.hasAiApiKey && props.aiProvider === aiProvider;
@@ -201,10 +254,7 @@ function ModelSectionForm(props: {
   const globalError = (errors as Record<string, { message?: string }>)[""];
 
   const modelSelectOptions = isSubscription
-    ? SUBSCRIPTION_MODELS[aiProvider].models.map(({ label, value }) => ({
-        label,
-        value,
-      }))
+    ? toModelOptions(getModels(aiProvider))
     : aiProvider === Provider.OPEN_AI && hasAnyApiKey
       ? props.models?.map((model) => ({
           label: model.id,
@@ -212,10 +262,19 @@ function ModelSectionForm(props: {
         })) || []
       : [];
 
-  const getDefaultTaskModel = (provider: string) =>
-    isSubscriptionProvider(provider)
-      ? SUBSCRIPTION_MODELS[provider].defaultModel
-      : aiModel;
+  const mainModel = findModel(aiProvider, aiModel);
+
+  const getDefaultTaskEntry = (provider: string, type: AiTaskModelType) => {
+    if (!isSubscriptionProvider(provider)) return { provider, model: aiModel };
+    const recommended = getRecommendedTaskModel(provider, type);
+    return recommended && findModel(provider, recommended.model)
+      ? { provider, ...recommended }
+      : {
+          provider,
+          model: SUBSCRIPTION_MODELS[provider].defaultModel,
+          reasoningEffort: null,
+        };
+  };
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="max-w-sm space-y-4">
@@ -230,6 +289,10 @@ function ModelSectionForm(props: {
             } else if (isSubscriptionProvider(aiProvider)) {
               setValue("aiModel", "");
             }
+            setValue("aiReasoningEffort", null);
+            if (!hasSavedTaskModels) {
+              setValue("aiTaskModels", getRecommendedTaskModels(provider));
+            }
           },
         })}
         error={errors.aiProvider}
@@ -241,7 +304,18 @@ function ModelSectionForm(props: {
             <Select
               label="Model"
               options={modelSelectOptions}
-              {...register("aiModel")}
+              explainText={mainModel?.description ?? undefined}
+              {...register("aiModel", {
+                onChange: (event) => {
+                  const next = findModel(aiProvider, event.target.value);
+                  if (
+                    aiReasoningEffort &&
+                    !next?.efforts.includes(aiReasoningEffort)
+                  ) {
+                    setValue("aiReasoningEffort", null);
+                  }
+                },
+              })}
               error={errors.aiModel}
             />
           ) : (
@@ -251,6 +325,17 @@ function ModelSectionForm(props: {
               label="Model"
               registerProps={register("aiModel")}
               error={errors.aiModel}
+            />
+          )}
+
+          {mainModel && mainModel.efforts.length > 0 && (
+            <Select
+              label="Thinking"
+              options={toEffortOptions(mainModel)}
+              {...register("aiReasoningEffort", {
+                setValueAs: (value) => value || null,
+              })}
+              error={errors.aiReasoningEffort}
             />
           )}
 
@@ -264,13 +349,10 @@ function ModelSectionForm(props: {
                 />
               )}
               <p className="text-xs text-muted-foreground">
-                Unless you pick otherwise below, background tasks and quick
-                checks use{" "}
-                {getSubscriptionModelLabel(
-                  aiProvider,
-                  SUBSCRIPTION_MODELS[aiProvider].fastModel,
-                )}{" "}
-                to save your plan's limits.
+                This model runs chat and drafts. Work that runs on every email
+                (general, background and quick checks) uses a lighter model with
+                low thinking unless you change it under Per task. More thinking
+                gives better answers but is slower and uses more of your plan.
               </p>
             </>
           ) : (
@@ -305,54 +387,108 @@ function ModelSectionForm(props: {
             left on "Same as main" use the settings above. A subscription shows
             up here once it's connected.
           </p>
+          {isSubscription && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setValue("aiTaskModels", getRecommendedTaskModels(aiProvider))
+              }
+            >
+              Use recommended settings
+            </Button>
+          )}
           {AI_TASK_MODEL_TYPES.map((type) => {
             const entry = aiTaskModels?.[type];
             const provider =
               entry && isAllowedTaskProvider(entry.provider)
                 ? entry.provider
                 : "";
+            const taskModel = entry
+              ? findModel(provider, entry.model)
+              : undefined;
+            const showCostWarning =
+              !!entry &&
+              !!taskModel &&
+              isCostlyTaskChoice({
+                type,
+                model: entry.model,
+                reasoningEffort:
+                  entry.reasoningEffort ?? taskModel.defaultEffort,
+              });
             return (
-              <div key={type} className="grid grid-cols-2 gap-2">
-                <Select
-                  name={`aiTaskModels.${type}.provider`}
-                  label={TASK_LABELS[type]}
-                  options={[
-                    { label: "Same as main", value: "" },
-                    ...taskProviderOptions,
-                  ]}
-                  value={provider}
-                  onChange={(event) => {
-                    const nextProvider = event.target.value;
-                    setValue(
-                      `aiTaskModels.${type}`,
-                      nextProvider
-                        ? {
-                            provider: nextProvider,
-                            model: getDefaultTaskModel(nextProvider),
-                          }
-                        : undefined,
-                    );
-                  }}
-                />
-                {provider &&
-                  (isSubscriptionProvider(provider) ? (
+              <div key={type} className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Select
+                    name={`aiTaskModels.${type}.provider`}
+                    label={TASK_LABELS[type]}
+                    options={[
+                      { label: "Same as main", value: "" },
+                      ...taskProviderOptions,
+                    ]}
+                    value={provider}
+                    onChange={(event) => {
+                      const nextProvider = event.target.value;
+                      setValue(
+                        `aiTaskModels.${type}`,
+                        nextProvider
+                          ? getDefaultTaskEntry(nextProvider, type)
+                          : undefined,
+                      );
+                    }}
+                  />
+                  {provider &&
+                    (isSubscriptionProvider(provider) ? (
+                      <Select
+                        label="Model"
+                        options={toModelOptions(getModels(provider))}
+                        {...register(`aiTaskModels.${type}.model`, {
+                          onChange: (event) => {
+                            const next = findModel(
+                              provider,
+                              event.target.value,
+                            );
+                            const effort = entry?.reasoningEffort;
+                            if (effort && !next?.efforts.includes(effort)) {
+                              setValue(
+                                `aiTaskModels.${type}.reasoningEffort`,
+                                null,
+                              );
+                            }
+                          },
+                        })}
+                        error={errors.aiTaskModels?.[type]?.model}
+                      />
+                    ) : (
+                      <Input
+                        type="text"
+                        name={`aiTaskModels.${type}.model`}
+                        label="Model"
+                        registerProps={register(`aiTaskModels.${type}.model`)}
+                        error={errors.aiTaskModels?.[type]?.model}
+                      />
+                    ))}
+                </div>
+                {taskModel && taskModel.efforts.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div />
                     <Select
-                      label="Model"
-                      options={SUBSCRIPTION_MODELS[provider].models.map(
-                        ({ label, value }) => ({ label, value }),
-                      )}
-                      {...register(`aiTaskModels.${type}.model`)}
-                      error={errors.aiTaskModels?.[type]?.model}
+                      label="Thinking"
+                      options={toEffortOptions(taskModel)}
+                      {...register(`aiTaskModels.${type}.reasoningEffort`, {
+                        setValueAs: (value) => value || null,
+                      })}
+                      error={errors.aiTaskModels?.[type]?.reasoningEffort}
                     />
-                  ) : (
-                    <Input
-                      type="text"
-                      name={`aiTaskModels.${type}.model`}
-                      label="Model"
-                      registerProps={register(`aiTaskModels.${type}.model`)}
-                      error={errors.aiTaskModels?.[type]?.model}
-                    />
-                  ))}
+                  </div>
+                )}
+                {showCostWarning && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    This runs on every new email. A heavier model or more
+                    thinking here can use up your plan's limits fast.
+                  </p>
+                )}
               </div>
             );
           })}
@@ -403,8 +539,24 @@ function ModelSectionForm(props: {
   );
 }
 
-function isSubscriptionProvider(
-  provider: string,
-): provider is Extract<keyof typeof SUBSCRIPTION_MODELS, string> {
-  return provider in SUBSCRIPTION_MODELS;
+function toModelOptions(models: SubscriptionModel[]) {
+  return models.map(({ label, value, weight }) => ({
+    label: weight ? `${label} (${WEIGHT_NOTES[weight]})` : label,
+    value,
+  }));
+}
+
+function toEffortOptions(model: SubscriptionModel) {
+  return [
+    {
+      label: model.defaultEffort
+        ? `Default (${EFFORT_LABELS[model.defaultEffort]})`
+        : "Default",
+      value: "",
+    },
+    ...model.efforts.map((effort) => ({
+      label: EFFORT_LABELS[effort],
+      value: effort,
+    })),
+  ];
 }

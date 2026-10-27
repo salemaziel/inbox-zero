@@ -1506,6 +1506,7 @@ describe("Models", () => {
 
       const result = getModel(
         defaultUserAi({ aiProvider: Provider.CLAUDE_CODE }),
+        "chat",
       );
 
       expect(result.provider).toBe(Provider.CLAUDE_CODE);
@@ -1518,39 +1519,61 @@ describe("Models", () => {
       expect(result.hasUserApiKey).toBe(true);
     });
 
-    it("uses the chosen model for main work and the fast model for background work", () => {
+    it("uses the chosen model and thinking level for chat and drafts, and the recommended light settings for high-volume work", () => {
       const scope = { userId: "user-1", allowServerLogin: false };
+      const claudeUser = defaultUserAi({
+        aiProvider: Provider.CLAUDE_CODE,
+        aiModel: "opus",
+        aiReasoningEffort: "max",
+      });
 
-      for (const modelType of ["default", "chat", "draft"] as const) {
-        const result = getModel(
-          defaultUserAi({ aiProvider: Provider.CLAUDE_CODE, aiModel: "opus" }),
-          modelType,
-        );
-        expect(result.modelName).toBe("opus");
-        expect(result.cliLogin).toEqual(scope);
+      for (const modelType of ["chat", "draft"] as const) {
+        const result = getModel(claudeUser, modelType);
+        expect(result).toMatchObject({
+          modelName: "opus",
+          reasoningEffort: "max",
+          cliLogin: scope,
+        });
       }
 
-      for (const modelType of ["economy", "nano"] as const) {
-        const result = getModel(
-          defaultUserAi({ aiProvider: Provider.CLAUDE_CODE, aiModel: "opus" }),
-          modelType,
-        );
-        expect(result.modelName).toBe("haiku");
-        expect(result.cliLogin).toEqual(scope);
+      // Haiku takes no thinking level.
+      for (const modelType of ["default", "economy", "nano"] as const) {
+        const result = getModel(claudeUser, modelType);
+        expect(result).toMatchObject({
+          modelName: "haiku",
+          reasoningEffort: null,
+          cliLogin: scope,
+        });
       }
 
-      const codexEconomy = getModel(
-        defaultUserAi({ aiProvider: Provider.CODEX_CLI, aiModel: null }),
-        "economy",
-      );
-      expect(codexEconomy.modelName).toBe("gpt-6-luna");
-      expect(codexEconomy.cliLogin).toEqual(scope);
+      const codexUser = defaultUserAi({
+        aiProvider: Provider.CODEX_CLI,
+        aiModel: null,
+        aiReasoningEffort: "xhigh",
+      });
+      for (const modelType of ["default", "economy", "nano"] as const) {
+        expect(getModel(codexUser, modelType)).toMatchObject({
+          modelName: "gpt-6-luna",
+          reasoningEffort: "low",
+          cliLogin: scope,
+        });
+      }
+      expect(getModel(codexUser, "chat")).toMatchObject({
+        modelName: "gpt-6.1-sol",
+        reasoningEffort: "xhigh",
+      });
+    });
 
-      const codexDefault = getModel(
-        defaultUserAi({ aiProvider: Provider.CODEX_CLI }),
+    it("runs a saved thinking level only if it is a known level", () => {
+      const result = getModel(
+        defaultUserAi({
+          aiProvider: Provider.CODEX_CLI,
+          aiReasoningEffort: "--config=evil",
+        }),
+        "chat",
       );
-      expect(codexDefault.modelName).toBe("gpt-6.1-sol");
-      expect(codexDefault.cliLogin).toEqual(scope);
+
+      expect(result.reasoningEffort).toBeNull();
     });
 
     it("lets an owner's chosen subscription provider fall back to the server login", () => {
@@ -1606,13 +1629,25 @@ describe("Models", () => {
         aiProvider: Provider.CLAUDE_CODE,
         aiModel: "sonnet",
         aiTaskModels: {
-          chat: { provider: Provider.CLAUDE_CODE, model: "opus" },
+          chat: {
+            provider: Provider.CLAUDE_CODE,
+            model: "opus",
+            reasoningEffort: "medium",
+          },
+          // Saved before thinking levels existed.
           economy: { provider: Provider.CODEX_CLI, model: "gpt-6-astra" },
         },
       });
 
-      expect(getModel(userAi, "chat").modelName).toBe("opus");
-      expect(getModel(userAi, "default").modelName).toBe("sonnet");
+      expect(getModel(userAi, "chat")).toMatchObject({
+        modelName: "opus",
+        reasoningEffort: "medium",
+      });
+      expect(getModel(userAi, "economy")).toMatchObject({
+        provider: Provider.CODEX_CLI,
+        modelName: "gpt-6-astra",
+        reasoningEffort: null,
+      });
       expect(getModel(userAi, "draft").modelName).toBe("sonnet");
       // nano has no entry and the main provider is a subscription, so it
       // keeps the main provider's fast model.
@@ -1714,6 +1749,7 @@ function defaultUserAi(overrides: Partial<UserAIFields> = {}): UserAIFields {
     aiApiKey: null,
     aiProvider: null,
     aiModel: null,
+    aiReasoningEffort: null,
     aiTaskModels: null,
     ...overrides,
   };
