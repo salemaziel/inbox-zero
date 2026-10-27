@@ -1,5 +1,6 @@
 import { z } from "zod";
 
 export const renderHtmlBody = z.object({
-  html: z.string(),
+  // Generous for real mail; bounds the server-side parse and rewrite work.
+  html: z.string().max(5 * 1024 * 1024),
 });

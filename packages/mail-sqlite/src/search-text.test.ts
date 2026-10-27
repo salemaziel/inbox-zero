@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { htmlToSearchText, searchMatchQuery } from "./search-text";
+import {
+  htmlToSearchText,
+  searchableBody,
+  searchMatchQuery,
+} from "./search-text";
 
 describe("htmlToSearchText", () => {
   it("keeps visible text and drops markup, styles, scripts, head, and comments", () => {
@@ -39,6 +43,32 @@ describe("htmlToSearchText", () => {
 
   it("leaves a stray less-than sign as text", () => {
     expect(htmlToSearchText("<p>1 < 2 and 3 > 2</p>")).toBe("1 < 2 and 3 > 2");
+  });
+});
+
+describe("htmlToSearchText on hostile markup", () => {
+  it("stays linear on a tag that never closes", () => {
+    const html = `<a${"b".repeat(100_000)}`;
+
+    const started = performance.now();
+    htmlToSearchText(html);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("stays linear on repeated unclosed style tags", () => {
+    const html = "<style".repeat(20_000);
+
+    const started = performance.now();
+    htmlToSearchText(html);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("bounds indexing time on a multi-megabyte body", () => {
+    const html = `<a${"b".repeat(5_000_000)}`;
+
+    const started = performance.now();
+    searchableBody({ text: null, html });
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
 

@@ -7,7 +7,12 @@ export function searchableBody(content: {
 }): string {
   // Some senders ship an empty text part next to the real HTML body.
   if (content.text?.trim()) return searchableText(content.text);
-  if (content.html) return searchableText(htmlToSearchText(content.html));
+  if (content.html) {
+    // Bodies can be megabytes; the visible words are near the top, and the
+    // cap bounds indexing time inside the sync write.
+    const html = content.html.slice(0, MAX_INDEXED_HTML_LENGTH);
+    return searchableText(htmlToSearchText(html));
+  }
   return "";
 }
 
@@ -54,6 +59,8 @@ export function htmlToSearchText(html: string): string {
     .trim();
 }
 
+const MAX_INDEXED_HTML_LENGTH = 256 * 1024;
+
 // unicode61's default token characters: letters, numbers, and private use.
 const TOKEN_CHARACTER = /[\p{L}\p{N}\p{Co}]/u;
 
@@ -62,11 +69,16 @@ const UNSPACED_SCRIPT =
 
 // Everything a <head> holds besides tags is a title, style, or script. Like
 // browsers, an unclosed comment or raw-text element runs to the end of the
-// document, which also keeps the scan linear on malformed mail.
+// document, which also keeps the scan linear on malformed mail. An opening
+// tag stops at the next "<" so an unclosed one can't rescan the rest of the
+// body from every start position.
 const HIDDEN_CONTENT =
-  /<!--[\s\S]*?(?:-->|$)|<(style|script|template|title)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+  /<!--[\s\S]*?(?:-->|$)|<(style|script|template|title)\b[^<>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
 
-const TAG = /<(?:\/?([a-zA-Z][\w:-]*)|[!?])(?:"[^"<]*"|'[^'<]*'|[^'"<>])*>/g;
+// The lookahead ends the tag name where the name characters end, so the name
+// and the attribute run can't split the same characters in every possible way.
+const TAG =
+  /<(?:\/?([a-zA-Z][\w:-]*)(?![\w:-])|[!?])(?:"[^"<]*"|'[^'<]*'|[^'"<>])*>/g;
 
 // Tags that sit inside words; every other tag separates words.
 const INLINE_TAGS = new Set([

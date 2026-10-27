@@ -321,6 +321,34 @@ describe("Calendar Event Detection", () => {
   });
 });
 
+describe("analyzeCalendarEvent on hostile bodies", () => {
+  const hostileBodies = [
+    ["an organizer label with no address", `Organizer ${"a".repeat(40_000)}`],
+    ["repeated weekly and from words", "weekly from mon ".repeat(10_000)],
+    ["repeated timezone prefixes", "DTSTART;TZID=".repeat(10_000)],
+  ];
+
+  it.each(hostileBodies)("stays fast on %s", (_name, textHtml) => {
+    const email = createTestEmail({
+      headers: { subject: "Invitation", from: "", to: "", date: "" },
+      textHtml,
+    });
+
+    const started = performance.now();
+    analyzeCalendarEvent(email);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it("still finds the organizer address after the label", () => {
+    const email = createTestEmail({
+      headers: { subject: "Invitation", from: "", to: "", date: "" },
+      textHtml: "<td>Organiser</td><td><a>host@example.com</a></td>",
+    });
+
+    expect(analyzeCalendarEvent(email).organizer).toBe("host@example.com");
+  });
+});
+
 const createTestEmail = (
   overrides: Partial<ParsedMessage> = {},
 ): ParsedMessage => ({

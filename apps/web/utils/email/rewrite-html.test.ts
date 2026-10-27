@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { rewriteHtmlRemoteAssetUrls } from "./rewrite-html";
+import {
+  rewriteCssRemoteAssetUrls,
+  rewriteHtmlRemoteAssetUrls,
+} from "./rewrite-html";
 
 const proxyOptions = {
   proxyBaseUrl: "https://img.example.com/proxy",
@@ -140,5 +143,24 @@ describe("rewriteHtmlRemoteAssetUrls", () => {
     for (const expectedUrl of expectedUrls) {
       expect(rewrittenHtml).toContain(encodeURIComponent(expectedUrl));
     }
+  });
+});
+
+describe("rewriteCssRemoteAssetUrls", () => {
+  it("rewrites a quoted URL that contains a space", async () => {
+    const css = `.a { background: url("https://cdn.example.com/a b.png"); }`;
+
+    const rewritten = await rewriteCssRemoteAssetUrls(css, proxyOptions);
+
+    expect(rewritten).toContain("https://img.example.com/proxy?u=");
+    expect(rewritten).not.toContain("https://cdn.example.com/a b.png");
+  });
+
+  it("stays linear on a long run of unclosed url(", async () => {
+    const css = "url(".repeat(40_000);
+
+    const started = performance.now();
+    await rewriteCssRemoteAssetUrls(css, proxyOptions);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });

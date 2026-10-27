@@ -5,7 +5,10 @@ import {
   type AssetProxyRewriteOptions,
 } from "@inboxzero/image-proxy/proxy-url";
 
-const CSS_URL_PATTERN = /url\(\s*(['"]?)([^"')]+)\1\s*\)/gi;
+// Unquoted URLs can't hold whitespace or "(", and no branch can reach past
+// the next "(", so a run of unclosed "url(" stays linear instead of rescanning
+// the rest of the stylesheet from every start.
+const CSS_URL_PATTERN = /url\(\s*(?:(["'])([^"'()]+)\1|([^"'()\s]+))\s*\)/gi;
 const DOCUMENT_PATTERN = /<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i;
 const SVG_URL_ATTRIBUTES = ["href", "xlink:href"] as const;
 const SVG_URL_TAGS = ["feimage", "image", "use"] as const;
@@ -121,13 +124,18 @@ export async function rewriteCssRemoteAssetUrls(
       ? getSignedUrl
       : createSignedUrlMemo(getSignedUrl);
 
-  return replaceAsync(css, CSS_URL_PATTERN, async (match, quote, rawUrl) => {
-    const signedUrl = await resolveSignedUrl(decodeHtmlValue(rawUrl.trim()));
-    if (signedUrl === rawUrl.trim()) return match;
+  return replaceAsync(
+    css,
+    CSS_URL_PATTERN,
+    async (match, quote, quotedUrl, unquotedUrl) => {
+      const rawUrl = quotedUrl || unquotedUrl;
+      const signedUrl = await resolveSignedUrl(decodeHtmlValue(rawUrl.trim()));
+      if (signedUrl === rawUrl.trim()) return match;
 
-    const wrappedUrl = quote ? signedUrl : escapeCssUrl(signedUrl);
-    return `url(${quote || '"'}${wrappedUrl}${quote || '"'})`;
-  });
+      const wrappedUrl = quote ? signedUrl : escapeCssUrl(signedUrl);
+      return `url(${quote || '"'}${wrappedUrl}${quote || '"'})`;
+    },
+  );
 }
 
 function createSignedUrlMemo(options: AssetProxyRewriteOptions) {

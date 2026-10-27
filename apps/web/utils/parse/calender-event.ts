@@ -11,6 +11,9 @@ interface CalendarEventInfo {
   startDate?: Date | null;
 }
 
+const MAX_ANALYZED_BODY_LENGTH = 50 * 1024;
+const ORGANIZER_SEARCH_WINDOW = 2000;
+
 export type CalendarEventStatus = {
   isEvent: boolean;
   timing?: "past" | "future";
@@ -45,8 +48,9 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
     subject.toLowerCase().includes(keyword.toLowerCase()),
   );
 
-  // Check body for calendar event indicators
-  const body = email.textHtml || "";
+  // The body is sender HTML with no size limit. Event details sit near the
+  // top, and the cap bounds the regex work below.
+  const body = (email.textHtml || "").slice(0, MAX_ANALYZED_BODY_LENGTH);
 
   // Determine if it's a calendar event based on checks
   result.isCalendarEvent = hasCalendarSubject || hasIcsAttachment(email);
@@ -74,15 +78,7 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
       result.eventTitle = subject;
     }
 
-    // Extract organizer
-    const organizerMatch =
-      body.match(
-        /Organiser[\s\S]*?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i,
-      ) ||
-      body.match(
-        /Organizer[\s\S]*?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i,
-      );
-    result.organizer = organizerMatch?.[1];
+    result.organizer = findOrganizerEmail(body);
 
     // Look for date patterns in the body
     result.recurringEvent =
@@ -96,7 +92,7 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
       /(?:from|on)\s+(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\s+(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)/i,
 
       // Pattern for ISO date in iCalendar data: DTSTART, DTEND, etc.
-      /DTSTART(?:;TZID=[^:]+)?:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/i,
+      /DTSTART(?:;TZID=[^:]{1,100})?:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/i,
 
       // Pattern for datetime strings
       /(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})\s+at\s+(\d{1,2}):(\d{2})/i,
@@ -114,7 +110,7 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
 
     // Process iCalendar dates if present
     const dtStartMatch = body.match(
-      /DTSTART(?:;TZID=[^:]+)?:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/i,
+      /DTSTART(?:;TZID=[^:]{1,100})?:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/i,
     );
     if (dtStartMatch) {
       const [_, year, month, day, hour, minute, second] = dtStartMatch;
@@ -129,7 +125,7 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
 
       // Also look for end date
       const dtEndMatch = body.match(
-        /DTEND(?:;TZID=[^:]+)?:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/i,
+        /DTEND(?:;TZID=[^:]{1,100})?:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/i,
       );
       if (dtEndMatch) {
         const [_, yearEnd, monthEnd, dayEnd, hourEnd, minuteEnd, secondEnd] =
@@ -198,8 +194,10 @@ export function analyzeCalendarEvent(email: ParsedMessage): CalendarEventInfo {
     // Extract date from text patterns if we haven't found it yet
     if (!result.eventDate) {
       // Look for patterns like "Weekly from 16:00 to 17:00 on Monday from Mon 10 Feb to Mon 3 Mar"
+      // Bounded gaps: HTML bodies are often one long line, and unbounded lazy
+      // gaps rescan it from every "Weekly" and every "from".
       const weeklyPattern =
-        /Weekly.*?from.*?(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
+        /Weekly.{0,200}?from.{0,200}?(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
       const weeklyMatch = body.match(weeklyPattern);
 
       if (weeklyMatch) {
@@ -309,4 +307,21 @@ function hasICalendarContent(email: ParsedMessage): boolean {
 
   // Require DTSTART or METHOD to avoid false positives
   return body.includes("DTSTART") || body.includes("METHOD:");
+}
+
+// Looks for the organizer's address shortly after the label, so a body with
+// the label and no address nearby can't be scanned to the end from every
+// position.
+function findOrganizerEmail(body: string) {
+  for (const label of [/Organiser/i, /Organizer/i]) {
+    const labelMatch = label.exec(body);
+    if (!labelMatch) continue;
+
+    const start = labelMatch.index + labelMatch[0].length;
+    const window = body.slice(start, start + ORGANIZER_SEARCH_WINDOW);
+    const email = window.match(
+      /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,
+    )?.[0];
+    if (email) return email;
+  }
 }
