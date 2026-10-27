@@ -15,7 +15,11 @@ import {
   withMicrosoftGraphRetry,
   withMicrosoftGraphWriteRetry,
 } from "@/utils/outlook/retry";
-import { extractEmailAddress, extractNameFromEmail } from "@/utils/email";
+import {
+  extractEmailAddress,
+  extractNameFromEmail,
+  splitRecipientList,
+} from "@/utils/email";
 import { isOutlookItemNotFoundError, SafeError } from "@/utils/error";
 import { ensureEmailSendingEnabled } from "@/utils/mail";
 import { uploadResumableChunks } from "@/utils/outlook/upload-session";
@@ -271,15 +275,6 @@ export async function draftEmail(
     userEmails,
   );
 
-  const overrideToRecipient = args.to
-    ? {
-        emailAddress: {
-          address: extractEmailAddress(recipients.to),
-          name: extractNameFromEmail(recipients.to),
-        },
-      }
-    : undefined;
-
   const fallbackToRecipient = {
     emailAddress: {
       address: extractEmailAddress(recipients.to),
@@ -297,8 +292,10 @@ export async function draftEmail(
     ? undefined
     : originalEmail.rawRecipients?.from;
 
-  const toRecipients = overrideToRecipient
-    ? [overrideToRecipient]
+  // An explicit "to" may list several addresses. If none of them is valid,
+  // leave the draft unaddressed rather than fall back to the original sender.
+  const toRecipients = args.to
+    ? (buildGraphRecipients(recipients.to) ?? [])
     : (replyToRecipients ?? [rawFromRecipient ?? fallbackToRecipient]);
 
   // Build CC list from reply-all and args
@@ -610,10 +607,7 @@ function buildGraphRecipients(
 ): GraphRecipient[] | undefined {
   if (!recipientList) return;
 
-  const parts = recipientList.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/);
-  const recipients = parts
-    .map((part) => part.trim())
-    .filter(Boolean)
+  const recipients = splitRecipientList(recipientList)
     .map((part): GraphRecipient | null => {
       const address = extractEmailAddress(part);
       if (!address) return null;

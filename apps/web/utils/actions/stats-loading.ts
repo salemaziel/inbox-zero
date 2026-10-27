@@ -8,6 +8,7 @@ import { isDefined } from "@/utils/types";
 import {
   extractDomainFromEmail,
   extractEmailAddress,
+  extractEmailAddresses,
   extractNameFromEmail,
 } from "@/utils/email";
 import type { EmailProvider } from "@/utils/email/types";
@@ -201,7 +202,9 @@ export async function saveBatch({
         from: extractEmailAddress(m.headers.from),
         fromName: extractNameFromEmail(m.headers.from),
         fromDomain: extractDomainFromEmail(m.headers.from),
-        to: m.headers.to ? extractEmailAddress(m.headers.to) : "Missing",
+        to: m.headers.to
+          ? (extractEmailAddresses(m.headers.to)[0] ?? "")
+          : "Missing",
         date,
         unsubscribeLink,
         read: !m.labelIds?.includes("UNREAD"),
