@@ -21,6 +21,7 @@ import {
 import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
   CLI_SUBSCRIPTION_PROVIDERS,
+  type CliLoginScope,
   isCliLlmOwner,
   isCliSubscriptionProvider,
 } from "@/utils/llms/cli-provider";
@@ -92,9 +93,10 @@ export const updateAiSettingsAction = actionClientUser
       if (usesCliProvider && !env.CLI_LLM_ENABLED) {
         throw new SafeError("AI subscriptions aren't enabled on this server.");
       }
-      const usableSubscriptions = usesCliProvider
-        ? await getUsableSubscriptionProviders(userId)
-        : [];
+      const { usableSubscriptions, allowServerLogin } = usesCliProvider
+        ? await getSubscriptionAccess(userId)
+        : { usableSubscriptions: [], allowServerLogin: false };
+      const cliLogin = { userId, allowServerLogin };
 
       if (
         isCliSubscriptionProvider(aiProvider) &&
@@ -115,6 +117,7 @@ export const updateAiSettingsAction = actionClientUser
 
       if (isSubscriptionProvider(aiProvider)) {
         await assertSubscriptionChoice(
+          cliLogin,
           aiProvider,
           aiModel,
           aiReasoningEffort ?? null,
@@ -123,6 +126,7 @@ export const updateAiSettingsAction = actionClientUser
       for (const [, entry] of taskEntries) {
         if (isSubscriptionProvider(entry.provider)) {
           await assertSubscriptionChoice(
+            cliLogin,
             entry.provider,
             entry.model,
             entry.reasoningEffort ?? null,
@@ -433,9 +437,10 @@ export const toggleDigestAction = actionClient
 
 // The subscriptions the user has connected, or all of them when the user may
 // fall back to the server's own login.
-async function getUsableSubscriptionProviders(
-  userId: string,
-): Promise<string[]> {
+async function getSubscriptionAccess(userId: string): Promise<{
+  usableSubscriptions: string[];
+  allowServerLogin: boolean;
+}> {
   const [user, logins] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -446,18 +451,27 @@ async function getUsableSubscriptionProviders(
       select: { provider: true },
     }),
   ]);
-  if (user && isCliLlmOwner(user)) return [...CLI_SUBSCRIPTION_PROVIDERS];
-  return logins.map((login) => login.provider);
+  if (user && isCliLlmOwner(user)) {
+    return {
+      usableSubscriptions: [...CLI_SUBSCRIPTION_PROVIDERS],
+      allowServerLogin: true,
+    };
+  }
+  return {
+    usableSubscriptions: logins.map((login) => login.provider),
+    allowServerLogin: false,
+  };
 }
 
-// Only a model on the subscription's current list, with one of that model's
-// thinking levels, reaches the CLI.
+// Only a model on the subscription's current list for this user, with one of
+// that model's thinking levels, reaches the CLI.
 async function assertSubscriptionChoice(
+  cliLogin: CliLoginScope,
   provider: string,
   model: string,
   reasoningEffort: ReasoningEffort | null,
 ) {
-  const models = await getSubscriptionModels(provider);
+  const models = await getSubscriptionModels(provider, cliLogin);
   const entry = models.find((m) => m.value === model);
   if (!entry) throw new SafeError("Pick a model from this account's list.");
   if (reasoningEffort && !entry.efforts.includes(reasoningEffort)) {

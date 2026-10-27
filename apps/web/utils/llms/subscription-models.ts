@@ -1,5 +1,9 @@
 import { env } from "@/env";
-import { listCodexModels } from "@/utils/llms/cli-provider";
+import {
+  type CliLoginScope,
+  getCodexModelListLogin,
+  listCodexModels,
+} from "@/utils/llms/cli-provider";
 import {
   getSubscriptionModelWeight,
   isSubscriptionProvider,
@@ -26,48 +30,57 @@ type CodexModelsCache = {
 };
 
 // Kept on globalThis because route handlers and server actions can load
-// separate module copies.
+// separate module copies. Keyed by the login the list was read with: one
+// entry per user with their own login, one shared by the server's login.
 const globalForSubscriptionModels = globalThis as unknown as {
-  inboxZeroCodexModels?: CodexModelsCache;
-  inboxZeroCodexModelsPending?: Promise<SubscriptionModel[]>;
+  inboxZeroCodexModels?: Map<string, CodexModelsCache>;
+  inboxZeroCodexModelsPending?: Map<string, Promise<SubscriptionModel[]>>;
 };
+globalForSubscriptionModels.inboxZeroCodexModels ??= new Map();
+globalForSubscriptionModels.inboxZeroCodexModelsPending ??= new Map();
+const codexModelsCache = globalForSubscriptionModels.inboxZeroCodexModels;
+const codexModelsPending =
+  globalForSubscriptionModels.inboxZeroCodexModelsPending;
 
-// The models a subscription provider may run, in the order to offer them.
+// The models a subscription provider may run for this user, in the order to
+// offer them. ChatGPT plans differ, so the Codex list is read with the login
+// the user's runs use.
 export async function getSubscriptionModels(
   provider: string,
+  cliLogin: CliLoginScope,
 ): Promise<SubscriptionModel[]> {
   if (!isSubscriptionProvider(provider)) return [];
-  if (provider === Provider.CODEX_CLI) return getCodexModels();
+  if (provider === Provider.CODEX_CLI) return getCodexModels(cliLogin);
   return [...SUBSCRIPTION_MODELS[provider].models];
 }
 
-export async function getAllSubscriptionModels() {
+export async function getAllSubscriptionModels(cliLogin: CliLoginScope) {
   const [claude, codex] = await Promise.all([
-    getSubscriptionModels(Provider.CLAUDE_CODE),
-    getSubscriptionModels(Provider.CODEX_CLI),
+    getSubscriptionModels(Provider.CLAUDE_CODE, cliLogin),
+    getSubscriptionModels(Provider.CODEX_CLI, cliLogin),
   ]);
   return { [Provider.CLAUDE_CODE]: claude, [Provider.CODEX_CLI]: codex };
 }
 
-// The models the picker should show, from Codex's model/list entries: hidden
-// models are dropped, the server's order (its priority order) is kept, and
-// any thinking level this app doesn't offer is left out.
+// The models the picker should show, from `codex debug models` entries:
+// models not marked for the picker are dropped, the rest sorted by Codex's
+// priority, and any thinking level this app doesn't offer is left out.
 export function parseCodexModels(entries: unknown[]): SubscriptionModel[] {
-  const models: SubscriptionModel[] = [];
+  const models: (SubscriptionModel & { priority: number })[] = [];
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
-    if (record.hidden === true) continue;
+    if (record.visibility !== "list") continue;
 
-    const value = typeof record.model === "string" ? record.model : record.id;
+    const value = record.slug;
     if (typeof value !== "string" || !MODEL_ID_RE.test(value)) continue;
     if (models.some((model) => model.value === value)) continue;
 
-    const efforts = Array.isArray(record.supportedReasoningEfforts)
-      ? record.supportedReasoningEfforts
+    const efforts = Array.isArray(record.supported_reasoning_levels)
+      ? record.supported_reasoning_levels
           .map((level) =>
             level && typeof level === "object"
-              ? (level as Record<string, unknown>).reasoningEffort
+              ? (level as Record<string, unknown>).effort
               : undefined,
           )
           .filter(isReasoningEffort)
@@ -75,63 +88,73 @@ export function parseCodexModels(entries: unknown[]): SubscriptionModel[] {
 
     models.push({
       value,
-      label:
-        typeof record.displayName === "string" && record.displayName.trim()
-          ? record.displayName.trim()
-          : value,
-      description:
-        typeof record.description === "string" && record.description.trim()
-          ? record.description.trim()
-          : null,
+      label: getText(record.display_name) ?? value,
+      description: getText(record.description),
       efforts,
       defaultEffort:
-        isReasoningEffort(record.defaultReasoningEffort) &&
-        efforts.includes(record.defaultReasoningEffort)
-          ? record.defaultReasoningEffort
+        isReasoningEffort(record.default_reasoning_level) &&
+        efforts.includes(record.default_reasoning_level)
+          ? record.default_reasoning_level
           : null,
       weight: getSubscriptionModelWeight(value),
+      priority:
+        typeof record.priority === "number"
+          ? record.priority
+          : Number.MAX_SAFE_INTEGER,
     });
   }
-  return models;
+  return models
+    .sort((a, b) => a.priority - b.priority)
+    .map(({ priority: _priority, ...model }) => model);
 }
 
-async function getCodexModels(): Promise<SubscriptionModel[]> {
+async function getCodexModels(
+  cliLogin: CliLoginScope,
+): Promise<SubscriptionModel[]> {
   const fallback = [...SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models];
   if (!env.CLI_LLM_ENABLED) return fallback;
 
-  const cached = globalForSubscriptionModels.inboxZeroCodexModels;
+  const listLogin = await getCodexModelListLogin(cliLogin);
+  if (!listLogin) return fallback;
+  const key = listLogin === "user" ? `user:${cliLogin.userId}` : "server";
+
+  const cached = codexModelsCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.models;
 
-  globalForSubscriptionModels.inboxZeroCodexModelsPending ??= loadCodexModels(
-    fallback,
-  ).finally(() => {
-    globalForSubscriptionModels.inboxZeroCodexModelsPending = undefined;
-  });
-  return globalForSubscriptionModels.inboxZeroCodexModelsPending;
+  let pending = codexModelsPending.get(key);
+  if (!pending) {
+    pending = loadCodexModels(key, cliLogin, fallback).finally(() => {
+      codexModelsPending.delete(key);
+    });
+    codexModelsPending.set(key, pending);
+  }
+  return pending;
 }
 
 async function loadCodexModels(
+  key: string,
+  cliLogin: CliLoginScope,
   fallback: SubscriptionModel[],
 ): Promise<SubscriptionModel[]> {
-  let models: SubscriptionModel[] = [];
-  try {
-    models = parseCodexModels(await listCodexModels());
-    if (!models.length) logger.warn("Codex returned no models to offer");
-  } catch (error) {
-    logger.warn("Could not list Codex models", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  const listed = await listCodexModels(cliLogin);
+  const models = listed ? parseCodexModels(listed) : [];
+  if (listed && !models.length) logger.warn("Codex listed no models to offer");
 
+  // After a failed lookup, a list read earlier beats the built-in one.
   const found = models.length > 0;
-  globalForSubscriptionModels.inboxZeroCodexModels = {
-    models: found ? models : fallback,
+  const next = found ? models : (codexModelsCache.get(key)?.models ?? fallback);
+  codexModelsCache.set(key, {
+    models: next,
     expiresAt:
       Date.now() + (found ? CODEX_MODELS_TTL_MS : CODEX_MODELS_RETRY_MS),
-  };
-  return found ? models : fallback;
+  });
+  return next;
 }
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return REASONING_EFFORTS.some((effort) => effort === value);
+}
+
+function getText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

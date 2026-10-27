@@ -19,7 +19,7 @@ export const GET = withAuth("user/ai-subscription", async (request) =>
 );
 
 async function getAiSubscriptions({ userId }: { userId: string }) {
-  const [user, logins, models] = await Promise.all([
+  const [user, logins] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -36,13 +36,18 @@ async function getAiSubscriptions({ userId }: { userId: string }) {
         connectedAt: true,
       },
     }),
-    getAllSubscriptionModels(),
   ]);
   if (!user) throw new SafeError("User not found");
 
+  const canUseServerLogin = isCliLlmOwner(user);
+  const models = await getAllSubscriptionModels({
+    userId,
+    allowServerLogin: canUseServerLogin,
+  });
+
   return {
     enabled: env.CLI_LLM_ENABLED,
-    canUseServerLogin: isCliLlmOwner(user),
+    canUseServerLogin,
     // The models and thinking levels each subscription can be set to.
     models,
     providers: CLI_SUBSCRIPTION_PROVIDERS.map((provider) => ({

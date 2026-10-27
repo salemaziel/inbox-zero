@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -152,6 +154,8 @@ export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
 // how long a CLI tool server gets to close.
 export const CLI_STOP_WAIT_MS = 10 * 1000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 20 * 1000;
+// The full catalog is about 650 KB.
+const CODEX_MODEL_LIST_MAX_BYTES = 8 * 1024 * 1024;
 
 export function assertCliLlmEnabled(provider: CliProvider) {
   if (env.CLI_LLM_ENABLED) return;
@@ -975,48 +979,81 @@ async function saveRefreshedCodexLogin(codexHome: string, login: UserCliLogin) {
   });
 }
 
-// Run before a call starts: throws the connect or reconnect prompt when the
-// user's own login is required but not usable, and otherwise says whether
-// the call will run on the user's own login rather than the server's.
-// Codex's model list as the app-server's model/list returns it, read with the
-// same binary and server login the runs use: the server answers by client
-// version, so another binary can see a different list. Without a server
-// login, Codex returns the list built into the binary.
-export async function listCodexModels(): Promise<unknown[]> {
-  assertCliLlmEnabled(Provider.CODEX_CLI);
-  const module = await importOptionalProviderPackage(
-    CODEX_CLI_PACKAGE,
-    Provider.CODEX_CLI,
-  );
-  const listModels = module.listModels;
-  if (typeof listModels !== "function") {
-    throw new SafeError(
-      `CLI LLM provider "${Provider.CODEX_CLI}" package does not export "listModels". Check the installed package version.`,
-    );
-  }
+// Which login a Codex model listing for this scope runs on, or null when the
+// user has no usable login of their own and may not use the server's.
+export async function getCodexModelListLogin(
+  cliLogin: CliLoginScope | undefined,
+): Promise<"user" | "server" | null> {
+  if (!cliLogin) return "server";
+  const login = await prisma.aiSubscriptionLogin.findUnique({
+    where: {
+      userId_provider: {
+        userId: cliLogin.userId,
+        provider: Provider.CODEX_CLI,
+      },
+    },
+    select: { status: true, credential: true },
+  });
+  if (isUsableLogin(login)) return "user";
+  return cliLogin.allowServerLogin ? "server" : null;
+}
 
-  const run = await startCliRun(Provider.CODEX_CLI, null);
+// Codex's model list for one user, read with the same binary, isolation and
+// login a run of theirs would use: the user's own login when it is
+// connected, else the server's login for owners. The list differs by client
+// version and ChatGPT plan. Null means there is no live list to offer: no
+// binary configured, no usable login, a rejected login (marked for
+// reconnect) or a failed call. The user's Codex queue is held until the CLI
+// has exited, so a refreshed login is saved back before another run starts.
+export async function listCodexModels(
+  cliLogin: CliLoginScope | undefined,
+): Promise<unknown[] | null> {
+  assertCliLlmEnabled(Provider.CODEX_CLI);
+  if (!env.CODEX_CLI_PATH) return null;
+
+  let release = () => {};
+  let run: CliRun | undefined;
   try {
-    const result = (await listModels({
-      ...(env.CODEX_CLI_PATH ? { codexPath: env.CODEX_CLI_PATH } : {}),
-      cwd: run.cwd,
-      env: run.env,
-      connectionTimeoutMs: CODEX_MODEL_LIST_TIMEOUT_MS,
-      requestTimeoutMs: CODEX_MODEL_LIST_TIMEOUT_MS,
-    })) as { models?: unknown };
-    return Array.isArray(result?.models) ? result.models : [];
-  } finally {
-    await run.finish();
-    // The app-server can still be writing its model cache as it shuts down,
-    // which recreates the folder after it was removed.
-    setTimeout(() => {
-      rm(path.dirname(run.cwd), { recursive: true, force: true }).catch(
-        () => {},
+    // A listing waits for the user's running Codex call only so long, so a
+    // long chat doesn't hold up the settings page.
+    if (cliLogin) {
+      release = await acquireCodexRun(
+        cliLogin.userId,
+        AbortSignal.timeout(CODEX_MODEL_LIST_TIMEOUT_MS),
       );
-    }, CLI_STOP_WAIT_MS).unref?.();
+    }
+    const login = await resolveUserCliLogin(Provider.CODEX_CLI, cliLogin);
+    run = await startCliRun(Provider.CODEX_CLI, login);
+    const codexHome = run.env?.CODEX_HOME ?? "";
+    const result = await runCodexDebugModels(env.CODEX_CLI_PATH, run);
+
+    if (login && CODEX_AUTH_FAILURE_RE.test(result.stderr)) {
+      await markNeedsReconnect(login);
+      return null;
+    }
+    // Codex writes its model cache only after fetching the list for this
+    // login. Without it, the output is the list built into the binary.
+    const fetched = await access(path.join(codexHome, "models_cache.json"))
+      .then(() => true)
+      .catch(() => false);
+    if (result.exitCode !== 0 || !fetched) return null;
+
+    const parsed = JSON.parse(result.stdout) as { models?: unknown };
+    return Array.isArray(parsed?.models) ? parsed.models : null;
+  } catch (error) {
+    logger.warn("Could not list Codex models", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  } finally {
+    await run?.finish();
+    release();
   }
 }
 
+// Run before a call starts: throws the connect or reconnect prompt when the
+// user's own login is required but not usable, and otherwise says whether
+// the call will run on the user's own login rather than the server's.
 export async function checkUserCliLogin(
   provider: CliProvider,
   { userId, allowServerLogin }: CliLoginScope,
@@ -1277,4 +1314,46 @@ function isMissingOptionalPackageError(error: unknown, packageName: string) {
 
   const code = (error as Error & { code?: string }).code;
   return code === "ERR_MODULE_NOT_FOUND" && error.message.includes(packageName);
+}
+
+// Runs `codex debug models` and resolves once the process has exited, so
+// nothing writes to the run folder after it is cleaned up. A CLI still
+// running at the time limit is stopped, then killed.
+function runCodexDebugModels(
+  codexPath: string,
+  run: CliRunSettings,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const isScript = /\.(?:c|m)?js$/i.test(codexPath);
+  const child = spawn(
+    isScript ? process.execPath : codexPath,
+    [...(isScript ? [codexPath] : []), "debug", "models"],
+    { cwd: run.cwd, env: run.env, stdio: ["ignore", "pipe", "pipe"] },
+  );
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    if (stdout.length < CODEX_MODEL_LIST_MAX_BYTES) stdout += chunk;
+  });
+  child.stderr?.on("data", (chunk: string) => {
+    stderr = (stderr + chunk).slice(-4000);
+  });
+
+  return new Promise((resolve) => {
+    const stopTimer = setTimeout(() => {
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), CLI_STOP_WAIT_MS).unref?.();
+    }, CODEX_MODEL_LIST_TIMEOUT_MS);
+    stopTimer.unref?.();
+    child.on("error", (error) => {
+      clearTimeout(stopTimer);
+      resolve({ exitCode: null, stdout: "", stderr: String(error) });
+    });
+    child.on("close", (exitCode) => {
+      clearTimeout(stopTimer);
+      resolve({ exitCode, stdout, stderr });
+    });
+  });
 }

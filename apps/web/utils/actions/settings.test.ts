@@ -281,6 +281,11 @@ describe("updateAiSettingsAction", () => {
     });
 
     expect(listed?.serverError).toBeUndefined();
+    // Checked against this user's own list, read with their own login.
+    expect(getSubscriptionModels).toHaveBeenCalledWith(Provider.CODEX_CLI, {
+      userId: "user-1",
+      allowServerLogin: false,
+    });
     expect(unlisted?.serverError).toBe(
       "Pick a model from this account's list.",
     );

@@ -6,8 +6,10 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Provider } from "./config";
@@ -32,6 +34,7 @@ describe("createCliLanguageModel", () => {
     vi.doUnmock("ai-sdk-provider-codex-cli");
     vi.doUnmock("ai-sdk-provider-claude-code");
     vi.doUnmock("@/utils/prisma");
+    vi.doUnmock("node:child_process");
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
@@ -1421,38 +1424,143 @@ describe("createCliLanguageModel", () => {
     );
   });
 
-  it("lists Codex models with the configured binary and the server login in a throwaway home", async () => {
-    const hostHome = await mkdtemp(path.join(os.tmpdir(), "codex-host-"));
-    vi.stubEnv("CODEX_HOME", hostHome);
-    const listModels = vi.fn(
-      async (options: { env: Record<string, string> }) => {
-        const codexHome = options.env.CODEX_HOME;
-        return {
-          models: [
-            { id: "gpt-6-luna", authLinked: await readlinkSafe(codexHome) },
-          ],
-        };
-      },
-    );
+  it("lists Codex models with the user's own login, holding their queue and saving a refreshed login back", async () => {
+    const refreshed = '{"tokens":{"refresh_token":"fake-refresh-2"}}';
+    let authSeen: string | null = null;
+    let queueHeld = false;
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+    const spawn = fakeCodexSpawn(async ({ codexHome }) => {
+      authSeen = await readFile(path.join(codexHome, "auth.json"), "utf8");
+      queueHeld = getCodexRunQueues().has("user1");
+      await writeFile(path.join(codexHome, "auth.json"), refreshed);
+      await writeFile(path.join(codexHome, "models_cache.json"), "{}");
+      return { stdout: JSON.stringify({ models: [{ slug: "gpt-6-luna" }] }) };
+    });
     const { listCodexModels } = await loadCliProviderModule({
       envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
-      codexModule: { listModels },
+      spawn,
     });
 
-    const models = await listCodexModels();
+    const models = await listCodexModels({
+      userId: "user1",
+      allowServerLogin: true,
+    });
 
-    const options = listModels.mock.calls[0][0] as unknown as {
-      codexPath: string;
-      cwd: string;
-      env: Record<string, string>;
-    };
-    expect(options.codexPath).toBe("/opt/codex");
-    expect(options.env.CODEX_HOME).toContain("inbox-zero-cli-run-");
-    expect(models).toEqual([
-      { id: "gpt-6-luna", authLinked: path.join(hostHome, "auth.json") },
-    ]);
-    await expect(access(options.cwd)).rejects.toThrow();
+    expect(models).toEqual([{ slug: "gpt-6-luna" }]);
+    expect(spawn).toHaveBeenCalledWith(
+      "/opt/codex",
+      ["debug", "models"],
+      expect.objectContaining({
+        env: expect.objectContaining({ CODEX_HOME: expect.any(String) }),
+      }),
+    );
+    expect(authSeen).toBe(FAKE_CODEX_AUTH);
+    expect(queueHeld).toBe(true);
+    // The queue entry is dropped once its release has settled.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getCodexRunQueues().has("user1")).toBe(false);
+    expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: "user1",
+        provider: Provider.CODEX_CLI,
+        status: "connected",
+        connectedAt,
+      },
+      data: { credential: refreshed },
+    });
+    const { cwd } = spawn.mock.calls[0][2] as { cwd: string };
+    await expect(access(path.dirname(cwd))).rejects.toThrow();
+  });
+
+  it("uses the server login for an owner without a login, and never for anyone else", async () => {
+    const hostHome = await mkdtemp(path.join(os.tmpdir(), "codex-host-"));
+    vi.stubEnv("CODEX_HOME", hostHome);
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue(null);
+    let authLink: string | null = null;
+    const spawn = fakeCodexSpawn(async ({ codexHome }) => {
+      authLink = await readlinkSafe(codexHome);
+      await writeFile(path.join(codexHome, "models_cache.json"), "{}");
+      return { stdout: JSON.stringify({ models: [] }) };
+    });
+    const { listCodexModels, getCodexModelListLogin } =
+      await loadCliProviderModule({
+        envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+        spawn,
+      });
+    const owner = { userId: "owner1", allowServerLogin: true };
+    const nonOwner = { userId: "user2", allowServerLogin: false };
+
+    expect(await getCodexModelListLogin(owner)).toBe("server");
+    expect(await getCodexModelListLogin(nonOwner)).toBeNull();
+    expect(await listCodexModels(nonOwner)).toBeNull();
+    expect(spawn).not.toHaveBeenCalled();
+
+    expect(await listCodexModels(owner)).toEqual([]);
+    expect(authLink).toBe(path.join(hostHome, "auth.json"));
     await rm(hostHome, { recursive: true, force: true });
+  });
+
+  it("marks a rejected login for reconnect and offers no list", async () => {
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+    const spawn = fakeCodexSpawn(async () => ({
+      stdout: JSON.stringify({ models: [{ slug: "gpt-5.5" }] }),
+      stderr: "error: 401 Unauthorized while refreshing models",
+    }));
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      spawn,
+    });
+
+    const models = await listCodexModels({
+      userId: "user1",
+      allowServerLogin: false,
+    });
+
+    expect(models).toBeNull();
+    expect(prismaMock.aiSubscriptionLogin.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "needs-reconnect" }),
+      }),
+    );
+  });
+
+  it("treats a list Codex didn't fetch for this login as no list", async () => {
+    prismaMock.aiSubscriptionLogin.findUnique.mockResolvedValue({
+      status: "connected",
+      credential: FAKE_CODEX_AUTH,
+      connectedAt,
+    });
+    // Codex printed its built-in list and wrote no model cache.
+    const spawn = fakeCodexSpawn(async () => ({
+      stdout: JSON.stringify({ models: [{ slug: "gpt-5.5" }] }),
+    }));
+    const { listCodexModels } = await loadCliProviderModule({
+      envOverrides: { CODEX_CLI_PATH: "/opt/codex" },
+      spawn,
+    });
+
+    expect(
+      await listCodexModels({ userId: "user1", allowServerLogin: false }),
+    ).toBeNull();
+    expect(prismaMock.aiSubscriptionLogin.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not list models without a configured Codex binary", async () => {
+    const spawn = fakeCodexSpawn(async () => ({ stdout: "{}" }));
+    const { listCodexModels } = await loadCliProviderModule({ spawn });
+
+    expect(
+      await listCodexModels({ userId: "owner1", allowServerLogin: true }),
+    ).toBeNull();
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
 
@@ -1460,6 +1568,7 @@ async function loadCliProviderModule({
   envOverrides,
   codexModule,
   claudeModule,
+  spawn,
 }: {
   envOverrides?: Partial<{
     CLI_LLM_ENABLED: boolean;
@@ -1468,7 +1577,11 @@ async function loadCliProviderModule({
   }>;
   codexModule?: Record<string, unknown>;
   claudeModule?: Record<string, unknown>;
+  spawn?: (...args: unknown[]) => unknown;
 } = {}) {
+  if (spawn) {
+    vi.doMock("node:child_process", () => ({ spawn }));
+  }
   vi.doMock("@/env", () => ({
     env: {
       CLI_LLM_ENABLED: true,
@@ -1553,4 +1666,44 @@ async function flushFileWork() {
 
 async function readlinkSafe(codexHome: string) {
   return readlink(path.join(codexHome, "auth.json")).catch(() => null);
+}
+
+function getCodexRunQueues() {
+  return (
+    (globalThis as { inboxZeroCodexRunQueues?: Map<string, unknown> })
+      .inboxZeroCodexRunQueues ?? new Map()
+  );
+}
+
+// A stand-in for the Codex CLI: runs `act` in the run's Codex home, prints
+// its output and exits.
+function fakeCodexSpawn(
+  act: (run: {
+    codexHome: string;
+  }) => Promise<{ stdout: string; stderr?: string; exitCode?: number }>,
+) {
+  return vi.fn(
+    (
+      _command: string,
+      _args: string[],
+      options: { env: Record<string, string> },
+    ) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: () => void;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn();
+      act({ codexHome: options.env.CODEX_HOME }).then(
+        ({ stdout, stderr = "", exitCode = 0 }) => {
+          child.stdout.end(stdout);
+          child.stderr.end(stderr);
+          setImmediate(() => child.emit("close", exitCode));
+        },
+      );
+      return child;
+    },
+  );
 }
