@@ -166,13 +166,15 @@ export async function processHistoryItem(
 
     // check if unsubscribed
     const email = canonicalizeEmailAddress(parsedMessage.headers.from);
-    const sender = await prisma.newsletter.findFirst({
-      where: {
-        emailAccountId,
-        email: { equals: email, mode: "insensitive" },
-        status: NewsletterStatus.UNSUBSCRIBED,
-      },
-    });
+    const sender = email
+      ? await prisma.newsletter.findFirst({
+          where: {
+            emailAccountId,
+            email: { equals: email, mode: "insensitive" },
+            status: NewsletterStatus.UNSUBSCRIBED,
+          },
+        })
+      : null;
 
     if (sender) {
       await provider.blockUnsubscribedEmail(messageId);

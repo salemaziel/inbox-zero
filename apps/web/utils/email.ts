@@ -110,8 +110,10 @@ export function canonicalizeEmailAddress(email: string): string {
   return extractEmailAddress(email).toLowerCase();
 }
 
+// Two headers that don't parse are not the same sender.
 export function isSameEmailAddress(left: string, right: string) {
-  return canonicalizeEmailAddress(left) === canonicalizeEmailAddress(right);
+  const canonicalLeft = canonicalizeEmailAddress(left);
+  return !!canonicalLeft && canonicalLeft === canonicalizeEmailAddress(right);
 }
 
 // "me, Dana, Alex": who a message goes to, short enough to scan in a header.

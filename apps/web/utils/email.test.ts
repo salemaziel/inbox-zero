@@ -9,6 +9,7 @@ import {
   participant,
   normalizeEmailAddress,
   formatEmailWithName,
+  isSameEmailAddress,
   getNewsletterSenderDisplayName,
   messageRepliesToSourceSender,
   isSameOrganization,
@@ -375,6 +376,23 @@ describe("email utils", () => {
 
     it.each(cases)("handles %s", (_caseName, input, expected) => {
       expect(extractEmailAddress(input)).toBe(expected);
+    });
+  });
+
+  describe("isSameEmailAddress", () => {
+    it.each([
+      [
+        "the same address in different forms",
+        "A <A@x.example>",
+        "a@x.example",
+        true,
+      ],
+      ["different addresses", "a@x.example", "b@x.example", false],
+      ["two empty values", "", "", false],
+      ["two unparseable values", "Name <bad>", "not an address", false],
+      ["one unparseable value", "a@x.example", "Name <bad>", false],
+    ])("compares %s", (_caseName, left, right, expected) => {
+      expect(isSameEmailAddress(left, right)).toBe(expected);
     });
   });
 
