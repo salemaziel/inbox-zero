@@ -654,11 +654,8 @@ export async function queryBatchMessages(
       metadataFilters: metadataSearch.odataFilters,
     });
 
-    request = request.search(
-      options.mailboxSearch
-        ? encodeURIComponent(effectiveSearchQuery!)
-        : effectiveSearchQuery!,
-    );
+    // The Graph SDK puts $search into the URL as-is.
+    request = request.search(encodeURIComponent(effectiveSearchQuery!));
 
     const response: { value: Message[]; "@odata.nextLink"?: string } =
       await withMicrosoftGraphRetry(() => request.get(), logger);

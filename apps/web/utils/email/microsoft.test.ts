@@ -325,7 +325,7 @@ describe("OutlookProvider.searchMessages", () => {
     ]);
     expect(client.getRequestLog()).toContainEqual({
       apiPath: "/me/mailFolders/nested-folder/messages",
-      search: '"invoice"',
+      search: encodeURIComponent('"invoice"'),
       filter: undefined,
     });
   });
@@ -1138,7 +1138,7 @@ describe("OutlookProvider reply history", () => {
     expect(client.getRequestLog()).toContainEqual(
       expect.objectContaining({
         apiPath: "/me/mailFolders/sentitems/messages",
-        search: '"participants:\\"bob@example.com\\""',
+        search: encodeURIComponent('"participants:\\"bob@example.com\\""'),
       }),
     );
   });
@@ -1982,7 +1982,7 @@ describe("OutlookProvider.searchThreads", () => {
     expect(searchRequest).toEqual({
       apiPath: "/me/messages",
       filter: undefined,
-      search: '"quarterly invoice"',
+      search: encodeURIComponent('"quarterly invoice"'),
     });
     expect(result.threads.map((thread) => thread.id)).toEqual(["thread-1"]);
   });
@@ -1996,7 +1996,7 @@ describe("OutlookProvider.searchThreads", () => {
     const searchRequest = client
       .getRequestLog()
       .find((request) => request.apiPath === "/me/messages");
-    expect(searchRequest?.search).toBe('"subject:test"');
+    expect(searchRequest?.search).toBe(encodeURIComponent('"subject:test"'));
   });
 
   it("searches junk when the caller scopes the search to spam", async () => {
@@ -2008,7 +2008,7 @@ describe("OutlookProvider.searchThreads", () => {
     expect(client.getRequestLog()).toContainEqual({
       apiPath: "/me/mailFolders/spam-folder-id/messages",
       filter: undefined,
-      search: '"invoice"',
+      search: encodeURIComponent('"invoice"'),
     });
   });
 
@@ -2021,7 +2021,7 @@ describe("OutlookProvider.searchThreads", () => {
     expect(client.getRequestLog()).toContainEqual({
       apiPath: "/me/mailFolders/inbox-folder-id/messages",
       filter: undefined,
-      search: '"subject:test"',
+      search: encodeURIComponent('"subject:test"'),
     });
   });
 
@@ -2080,7 +2080,7 @@ describe("OutlookProvider.searchThreads", () => {
       client
         .getRequestLog()
         .find((request) => request.apiPath === "/me/messages")?.search,
-    ).toBe('"invoice"');
+    ).toBe(encodeURIComponent('"invoice"'));
   });
 
   it("does not follow $search nextLink when there is no flagged or category post-filter", async () => {

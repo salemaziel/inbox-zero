@@ -3333,7 +3333,8 @@ async function fetchOutlookSearchPage({
   // Graph forbids combining $search with $filter/$orderby and caps page size at 25.
   let request = client.api(apiPath).select(selectFields);
   if (compiled.search) {
-    request = request.search(compiled.search);
+    // The Graph SDK puts $search into the URL as-is.
+    request = request.search(encodeURIComponent(compiled.search));
   } else {
     const filters: string[] = [];
     if (compiled.flagged) filters.push("flag/flagStatus eq 'flagged'");

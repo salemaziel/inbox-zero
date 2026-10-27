@@ -1,6 +1,7 @@
 import type { MailFolder } from "@microsoft/microsoft-graph-types";
 import type { OutlookClient } from "./client-types";
 import type { Logger } from "@/utils/logger";
+import { escapeODataString } from "@/utils/outlook/odata-escape";
 import {
   withMicrosoftGraphRetry,
   withMicrosoftGraphWriteRetry,
@@ -97,7 +98,7 @@ async function findOutlookFolderByName(
         client
           .getClient()
           .api("/me/mailFolders")
-          .filter(`displayName eq '${folderName.replace(/'/g, "''")}'`)
+          .filter(`displayName eq '${escapeODataString(folderName)}'`)
           .select("id,displayName")
           .top(1)
           .get(),

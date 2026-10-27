@@ -147,7 +147,10 @@ async function searchRelevantPeople(
     .select("displayName,scoredEmailAddresses,userPrincipalName");
 
   if (query) {
-    request = request.search(`"${escapeSearchValue(query)}"`);
+    // The Graph SDK puts $search into the URL as-is.
+    request = request.search(
+      encodeURIComponent(`"${escapeSearchValue(query)}"`),
+    );
   }
 
   const response: { value?: Person[] } = await withMicrosoftGraphRetry(

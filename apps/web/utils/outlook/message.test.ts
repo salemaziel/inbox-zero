@@ -759,7 +759,9 @@ describe("queryBatchMessages", () => {
       createTestLogger(),
     );
 
-    expect(request.search).toHaveBeenCalledWith('"newsletter"');
+    expect(request.search).toHaveBeenCalledWith(
+      encodeURIComponent('"newsletter"'),
+    );
     expect(request.filter).not.toHaveBeenCalled();
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0]?.id).toBe("message-unread");
@@ -779,7 +781,9 @@ describe("queryBatchMessages", () => {
       createTestLogger(),
     );
 
-    expect(request.search).toHaveBeenCalledWith('"newsletter"');
+    expect(request.search).toHaveBeenCalledWith(
+      encodeURIComponent('"newsletter"'),
+    );
     expect(request.filter).not.toHaveBeenCalled();
   });
 
@@ -840,7 +844,9 @@ describe("queryBatchMessages", () => {
       expect(api).toHaveBeenCalledWith(pageToken);
       expect(request.search).not.toHaveBeenCalled();
     } else {
-      expect(request.search).toHaveBeenCalledWith('"invoice"');
+      expect(request.search).toHaveBeenCalledWith(
+        encodeURIComponent('"invoice"'),
+      );
     }
     expect(result.messages.map((message) => message.id)).toEqual([
       "matching-message",

@@ -5,6 +5,7 @@ import {
   getOutlookChildFolders,
   addOutlookSystemFolderTypes,
   deleteOutlookFolder,
+  getOrCreateOutlookFolderIdByName,
   renameOutlookFolder,
 } from "./folders";
 import type { OutlookClient } from "./client";
@@ -43,6 +44,29 @@ describe("Outlook folder mutations", () => {
 
     expect(api).toHaveBeenCalledWith("/me/mailFolders/folder%2Fid");
     expect(deleteFolder).toHaveBeenCalledOnce();
+  });
+});
+
+describe("getOrCreateOutlookFolderIdByName", () => {
+  it("URL-encodes the folder name once in the lookup filter", async () => {
+    const request = {
+      filter: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      top: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue({
+        value: [{ id: "folder-1", displayName: "O'Neil & 50% off" }],
+      }),
+    };
+    const client = {
+      getClient: () => ({ api: vi.fn().mockReturnValue(request) }),
+    } as unknown as OutlookClient;
+
+    await expect(
+      getOrCreateOutlookFolderIdByName(client, "O'Neil & 50% off", logger),
+    ).resolves.toBe("folder-1");
+    expect(request.filter).toHaveBeenCalledWith(
+      "displayName eq 'O''Neil%20%26%2050%25%20off'",
+    );
   });
 });
 
