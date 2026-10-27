@@ -174,7 +174,11 @@ export const SUBSCRIPTION_MODELS = {
   }
 >;
 
-export type SubscriptionProvider = keyof typeof SUBSCRIPTION_MODELS;
+// Provider's values are plain strings, so the keys include number too.
+export type SubscriptionProvider = Extract<
+  keyof typeof SUBSCRIPTION_MODELS,
+  string
+>;
 
 export function isSubscriptionProvider(
   provider: string | null | undefined,

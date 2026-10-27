@@ -1344,7 +1344,9 @@ function runCodexDebugModels(
     [...(isScript ? [codexPath] : []), "debug", "models"],
     {
       cwd: run.cwd,
-      env: run.env,
+      // A copy, never undefined: spawn would otherwise hand the child the
+      // host's whole environment, credentials included.
+      env: { ...run.env } as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     },
