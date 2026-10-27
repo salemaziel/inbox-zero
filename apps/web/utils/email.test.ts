@@ -100,7 +100,7 @@ describe("email utils", () => {
       [
         "angle-addr inside a trailing comment with a comma",
         "<real@x.example> (a, <b@y.example>)",
-        ["real@x.example"],
+        [],
       ],
       [
         "whitespace around addresses",
@@ -276,17 +276,17 @@ describe("email utils", () => {
       [
         "angle-addr inside a trailing comment",
         "<real@x.example> (<b@y.example>)",
-        "real@x.example",
+        "",
       ],
       [
         "angle-addr inside trailing quoted text",
         '<real@x.example> "<b@y.example>"',
-        "real@x.example",
+        "",
       ],
       [
         "angle-addr inside an escaped-paren comment",
         "<real@x.example> (\\) <b@y.example>)",
-        "real@x.example",
+        "",
       ],
       [
         "bare address inside a trailing comment",
@@ -303,7 +303,7 @@ describe("email utils", () => {
       [
         "quoted display name containing an angle-addr",
         '"<b@y.example>" <real@x.example>',
-        "real@x.example",
+        "",
       ],
       [
         "quoted display name containing @ and a comma",
@@ -391,6 +391,42 @@ describe("email utils", () => {
 
     it.each(cases)("handles %s", (_caseName, input, expected) => {
       expect(extractEmailAddress(input)).toBe(expected);
+    });
+
+    // Shapes a decoded display name or comment can take to wrap the real
+    // mailbox (r@b) and leave a trusted one (t@a) as the only visible address.
+    it.each([
+      [
+        "a quote that opens before the real angle-addr and closes in a trailing comment",
+        '<t@a.example> " <r@b.example> (")',
+      ],
+      [
+        "a comment that opens before the real angle-addr and closes after it",
+        "<t@a.example> ( <r@b.example> ())",
+      ],
+      [
+        "a comment that wraps a bare real address",
+        "() <t@a.example> ( r@b.example ())",
+      ],
+      [
+        "a quote that wraps a bare real address before the trusted one",
+        '() ") r@b.example (" <t@a.example> ()',
+      ],
+      [
+        "a quote that splits a quoted local part",
+        '<t@a.example> " <"r"@b.example> ("()',
+      ],
+    ])("returns nothing for %s", (_caseName, input) => {
+      expect(extractEmailAddress(input)).toBe("");
+    });
+
+    it.each([
+      ["angle brackets", '"Sales <Team>" <a@x.example>'],
+      ["parentheses", '"John (Work)" <a@x.example>'],
+      ["the same address", '"a@x.example" <a@x.example>'],
+      ["another address", "\"'b@y.example' via Group\" <a@x.example>"],
+    ])("keeps the address for a quoted name with %s", (_caseName, input) => {
+      expect(extractEmailAddress(input)).toBe("a@x.example");
     });
   });
 
@@ -616,7 +652,7 @@ describe("email utils", () => {
     it.each([
       ["parentheses", "Support (EU)", '"Support (EU)" <a@example.com>'],
       ["an unbalanced parenthesis", "Sale :(", '"Sale :(" <a@example.com>'],
-      ["angle brackets", "<b@y.example>", '"<b@y.example>" <a@example.com>'],
+      ["angle brackets", "<Team>", '"<Team>" <a@example.com>'],
       ["a quote", 'The "Best"', '"The \\"Best\\"" <a@example.com>'],
     ])("quotes a name containing %s", (_caseName, name, expected) => {
       const formatted = formatEmailWithName(name, "a@example.com");

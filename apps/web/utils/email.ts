@@ -52,6 +52,7 @@ export function extractEmailAddress(email: string): string {
   let current: string | null = null;
   let inQuotes = false;
   let commentDepth = 0;
+  let skippedStart = 0;
 
   for (let index = 0; index < email.length; index++) {
     const char = email[index];
@@ -60,12 +61,17 @@ export function extractEmailAddress(email: string): string {
       continue;
     }
     if (inQuotes) {
-      if (char === '"') inQuotes = false;
+      if (char === '"') {
+        inQuotes = false;
+        if (hidesMailbox(email.slice(skippedStart, index))) return "";
+      }
       continue;
     }
     if (commentDepth > 0) {
       if (char === "(") commentDepth++;
-      else if (char === ")") commentDepth--;
+      else if (char === ")" && --commentDepth === 0) {
+        if (hidesMailbox(email.slice(skippedStart, index))) return "";
+      }
       continue;
     }
     if (current !== null) {
@@ -79,6 +85,7 @@ export function extractEmailAddress(email: string): string {
       }
       continue;
     }
+    if (char === '"' || char === "(") skippedStart = index + 1;
     if (char === '"') inQuotes = true;
     else if (char === "(") commentDepth = 1;
     else if (char === "<") current = "";
@@ -372,6 +379,15 @@ function recipientFirstName(recipient: string) {
     ? name.slice(name.indexOf(",") + 1).trim()
     : name;
   return givenName.split(/\s+/)[0] || name;
+}
+
+// Gmail can return From with encoded words already decoded, so a display name
+// may carry a bare quote or parenthesis that opens a region running over the
+// real mailbox, with the region closed by a comment after it. That mailbox
+// always leaves an "@" and a bracket or parenthesis inside the region, which
+// ordinary names rarely combine.
+function hidesMailbox(skippedText: string) {
+  return skippedText.includes("@") && /[()<>]/.test(skippedText);
 }
 
 // Splits on commas outside quoted strings and, when trackComments is set,
