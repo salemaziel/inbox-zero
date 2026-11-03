@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo, type Ref } from "react";
-import { PaperclipIcon } from "lucide-react";
+import { CopyIcon, PaperclipIcon } from "lucide-react";
 import { MailThreadRow } from "@inboxzero/mail-ui/MailThreadRow";
 import { isThreadStarred } from "@/app/(app)/[emailAccountId]/mail/star-state";
 import { MailLabelChip } from "@/app/(app)/[emailAccountId]/mail/MailLabelChip";
@@ -13,6 +13,7 @@ import type {
 } from "@/app/(app)/[emailAccountId]/mail/types";
 import { SentMessageOpenStatus } from "@/components/email-list/SentMessageOpenStatus";
 import { getEmailThreadLabels } from "@/components/EmailMessageCellLabels";
+import { toastError, toastSuccess } from "@/components/Toast";
 import { Tooltip } from "@/components/Tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { mailCheckboxClassName } from "@/app/(app)/[emailAccountId]/mail/SelectAllCheckbox";
@@ -27,6 +28,7 @@ import { formatShortDate, internalDateToDate } from "@/utils/date";
 import { decodeSnippet } from "@/utils/gmail/decode";
 import { GmailLabel } from "@/utils/gmail/label";
 import { getConversationSubject } from "@/utils/email/subject";
+import { getThreadOtpCode } from "./otp-code";
 
 export type ThreadRowProps = {
   thread: ListThread;
@@ -101,6 +103,8 @@ export const ThreadRow = memo(function ThreadRow({
   const hasAttachment = thread.messages.some(
     (message) => message.hasAttachment,
   );
+  const snippet = decodeSnippet(thread.snippet || message.snippet);
+  const otpCode = getThreadOtpCode(thread, userLabels);
 
   return (
     <MailThreadRow
@@ -135,9 +139,12 @@ export const ThreadRow = memo(function ThreadRow({
       isSelected={isSelected}
       isStarred={isThreadStarred(thread.messages)}
       isUnread={isThreadUnread(thread.messages)}
-      labels={chips.map((label) => (
-        <MailLabelChip color={label.color} key={label.id} name={label.name} />
-      ))}
+      labels={[
+        ...chips.map((label) => (
+          <MailLabelChip color={label.color} key={label.id} name={label.name} />
+        )),
+        ...(otpCode ? [<OtpCodeButton code={otpCode} key="otp-code" />] : []),
+      ]}
       layout={layout}
       messageCount={thread.messages.length}
       onOpen={onOpen}
@@ -163,11 +170,35 @@ export const ThreadRow = memo(function ThreadRow({
       )}
       rowRef={rowRef}
       selectionEnabled={selectionEnabled}
-      snippet={decodeSnippet(thread.snippet || message.snippet)}
+      snippet={snippet}
       subject={getConversationSubject(thread.messages)}
     />
   );
 });
+
+function OtpCodeButton({ code }: { code: string }) {
+  return (
+    <button
+      aria-label={`Copy code ${code}`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-1.5 py-px font-medium text-foreground text-xs tabular-nums leading-4 hover:bg-muted"
+      onClick={async (event) => {
+        event.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(code);
+          toastSuccess({ description: "Code copied" });
+        } catch {
+          toastError({ description: "Failed to copy code" });
+        }
+      }}
+      // Enter would otherwise bubble to the row and open the thread.
+      onKeyDown={(event) => event.stopPropagation()}
+      type="button"
+    >
+      {code}
+      <CopyIcon aria-hidden className="size-3 text-muted-foreground" />
+    </button>
+  );
+}
 
 function AccountAvatar({
   account,

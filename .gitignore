@@ -124,3 +124,6 @@ eval-results/
 .omc/
 index.md
 .tap2line/
+
+# Apalache model-checker output (pnpm test:specs:verify)
+_apalache-out/

@@ -453,6 +453,28 @@ describe("queryBatchMessages", () => {
     );
   });
 
+  it.each([
+    ["Ticket #4521 follow up", '"Ticket #4521 follow up"'],
+    ["C&A invoice", '"C&A invoice"'],
+    ["deposit 50% + fees", '"deposit 50% + fees"'],
+  ])("keeps free-text search %s intact in the Graph URL", async (query, expected) => {
+    const request = createMockMessagesRequest();
+    await queryBatchMessages(
+      createCachedOutlookClient(vi.fn().mockReturnValue(request)),
+      { searchQuery: query },
+      createTestLogger(),
+    );
+    const search = request.search.mock.calls[0]?.[0] as string;
+    const graph = Client.init({ authProvider: (done) => done(null, "unused") });
+    const actual = graph.api("/me/messages").search(search) as unknown as {
+      buildFullUrl(): string;
+    };
+    const url = new URL(actual.buildFullUrl());
+    expect([...url.searchParams.keys()]).toEqual(["$search"]);
+    expect(url.hash).toBe("");
+    expect(url.searchParams.get("$search")).toBe(expected);
+  });
+
   it("sends one correctly quoted and URL-encoded expression through the real Graph SDK", async () => {
     const request = createMockMessagesRequest();
     await queryBatchMessages(

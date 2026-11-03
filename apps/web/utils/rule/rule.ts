@@ -11,6 +11,10 @@ import {
   ruleHistoryRuleInclude,
   type RuleHistoryTrigger,
 } from "@/utils/rule/rule-history";
+import {
+  RULE_ANALYTICS_EVENTS,
+  trackRuleEvent,
+} from "@/utils/analytics/rule-events.server";
 import { isMicrosoftProvider } from "@/utils/email/provider-types";
 import { createEmailProvider } from "@/utils/email/provider";
 import { resolveLabelNameAndId } from "@/utils/label/resolve-label";
@@ -39,6 +43,7 @@ import {
   MISSING_INTEGRATION_TOOL_MESSAGE,
 } from "@/utils/mcp/tool-specs";
 import { assertNoSenderOnlyOverlap } from "@/utils/rule/sender-scope-overlap";
+import { canActionBeDelayed } from "@/utils/delayed-actions";
 import { isIntegrationActionEnabledForEmailAccountId } from "@/utils/integration-action.server";
 
 export type RuleActionCreateData = Omit<
@@ -648,15 +653,26 @@ export async function deleteRule({
   ruleId: string;
   groupId?: string | null;
 }) {
+  let deletedGroup = false;
   if (groupId) {
     const deletedGroups = await prisma.group.deleteMany({
       where: { id: groupId, emailAccountId },
     });
 
-    if (deletedGroups.count > 0) return;
+    deletedGroup = deletedGroups.count > 0;
   }
 
-  await prisma.rule.delete({ where: { id: ruleId, emailAccountId } });
+  if (!deletedGroup) {
+    await prisma.rule.delete({ where: { id: ruleId, emailAccountId } });
+  }
+
+  after(() =>
+    trackRuleEvent({
+      emailAccountId,
+      event: RULE_ANALYTICS_EVENTS.ruleDeleted,
+      properties: { ruleId },
+    }),
+  );
 }
 
 type RuleScopeKey =
@@ -1143,7 +1159,22 @@ function queueRuleHistory(params: {
   rule: RuleWithRelations;
   triggerType: RuleHistoryTrigger;
 }) {
+  const { rule, triggerType } = params;
+
   after(() => createRuleHistory(params));
+
+  after(() =>
+    trackRuleEvent({
+      emailAccountId: rule.emailAccountId,
+      event: RULE_ANALYTICS_EVENTS.ruleChanged,
+      properties: {
+        ruleId: rule.id,
+        triggerType,
+        systemType: rule.systemType,
+        enabled: rule.enabled,
+      },
+    }),
+  );
 }
 
 function addNestedActionOwnershipToInputs(
@@ -1151,10 +1182,9 @@ function addNestedActionOwnershipToInputs(
   emailAccountId: string,
 ): Prisma.ActionCreateManyRuleInput[] {
   return actions.map((action) => {
-    const actionWithSupportedDelay =
-      action.type === ActionType.INTEGRATION
-        ? { ...action, delayInMinutes: null }
-        : action;
+    const actionWithSupportedDelay = canActionBeDelayed(action.type)
+      ? action
+      : { ...action, delayInMinutes: null };
 
     return addNestedActionOwnershipToInput(
       actionWithSupportedDelay,

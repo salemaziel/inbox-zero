@@ -5,6 +5,10 @@ import { getDefaultMailSplitDrafts } from "@/utils/split-inbox/default-splits";
 import { ONBOARDING_PROCESS_EMAILS_COUNT } from "@/utils/config";
 import { after } from "next/server";
 import {
+  RULE_ANALYTICS_EVENTS,
+  trackRuleEvent,
+} from "@/utils/analytics/rule-events.server";
+import {
   createRuleBody,
   updateRuleBody,
   enableDraftRepliesBody,
@@ -509,6 +513,7 @@ export const toggleAllRulesAction = actionClient
   .metadata({ name: "toggleAllRules" })
   .inputSchema(toggleAllRulesBody)
   .action(async ({ ctx: { emailAccountId }, parsedInput: { enabled } }) => {
+    let leftOffMessage: string | undefined;
     if (enabled) {
       const offIntegrationRules = await prisma.rule.findMany({
         where: {
@@ -548,13 +553,10 @@ export const toggleAllRulesAction = actionClient
       });
 
       if (unfinishedRules.length) {
-        return {
-          success: true,
-          message: getUnfinishedRulesLeftOffMessage(
-            unfinishedRules.map((rule) => rule.name),
-            otherRules.count > 0,
-          ),
-        };
+        leftOffMessage = getUnfinishedRulesLeftOffMessage(
+          unfinishedRules.map((rule) => rule.name),
+          otherRules.count > 0,
+        );
       }
     } else {
       await prisma.$transaction([
@@ -572,7 +574,17 @@ export const toggleAllRulesAction = actionClient
       ]);
     }
 
-    return { success: true };
+    after(() =>
+      trackRuleEvent({
+        emailAccountId,
+        event: RULE_ANALYTICS_EVENTS.allRulesToggled,
+        properties: { enabled },
+      }),
+    );
+
+    return leftOffMessage
+      ? { success: true, message: leftOffMessage }
+      : { success: true };
   });
 
 export const copyRulesFromAccountAction = actionClientUser

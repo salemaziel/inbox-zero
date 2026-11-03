@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "@/__tests__/helpers";
+import { ContactsAccessDeniedError } from "@/utils/email/contact";
 import { searchContacts } from "./contact";
 
 describe("searchContacts", () => {
@@ -8,6 +9,7 @@ describe("searchContacts", () => {
     ["  First Last  ", '"First Last"'],
     ['First "Nickname" Last', String.raw`"First \"Nickname\" Last"`],
     ["AT&T 50%", '"AT&T 50%"'],
+    ["Smith & Co #2", '"Smith & Co #2"'],
   ])("quotes the People API search literal for %s", async (query, expected) => {
     const { api } = createGraphClient({});
 
@@ -158,7 +160,7 @@ describe("searchContacts", () => {
         "anyone",
         createTestLogger(),
       ),
-    ).rejects.toBe(contactsError);
+    ).rejects.toThrow(ContactsAccessDeniedError);
   });
 
   it("surfaces non-permission failures instead of returning partial results", async () => {

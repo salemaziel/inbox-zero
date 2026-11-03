@@ -651,7 +651,7 @@ export async function queryBatchMessages(
       metadataFilters: metadataSearch.odataFilters,
     });
 
-    // The Graph SDK puts $search into the URL as-is.
+    // The Graph SDK does not URL-encode $search, so a raw "#" or "&" would cut the query off.
     request = request.search(encodeURIComponent(effectiveSearchQuery!));
 
     const response: { value: Message[]; "@odata.nextLink"?: string } =

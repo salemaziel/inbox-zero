@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ActionType, SystemType } from "@/generated/prisma/enums";
+import { trackRuleEvent } from "@/utils/analytics/rule-events.server";
 import { ConditionType } from "@/utils/config";
 
 const {
@@ -22,6 +23,11 @@ vi.mock("@/utils/rule/rule", async (importOriginal) => {
     setRuleEnabled: setRuleEnabledMock,
   };
 });
+
+vi.mock("@/utils/analytics/rule-events.server", () => ({
+  RULE_ANALYTICS_EVENTS: { allRulesToggled: "All rules toggled" },
+  trackRuleEvent: vi.fn(),
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/utils/prisma");
@@ -515,6 +521,49 @@ describe("createRulesOnboardingAction", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("toggleAllRulesAction analytics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createEmailProviderMock.mockResolvedValue({});
+    prisma.emailAccount.findUnique.mockResolvedValue({
+      email: "owner@example.com",
+      account: { userId: "u1", provider: "google" },
+    } as never);
+    prisma.rule.findMany.mockResolvedValue([]);
+  });
+
+  it.each([
+    true,
+    false,
+  ])("does not report a failed bulk toggle to %s", async (enabled) => {
+    if (enabled)
+      prisma.rule.updateMany.mockRejectedValue(new Error("Update failed"));
+    else prisma.$transaction.mockRejectedValue(new Error("Update failed"));
+
+    const result = await toggleAllRulesAction("ea_1", { enabled });
+
+    expect(result?.serverError).toBeDefined();
+    expect(trackRuleEvent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    true,
+    false,
+  ])("reports one successful bulk toggle to %s", async (enabled) => {
+    prisma.rule.updateMany.mockResolvedValue({ count: 2 });
+    prisma.$transaction.mockResolvedValue([]);
+
+    const result = await toggleAllRulesAction("ea_1", { enabled });
+
+    expect(result?.data).toEqual({ success: true });
+    expect(trackRuleEvent).toHaveBeenCalledExactlyOnceWith({
+      emailAccountId: "ea_1",
+      event: "All rules toggled",
+      properties: { enabled },
+    });
   });
 });
 

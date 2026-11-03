@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { NewsletterStatus } from "@/generated/prisma/enums";
 import type { EmailFilter } from "@/utils/email/types";
 import { GmailLabel } from "@/utils/gmail/label";
-import { findNewsletterStatus, findSenderLabelFilters } from "./filters";
+import type { EmailProvider } from "@/utils/email/types";
+import {
+  findAutoArchiveFilters,
+  findNewsletterStatus,
+  findSenderLabelFilters,
+} from "./filters";
 
 describe("findNewsletterStatus", () => {
   it("matches sender addresses case-insensitively", () => {
@@ -91,20 +96,6 @@ describe("findSenderLabelFilters", () => {
     ]);
   });
 
-  it("matches filters with a display-name sender criterion", () => {
-    const filters: EmailFilter[] = [
-      {
-        id: "filter-1",
-        criteria: { from: "Example Updates <updates@example.com>" },
-        action: { addLabelIds: ["Label_123"] },
-      },
-    ];
-
-    expect(findSenderLabelFilters(filters, "updates@example.com")).toEqual([
-      { id: "filter-1", labelId: "Label_123" },
-    ]);
-  });
-
   it("does not match filters with empty sender criteria", () => {
     const filters: EmailFilter[] = [
       {
@@ -132,5 +123,73 @@ describe("findSenderLabelFilters", () => {
     ];
 
     expect(findSenderLabelFilters(filters, "")).toEqual([]);
+  });
+});
+
+describe("findAutoArchiveFilters", () => {
+  const gmail = { name: "google" } as EmailProvider;
+
+  function archiveFilter(id: string, from: string): EmailFilter {
+    return {
+      id,
+      criteria: { from },
+      action: { removeLabelIds: [GmailLabel.INBOX] },
+    };
+  }
+
+  it("matches each semicolon-separated sender", () => {
+    const filters = [
+      archiveFilter("list", "first@example.com;second@example.com"),
+    ];
+
+    for (const sender of ["first@example.com", "second@example.com"]) {
+      expect(findAutoArchiveFilters(filters, sender, gmail)).toEqual(filters);
+    }
+  });
+
+  it.each([
+    '"first@example.com"',
+    "first@example.com OR second@example.com",
+    "first@example.com|second@example.com",
+    "{first@example.com second@example.com}",
+  ])("matches an exact sender in %s", (criterion) => {
+    const filters = [archiveFilter("list", criterion)];
+
+    expect(findAutoArchiveFilters(filters, "first@example.com", gmail)).toEqual(
+      filters,
+    );
+    expect(findAutoArchiveFilters(filters, "irst@example.com", gmail)).toEqual(
+      [],
+    );
+  });
+
+  it("does not match a sender whose address is part of another sender's", () => {
+    const filters = [
+      archiveFilter("newsletter", "newsletter@shop.com"),
+      archiveFilter("acme-com", "hello@acme.com"),
+    ];
+
+    expect(findAutoArchiveFilters(filters, "letter@shop.com", gmail)).toEqual(
+      [],
+    );
+    expect(findAutoArchiveFilters(filters, "hello@acme.co", gmail)).toEqual([]);
+  });
+
+  it("matches a sender listed among several in one filter", () => {
+    const filters = [
+      archiveFilter("or", "a@shop.com OR b@shop.com"),
+      archiveFilter("braces", "{c@shop.com d@shop.com}"),
+      archiveFilter("pipe", "e@shop.com|f@shop.com"),
+    ];
+
+    expect(
+      findAutoArchiveFilters(filters, "b@shop.com", gmail).map((f) => f.id),
+    ).toEqual(["or"]);
+    expect(
+      findAutoArchiveFilters(filters, "d@shop.com", gmail).map((f) => f.id),
+    ).toEqual(["braces"]);
+    expect(
+      findAutoArchiveFilters(filters, "f@shop.com", gmail).map((f) => f.id),
+    ).toEqual(["pipe"]);
   });
 });
