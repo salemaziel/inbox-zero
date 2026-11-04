@@ -9,7 +9,7 @@ const { mockEnv, listCodexModels, getCodexModelListLogin } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/env", () => ({ env: mockEnv }));
-vi.mock("@/utils/llms/cli-provider", () => ({
+vi.mock("@/utils/llms/codex-model-list", () => ({
   listCodexModels,
   getCodexModelListLogin,
 }));

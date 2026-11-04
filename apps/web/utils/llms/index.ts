@@ -69,9 +69,9 @@ import type { ReasoningEffort } from "@/utils/llms/subscription-config";
 import {
   type CliLoginScope,
   checkUserCliLogin,
-  createCliLanguageModelWithBridgedTools,
   isCliSubscriptionProvider,
-} from "@/utils/llms/cli-provider";
+} from "@/utils/llms/subscription-access";
+import { createSubscriptionCliModelWithTools } from "@/utils/llms/subscription-run";
 import {
   appendOllamaOnlySystemGuidance,
   OLLAMA_STRUCTURED_OUTPUT_GUIDANCE,
@@ -145,7 +145,7 @@ async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
     return { model, tools: undefined, bridged: true };
   }
 
-  const bridged = await createCliLanguageModelWithBridgedTools({
+  const bridged = await createSubscriptionCliModelWithTools({
     provider,
     modelName,
     cliLogin,

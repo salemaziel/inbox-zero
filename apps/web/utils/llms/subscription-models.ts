@@ -1,9 +1,9 @@
 import { env } from "@/env";
 import {
-  type CliLoginScope,
   getCodexModelListLogin,
   listCodexModels,
-} from "@/utils/llms/cli-provider";
+} from "@/utils/llms/codex-model-list";
+import type { CliLoginScope } from "@/utils/llms/subscription-access";
 import { Provider } from "@/utils/llms/config";
 import {
   getSubscriptionModelWeight,

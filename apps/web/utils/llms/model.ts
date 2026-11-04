@@ -26,14 +26,14 @@ import {
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
+import { assertCliLlmEnabled } from "./cli-provider";
 import {
-  assertCliLlmEnabled,
   type CliLoginScope,
   CONNECT_SUBSCRIPTION_MESSAGE,
-  createCliLanguageModel,
   isCliLlmOwner,
   isCliSubscriptionProvider,
-} from "./cli-provider";
+} from "./subscription-access";
+import { createSubscriptionCliModel } from "./subscription-run";
 
 const DEFAULT_GOOGLE_THINKING_BUDGET = 128;
 const REASONING_EFFORT_BY_MODEL_TYPE = {
@@ -386,7 +386,7 @@ function selectModel(
       return {
         provider: Provider.CODEX_CLI,
         modelName,
-        model: createCliLanguageModel({
+        model: createSubscriptionCliModel({
           provider: Provider.CODEX_CLI,
           modelName,
           cliLogin,
@@ -402,7 +402,7 @@ function selectModel(
       return {
         provider: Provider.CLAUDE_CODE,
         modelName,
-        model: createCliLanguageModel({
+        model: createSubscriptionCliModel({
           provider: Provider.CLAUDE_CODE,
           modelName,
           cliLogin,

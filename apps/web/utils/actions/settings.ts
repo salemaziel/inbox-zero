@@ -15,6 +15,7 @@ import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
 import {
   AI_TASK_MODEL_TYPES,
   type AiTaskModelEntry,
+  CLI_SUBSCRIPTION_PROVIDERS,
   type AiTaskModelType,
   getRecommendedTaskModel,
   HIGH_VOLUME_TASK_TYPES,
@@ -25,11 +26,10 @@ import {
 } from "@/utils/llms/subscription-config";
 import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
-  CLI_SUBSCRIPTION_PROVIDERS,
   type CliLoginScope,
   isCliLlmOwner,
   isCliSubscriptionProvider,
-} from "@/utils/llms/cli-provider";
+} from "@/utils/llms/subscription-access";
 import prisma from "@/utils/prisma";
 import {
   calculateNextScheduleDate,

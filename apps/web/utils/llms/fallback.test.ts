@@ -48,13 +48,13 @@ vi.mock("@posthog/ai", () => ({
   captureAiGeneration: mockCaptureAiGeneration,
 }));
 
-vi.mock("@/utils/llms/cli-provider", async () => {
+vi.mock("@/utils/llms/subscription-run", async () => {
   const actual = await vi.importActual<
-    typeof import("@/utils/llms/cli-provider")
-  >("@/utils/llms/cli-provider");
+    typeof import("@/utils/llms/subscription-run")
+  >("@/utils/llms/subscription-run");
   return {
     ...actual,
-    createCliLanguageModelWithBridgedTools:
+    createSubscriptionCliModelWithTools:
       mockCreateClaudeCodeLanguageModelWithBridgedTools,
   };
 });

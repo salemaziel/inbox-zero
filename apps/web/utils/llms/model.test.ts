@@ -16,7 +16,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
-import { CONNECT_SUBSCRIPTION_MESSAGE } from "./cli-provider";
+import { CONNECT_SUBSCRIPTION_MESSAGE } from "./subscription-access";
 
 vi.mock("@/utils/prisma");
 

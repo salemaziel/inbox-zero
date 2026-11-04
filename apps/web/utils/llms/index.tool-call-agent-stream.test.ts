@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import prisma from "@/utils/__mocks__/prisma";
 import { Provider } from "@/utils/llms/config";
-import { CONNECT_SUBSCRIPTION_MESSAGE } from "@/utils/llms/cli-provider";
+import { CONNECT_SUBSCRIPTION_MESSAGE } from "@/utils/llms/subscription-access";
 import { assertTrialAiUsageAllowed } from "@/utils/llms/model-usage-guard";
 import { LlmUseCase } from "@/utils/llms/use-cases";
 import { toolCallAgentStream } from "./index";

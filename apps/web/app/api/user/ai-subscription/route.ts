@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
-import {
-  CLI_SUBSCRIPTION_PROVIDERS,
-  isCliLlmOwner,
-} from "@/utils/llms/cli-provider";
+import { isCliLlmOwner } from "@/utils/llms/subscription-access";
+import { CLI_SUBSCRIPTION_PROVIDERS } from "@/utils/llms/subscription-config";
 import { getSubscriptionLogin } from "@/utils/llms/subscription-login";
 import { getAllSubscriptionModels } from "@/utils/llms/subscription-models";
 import { withAuth } from "@/utils/middleware";

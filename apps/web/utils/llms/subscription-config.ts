@@ -143,6 +143,11 @@ export const SUBSCRIPTION_MODELS = {
   }
 >;
 
+export const CLI_SUBSCRIPTION_PROVIDERS = [
+  Provider.CLAUDE_CODE,
+  Provider.CODEX_CLI,
+] as const;
+
 // Provider's values are plain strings, so the keys include number too.
 export type SubscriptionProvider = Extract<
   keyof typeof SUBSCRIPTION_MODELS,

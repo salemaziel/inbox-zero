@@ -6,11 +6,9 @@ import path from "node:path";
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
 import { Provider } from "@/utils/llms/config";
-import {
-  assertCliLlmEnabled,
-  CLI_SUBSCRIPTION_PROVIDERS,
-  writeCodexHome,
-} from "@/utils/llms/cli-provider";
+import { assertCliLlmEnabled } from "@/utils/llms/cli-provider";
+import { CLI_SUBSCRIPTION_PROVIDERS } from "@/utils/llms/subscription-config";
+import { writeCodexHome } from "@/utils/llms/subscription-run";
 import { clearCodexModels } from "@/utils/llms/subscription-models";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
