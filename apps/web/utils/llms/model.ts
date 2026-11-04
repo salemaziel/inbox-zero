@@ -14,26 +14,21 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
 import { Provider } from "@/utils/llms/config";
+import type { ReasoningEffort } from "@/utils/llms/subscription-config";
 import {
-  type AiTaskModelEntry,
-  getRecommendedTaskModel,
-  isSubscriptionProvider,
-  parseAiTaskModels,
-  type ReasoningEffort,
-  reasoningEffortSchema,
-  SUBSCRIPTION_MODELS,
-} from "@/utils/llms/subscription-config";
+  getUserModelChoice,
+  getUserTaskModel,
+} from "@/utils/llms/subscription-model-choice";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";
-import { assertCliLlmEnabled } from "./cli-provider";
+import { assertCliLlmEnabled, isCliProvider } from "./cli-provider";
 import {
   type CliLoginScope,
   CONNECT_SUBSCRIPTION_MESSAGE,
   isCliLlmOwner,
-  isCliSubscriptionProvider,
 } from "./subscription-access";
-import { createSubscriptionCliModel } from "./subscription-run";
+import { selectSubscriptionCliModel } from "./subscription-run";
 
 const DEFAULT_GOOGLE_THINKING_BUDGET = 128;
 const REASONING_EFFORT_BY_MODEL_TYPE = {
@@ -88,9 +83,8 @@ export function getModel(
   const allowServerCliLogin = isCliLlmOwner(userAi);
   const cliLogin = { userId: userAi.id, allowServerLogin: allowServerCliLogin };
   const taskModel = getUserTaskModel(userAi, modelType);
-  const usesOwnCliLogin = isCliSubscriptionProvider(
-    taskModel?.provider ?? userAi.aiProvider,
-  );
+  const provider = taskModel?.provider ?? userAi.aiProvider;
+  const usesOwnCliLogin = provider != null && isCliProvider(provider);
   const usesUserApiKey = !usesOwnCliLogin && !!userAi.aiApiKey;
   const selectedModel = taskModel
     ? {
@@ -137,24 +131,6 @@ export function getModel(
   };
 }
 
-// A per-task entry only applies while its provider is still usable: the main
-// provider (with the main API key) or a CLI subscription. null means the task
-// follows the main model; undefined means it has no usable entry.
-function getUserTaskModel(
-  userAi: UserAIFields,
-  modelType: ModelType,
-): AiTaskModelEntry | null | undefined {
-  const { models, invalid } = parseAiTaskModels(userAi.aiTaskModels);
-  if (invalid.includes(modelType)) {
-    logger.warn("Ignoring an unreadable task model entry", { modelType });
-  }
-  const entry = models[modelType];
-  if (!entry) return entry;
-  if (isCliSubscriptionProvider(entry.provider)) return entry;
-  if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
-  return;
-}
-
 function selectModel(
   {
     aiProvider,
@@ -173,6 +149,15 @@ function selectModel(
   // biome-ignore lint/suspicious/noExplicitAny: existing loose external shape
   providerOptions?: Record<string, any>,
 ): ResolvedModel {
+  if (isCliProvider(aiProvider)) {
+    return selectSubscriptionCliModel({
+      aiProvider,
+      aiModel,
+      cliLogin,
+      reasoningEffort,
+    });
+  }
+
   switch (aiProvider) {
     case Provider.OPEN_AI: {
       const modelName = aiModel || "gpt-6-luna";
@@ -380,39 +365,6 @@ function selectModel(
         providerOptions: getLocalThinkingProviderOptions("openai-compatible"),
       };
     }
-    case Provider.CODEX_CLI: {
-      const modelName =
-        aiModel || SUBSCRIPTION_MODELS[Provider.CODEX_CLI].defaultModel;
-      return {
-        provider: Provider.CODEX_CLI,
-        modelName,
-        model: createSubscriptionCliModel({
-          provider: Provider.CODEX_CLI,
-          modelName,
-          cliLogin,
-          reasoningEffort,
-        }),
-        cliLogin,
-        reasoningEffort: reasoningEffort ?? null,
-      };
-    }
-    case Provider.CLAUDE_CODE: {
-      const modelName =
-        aiModel || SUBSCRIPTION_MODELS[Provider.CLAUDE_CODE].defaultModel;
-      return {
-        provider: Provider.CLAUDE_CODE,
-        modelName,
-        model: createSubscriptionCliModel({
-          provider: Provider.CLAUDE_CODE,
-          modelName,
-          cliLogin,
-          reasoningEffort,
-        }),
-        cliLogin,
-        reasoningEffort: reasoningEffort ?? null,
-      };
-    }
-
     case Provider.BEDROCK: {
       const modelName = aiModel || "global.anthropic.claude-sonnet-5";
       return {
@@ -536,39 +488,6 @@ function selectUserModel(
   );
 }
 
-// High-volume tasks on a user's own subscription use the recommended light
-// model and thinking level so they don't burn through the plan's limits.
-// Saving settings writes that choice per task, resolved against the user's
-// own list; a task never saved uses the built-in list, as the form shows.
-function getUserModelChoice(
-  userAi: UserAIFields,
-  aiProvider: string,
-  modelType: ModelType,
-  useRecommended: boolean,
-): { aiModel: string | null; reasoningEffort: ReasoningEffort | null } {
-  if (!isSubscriptionProvider(aiProvider))
-    return { aiModel: userAi.aiModel || null, reasoningEffort: null };
-
-  const recommended = useRecommended
-    ? getRecommendedTaskModel(
-        aiProvider,
-        modelType,
-        SUBSCRIPTION_MODELS[aiProvider].models,
-      )
-    : null;
-  if (recommended)
-    return {
-      aiModel: recommended.model,
-      reasoningEffort: recommended.reasoningEffort,
-    };
-
-  const savedEffort = reasoningEffortSchema.safeParse(userAi.aiReasoningEffort);
-  return {
-    aiModel: userAi.aiModel || null,
-    reasoningEffort: savedEffort.success ? savedEffort.data : null,
-  };
-}
-
 function resolveRoleModelList(
   modelType: ModelType,
   allowServerCliLogin = true,
@@ -581,8 +500,7 @@ function resolveRoleModelList(
 
   // Users without the server's CLI login never get CLI deployment models.
   const entries = parseModelListConfig(modelListConfig).filter(
-    (entry) =>
-      allowServerCliLogin || !isCliSubscriptionProvider(entry.provider),
+    (entry) => allowServerCliLogin || !isCliProvider(entry.provider),
   );
 
   const resolvedModels = resolveDeploymentModelEntries({
@@ -686,6 +604,8 @@ function getConfiguredModelListByType(
 }
 
 function getProviderApiKey(provider: string) {
+  if (isCliProvider(provider)) return getCliProviderAvailability(provider);
+
   const azureApiKey = resolveApiKey(null, env.AZURE_API_KEY);
   const providerApiKeys: Record<string, string | undefined> = {
     [Provider.ANTHROPIC]: resolveApiKey(null, env.ANTHROPIC_API_KEY),
@@ -715,8 +635,6 @@ function getProviderApiKey(provider: string) {
     // when no API key is configured (many OpenAI-compatible servers don't require one)
     [Provider.OPENAI_COMPATIBLE]:
       env.LLM_API_KEY || process.env.LLM_API_KEY || "not-required",
-    [Provider.CODEX_CLI]: getCliProviderAvailability(Provider.CODEX_CLI),
-    [Provider.CLAUDE_CODE]: getCliProviderAvailability(Provider.CLAUDE_CODE),
   };
 
   return providerApiKeys[provider];

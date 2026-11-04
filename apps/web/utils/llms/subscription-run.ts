@@ -30,7 +30,12 @@ import {
   resolveUserCliLogin,
   type UserCliLogin,
 } from "@/utils/llms/subscription-access";
-import type { ReasoningEffort } from "@/utils/llms/subscription-config";
+import type { ResolvedModel } from "@/utils/llms/model";
+import {
+  isSubscriptionProvider,
+  type ReasoningEffort,
+  SUBSCRIPTION_MODELS,
+} from "@/utils/llms/subscription-config";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 
@@ -176,6 +181,35 @@ export function buildCodexEnv({
   }
 
   return { ...childEnv, HOME: home, CODEX_HOME: codexHome };
+}
+
+export function selectSubscriptionCliModel({
+  aiProvider,
+  aiModel,
+  cliLogin,
+  reasoningEffort,
+}: {
+  aiProvider: string;
+  aiModel: string | null;
+  cliLogin?: CliLoginScope;
+  reasoningEffort?: ReasoningEffort | null;
+}): ResolvedModel {
+  if (!isSubscriptionProvider(aiProvider)) {
+    throw new SafeError(`Unsupported CLI LLM provider: ${aiProvider}`);
+  }
+  const modelName = aiModel || SUBSCRIPTION_MODELS[aiProvider].defaultModel;
+  return {
+    provider: aiProvider,
+    modelName,
+    model: createSubscriptionCliModel({
+      provider: aiProvider,
+      modelName,
+      cliLogin,
+      reasoningEffort,
+    }),
+    cliLogin,
+    reasoningEffort: reasoningEffort ?? null,
+  };
 }
 
 export function createSubscriptionCliModel({
