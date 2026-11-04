@@ -73,3 +73,32 @@ const result = await generateObject({ ...modelOptions, instructions, prompt, sch
 ## Manual Notes
 
 Notes under this heading are written by humans and preserved on regeneration.
+
+### Fork notes (salemaziel/inbox-zero) — read before merging upstream
+
+**Where the fork's Claude Code / Codex subscription code lives.** Only in these files, which upstream does not have:
+
+- `subscription-config.ts`: models, thinking levels, per-task model choices, and the helpers that read them. Safe for browser code, so it must not import server-only modules.
+- `subscription-access.ts`: who may use the server's own login, looking up and checking a user's connected login, and the connect/reconnect messages.
+- `subscription-run.ts`: starts a CLI run for a user (private run folder, filtered environment, per-user Codex queue) and picks the model for a request.
+- `codex-tool-bridge.ts`: lets a Codex run call Inbox Zero's own tools.
+- `codex-model-list.ts`: reads the model list from Codex.
+- `subscription-model-choice.ts`: reads a user's saved model and thinking level for each task.
+- `subscription-login.ts` and `subscription-models.ts`: the sign-in flow and the per-user model list.
+
+**At an upstream merge**
+
+1. Take upstream's `cli-provider.ts`, `config.ts` and `cli-provider.test.ts` as they are. Then add back only the three `export` keywords in `cli-provider.ts`, on `importOptionalProviderPackage`, `getFactory` and `getModelMethod`.
+2. Do not call upstream's `createCliLanguageModel`, `createCliLanguageModelWithTools` or `supportsCliToolBridge` from fork code. They skip the per-user login and run folder.
+3. Run `git show upstream/main:apps/web/utils/llms/cli-provider.ts | grep -nE "cwd|env|tools|persistSession|effort|reasoningEffort|mcpServers|configOverrides"` and compare with the previous merge. A new hit inside a `CLI_PROVIDER_ADAPTERS` entry is either a setting the fork's own copy lacks or one it overrides. Review it before merging.
+4. `model.ts` and `index.ts` still carry small fork changes. On a conflict keep both sides:
+   - `model.ts`: `ResolvedModel` has `cliLogin` and `reasoningEffort`; `getModel` passes them; the `isCliProvider` block in `selectModel` calls `selectSubscriptionCliModel`; `allowServerCliLogin`; the extra parameters on `selectUserModel`.
+   - `index.ts`: the `bridgeCliToolsIfNeeded` gate (`isCliProvider`, both providers bridge) and its call to `createSubscriptionCliModelWithTools`; `countOwnSubscriptionAsOwnKey`; `NO_USER_AI_FIELDS`.
+5. Re-run `pnpm test apps/web/utils/llms apps/web/utils/actions`.
+
+Phase B of the plan (rebuilding the fork's runs on upstream's provider table) is in `.omc/plans/cli-provider-onto-upstream-adapters.md` (local, not committed).
+
+**Other notes**
+
+- Outside this folder: the fork URL-encodes Outlook `$filter` values in `utils/outlook/odata-escape.ts` so an encoded quote cannot end the literal. Upstream encodes only `$search`. Keep the fork's `$filter` encoding and don't add `$search` encoding on top of upstream's, or search terms get encoded twice.
+- `rerere` is turned on in this clone, so git replays a conflict resolution it has already recorded. Check the replayed result before committing.

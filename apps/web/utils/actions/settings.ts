@@ -28,7 +28,6 @@ import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
   type CliLoginScope,
   isCliLlmOwner,
-  isCliSubscriptionProvider,
 } from "@/utils/llms/subscription-access";
 import prisma from "@/utils/prisma";
 import {
@@ -92,10 +91,8 @@ export const updateAiSettingsAction = actionClientUser
         (pair): pair is [AiTaskModelType, AiTaskModelEntry] => !!pair[1],
       );
       const usesCliProvider =
-        isCliSubscriptionProvider(aiProvider) ||
-        taskEntries.some(([, entry]) =>
-          isCliSubscriptionProvider(entry.provider),
-        );
+        isSubscriptionProvider(aiProvider) ||
+        taskEntries.some(([, entry]) => isSubscriptionProvider(entry.provider));
       if (usesCliProvider && !env.CLI_LLM_ENABLED) {
         throw new SafeError("AI subscriptions aren't enabled on this server.");
       }
@@ -105,7 +102,7 @@ export const updateAiSettingsAction = actionClientUser
       const cliLogin = { userId, allowServerLogin };
 
       if (
-        isCliSubscriptionProvider(aiProvider) &&
+        isSubscriptionProvider(aiProvider) &&
         !usableSubscriptions.includes(aiProvider)
       ) {
         throw new SafeError("Connect this account before using it.");
@@ -194,7 +191,7 @@ export const updateAiSettingsAction = actionClientUser
       if (
         !nextAiApiKey &&
         aiProvider !== DEFAULT_PROVIDER &&
-        !isCliSubscriptionProvider(aiProvider)
+        !isSubscriptionProvider(aiProvider)
       ) {
         const existingUser = await prisma.user.findUnique({
           where: { id: userId },
@@ -225,7 +222,7 @@ export const updateAiSettingsAction = actionClientUser
             : {
                 aiProvider,
                 aiModel,
-                aiApiKey: isCliSubscriptionProvider(aiProvider)
+                aiApiKey: isSubscriptionProvider(aiProvider)
                   ? null
                   : nextAiApiKey,
                 aiReasoningEffort: isSubscriptionProvider(aiProvider)

@@ -1,5 +1,4 @@
 import type { ModelType } from "@/utils/llms/model";
-import { isCliSubscriptionProvider } from "@/utils/llms/subscription-access";
 import {
   type AiTaskModelEntry,
   getRecommendedTaskModel,
@@ -27,7 +26,7 @@ export function getUserTaskModel(
   }
   const entry = models[modelType];
   if (!entry) return entry;
-  if (isCliSubscriptionProvider(entry.provider)) return entry;
+  if (isSubscriptionProvider(entry.provider)) return entry;
   if (entry.provider === userAi.aiProvider && userAi.aiApiKey) return entry;
   return;
 }

@@ -4,6 +4,7 @@ import {
   aiTaskModelsSchema,
   getRecommendedTaskModel,
   isCostlyTaskChoice,
+  isSubscriptionProvider,
   parseAiTaskModels,
   SUBSCRIPTION_MODELS,
 } from "@/utils/llms/subscription-config";
@@ -128,6 +129,16 @@ describe("isCostlyTaskChoice", () => {
         reasoningEffort: "max",
       }),
     ).toBe(false);
+  });
+});
+
+describe("isSubscriptionProvider", () => {
+  it("accepts only the two subscription providers", () => {
+    expect(isSubscriptionProvider(Provider.CLAUDE_CODE)).toBe(true);
+    expect(isSubscriptionProvider(Provider.CODEX_CLI)).toBe(true);
+    expect(isSubscriptionProvider(Provider.OPEN_AI)).toBe(false);
+    expect(isSubscriptionProvider(null)).toBe(false);
+    expect(isSubscriptionProvider("constructor")).toBe(false);
   });
 });
 

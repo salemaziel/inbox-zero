@@ -157,7 +157,7 @@ export type SubscriptionProvider = Extract<
 export function isSubscriptionProvider(
   provider: string | null | undefined,
 ): provider is SubscriptionProvider {
-  return !!provider && provider in SUBSCRIPTION_MODELS;
+  return !!provider && Object.hasOwn(SUBSCRIPTION_MODELS, provider);
 }
 
 export function getSubscriptionModelWeight(model: string): ModelWeight | null {

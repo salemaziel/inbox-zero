@@ -7,7 +7,7 @@ import { env } from "@/env";
 import { SafeError } from "@/utils/error";
 import { Provider } from "@/utils/llms/config";
 import { assertCliLlmEnabled } from "@/utils/llms/cli-provider";
-import { CLI_SUBSCRIPTION_PROVIDERS } from "@/utils/llms/subscription-config";
+import type { SubscriptionProvider } from "@/utils/llms/subscription-config";
 import { writeCodexHome } from "@/utils/llms/subscription-run";
 import { clearCodexModels } from "@/utils/llms/subscription-models";
 import { createScopedLogger } from "@/utils/logger";
@@ -17,8 +17,6 @@ import prisma from "@/utils/prisma";
 // finishes it in their own browser. CLI output can carry the sign-in URL, the
 // device code, and the minted token, so it is only parsed in memory and is
 // never logged or put into an error.
-
-export type SubscriptionProvider = (typeof CLI_SUBSCRIPTION_PROVIDERS)[number];
 
 type LoginStatus =
   | "starting"
@@ -78,12 +76,6 @@ globalForLogins.inboxZeroSubscriptionLoginStarts ??= new Map();
 const sessions = globalForLogins.inboxZeroSubscriptionLogins;
 // When each user last started a sign-in.
 const lastStarts = globalForLogins.inboxZeroSubscriptionLoginStarts;
-
-export function isSubscriptionProvider(
-  provider: string,
-): provider is SubscriptionProvider {
-  return CLI_SUBSCRIPTION_PROVIDERS.some((value) => value === provider);
-}
 
 export function getSubscriptionLogin({
   userId,

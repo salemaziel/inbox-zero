@@ -1,7 +1,6 @@
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
 import type { SelectModel } from "@/utils/llms/model";
-import { CLI_SUBSCRIPTION_PROVIDERS } from "@/utils/llms/subscription-config";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 
@@ -23,12 +22,6 @@ export const CONNECT_SUBSCRIPTION_MESSAGE =
   "Connect your ChatGPT or Claude account in Settings to use the AI assistant.";
 export const RECONNECT_SUBSCRIPTION_MESSAGE =
   "Your connected ChatGPT or Claude account was signed out. Reconnect it in Settings to use the AI assistant.";
-
-export function isCliSubscriptionProvider(
-  provider: string | null | undefined,
-): boolean {
-  return CLI_SUBSCRIPTION_PROVIDERS.some((value) => value === provider);
-}
 
 // Who may use the server's own CLI login. Only users with a verified address,
 // since some sign-in providers let a user claim any email. Among those, unset:
