@@ -1,5 +1,6 @@
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
+import type { SelectModel } from "@/utils/llms/model";
 import { CLI_SUBSCRIPTION_PROVIDERS } from "@/utils/llms/subscription-config";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
@@ -64,6 +65,20 @@ export async function checkUserCliLogin(
   if (isUsableLogin(login)) return true;
   if (allowServerLogin) return false;
   throw missingLoginError(login);
+}
+
+// Checked before the call starts, so a missing login fails up front with
+// the connect prompt, and so spend guards know whether an owner's
+// subscription runs on their own login (getModel can't tell).
+export async function countOwnSubscriptionAsOwnKey(
+  modelOptions: SelectModel,
+): Promise<SelectModel> {
+  const usesOwnCliLogin = modelOptions.cliLogin
+    ? await checkUserCliLogin(modelOptions.provider, modelOptions.cliLogin)
+    : false;
+  return usesOwnCliLogin && !modelOptions.hasUserApiKey
+    ? { ...modelOptions, hasUserApiKey: true }
+    : modelOptions;
 }
 
 // Returns null when the CLI should run with the server's own login.

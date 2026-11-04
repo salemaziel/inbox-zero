@@ -66,10 +66,10 @@ import {
 } from "@/utils/llms/model-usage-guard";
 import { Provider } from "@/utils/llms/config";
 import type { ReasoningEffort } from "@/utils/llms/subscription-config";
+import { isCliProvider } from "@/utils/llms/cli-provider";
 import {
   type CliLoginScope,
-  checkUserCliLogin,
-  isCliSubscriptionProvider,
+  countOwnSubscriptionAsOwnKey,
 } from "@/utils/llms/subscription-access";
 import { createSubscriptionCliModelWithTools } from "@/utils/llms/subscription-run";
 import {
@@ -100,10 +100,10 @@ const logger = createScopedLogger("llms");
 
 const MAX_LOG_LENGTH = 200;
 
-// The CLI subscription providers drop AI SDK tools at the LanguageModelV4
-// boundary. Route tool-bearing calls through an MCP bridge so the CLI can call
-// them and Inbox Zero runs them; clear `tools` so the AI SDK does not also try
-// to drive them. No-op for every other provider and for tool-less calls.
+// CLI providers drop AI SDK tools at the LanguageModelV4 boundary. Route
+// tool-bearing calls through the CLI's tool bridge so it can execute them
+// locally; clear `tools` so the AI SDK does not also try to drive them. No-op
+// for providers without a bridge and for tool-less calls.
 async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
   provider,
   modelName,
@@ -125,9 +125,7 @@ async function bridgeCliToolsIfNeeded<T extends Record<string, Tool>>({
   tools: T | undefined;
   bridged: boolean;
 }> {
-  if (!isCliSubscriptionProvider(provider)) {
-    return { model, tools, bridged: false };
-  }
+  if (!isCliProvider(provider)) return { model, tools, bridged: false };
   if (!tools || Object.keys(tools).length === 0) {
     return { model, tools, bridged: false };
   }
@@ -1419,16 +1417,7 @@ async function resolveModelCandidates({
   modelOptions: SelectModel;
   modelCandidates: ResolvedModel[];
 }> {
-  // Checked before the call starts, so a missing login fails up front with
-  // the connect prompt, and so spend guards know whether an owner's
-  // subscription runs on their own login (getModel can't tell).
-  const usesOwnCliLogin = modelOptions.cliLogin
-    ? await checkUserCliLogin(modelOptions.provider, modelOptions.cliLogin)
-    : false;
-  const ownModelOptions =
-    usesOwnCliLogin && !modelOptions.hasUserApiKey
-      ? { ...modelOptions, hasUserApiKey: true }
-      : modelOptions;
+  const ownModelOptions = await countOwnSubscriptionAsOwnKey(modelOptions);
 
   await assertTrialAiUsageAllowed({
     userEmail,
