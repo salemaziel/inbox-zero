@@ -992,6 +992,66 @@ describe("createCliLanguageModel", () => {
     expect(stop).toHaveBeenCalledTimes(4);
   });
 
+  it("builds the exact Codex settings for a run with bridged tools", async () => {
+    vi.stubEnv("INBOX_ZERO_TEST_HOST_SECRET", "host-secret-value");
+    const doGenerate = vi.fn().mockResolvedValue({ content: [] });
+    const codexExec = vi.fn(() => ({ doGenerate, doStream: vi.fn() }));
+    const serverConfig = {
+      transport: "http",
+      url: "http://127.0.0.1:1",
+      bearerToken: "t",
+    };
+    const createLocalMcpServer = vi.fn(async () => ({
+      config: serverConfig,
+      stop: vi.fn(async () => {}),
+    }));
+
+    const { createCliLanguageModelWithBridgedTools } =
+      await loadCliProviderModule({
+        codexModule: {
+          codexExec,
+          createLocalMcpServer,
+          isAuthenticationError: () => false,
+        },
+      });
+    const model = (await createCliLanguageModelWithBridgedTools({
+      provider: Provider.CODEX_CLI,
+      modelName: "gpt-5.3-codex",
+      reasoningEffort: "high",
+      tools: {
+        archive: {
+          inputSchema: z.object({ ids: z.array(z.string()) }),
+          execute: vi.fn(),
+        },
+      },
+    })) as any;
+    await model.doGenerate({});
+
+    const settings = getSettings(codexExec);
+    const childEnv = settings.env as Record<string, string>;
+    const runDir = path.dirname(settings.cwd as string);
+    expect(settings).toEqual({
+      allowNpx: false,
+      skipGitRepoCheck: true,
+      approvalMode: "never",
+      sandboxMode: "read-only",
+      logger: false,
+      cwd: expect.any(String),
+      env: expect.objectContaining({
+        HOME: runDir,
+        CODEX_HOME: path.join(runDir, "codex"),
+      }),
+      reasoningEffort: "high",
+      mcpServers: {
+        inboxzero: { ...serverConfig, enabledTools: ["archive"] },
+      },
+      configOverrides: {
+        "mcp_servers.inboxzero.default_tools_approval_mode": "approve",
+      },
+    });
+    expect(childEnv.INBOX_ZERO_TEST_HOST_SECRET).toBe("");
+  });
+
   it("reports a failed bridged tool call as an error result", async () => {
     const doStream = vi.fn().mockResolvedValue({
       stream: streamOf([
