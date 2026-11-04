@@ -124,6 +124,8 @@ export const MAX_CLI_CALL_MS = 20 * 60 * 1000;
 // how long a CLI tool server gets to close.
 export const CLI_STOP_WAIT_MS = 10 * 1000;
 
+const TOOL_NAME_PREFIX = `mcp__${CLI_TOOLS_MCP_SERVER_NAME}__`;
+
 // Codex reads its login from auth.json in CODEX_HOME. config.toml keeps it in
 // that file instead of the system keyring.
 export async function writeCodexHome(home: string, authJson?: string) {
@@ -346,6 +348,95 @@ export async function createSubscriptionCliModelWithTools({
   }
 }
 
+// A fresh 0700 folder per call: an empty working directory, plus the user's
+// Claude config dir or Codex home. Codex rotates its refresh token, so a
+// changed auth.json is saved back before the folder is deleted.
+export async function startCliRun(
+  provider: string,
+  login: UserCliLogin | null,
+): Promise<CliRun> {
+  const runDir = await mkdtemp(path.join(os.tmpdir(), "inbox-zero-cli-run-"));
+  const removeRunDir = () =>
+    rm(runDir, { recursive: true, force: true }).catch(() => {
+      logger.warn("Could not remove CLI run folder", { provider });
+    });
+
+  try {
+    const cwd = path.join(runDir, "work");
+    await mkdir(cwd, { mode: 0o700 });
+
+    if (provider === Provider.CODEX_CLI) {
+      const codexHome = path.join(runDir, "codex");
+      await mkdir(codexHome, { mode: 0o700 });
+      if (!login) {
+        // The server's login is linked, not copied: Codex rewrites auth.json
+        // in place when it refreshes, so the refresh lands in the host file.
+        await writeCodexHome(codexHome);
+        await symlink(
+          path.join(getHostCodexHome(), "auth.json"),
+          path.join(codexHome, "auth.json"),
+        );
+        return {
+          cwd,
+          env: buildCodexEnv({ codexHome, home: runDir, serverLogin: true }),
+          finish: removeRunDir,
+        };
+      }
+      await writeCodexHome(codexHome, login.credential);
+      return {
+        cwd,
+        env: buildCodexEnv({ codexHome, home: runDir, serverLogin: false }),
+        finish: async () => {
+          await saveRefreshedCodexLogin(codexHome, login).catch(() => {
+            logger.error("Could not save refreshed Codex login");
+          });
+          await removeRunDir();
+        },
+      };
+    }
+
+    if (!login) return { cwd, finish: removeRunDir };
+    const configDir = path.join(runDir, "claude");
+    await mkdir(configDir, { mode: 0o700 });
+    return {
+      cwd,
+      env: buildClaudeUserEnv({ credential: login.credential, configDir }),
+      finish: removeRunDir,
+    };
+  } catch (error) {
+    await removeRunDir();
+    throw error;
+  }
+}
+
+export async function acquireCodexRun(
+  userId: string,
+  abortSignal: AbortSignal | undefined,
+): Promise<() => void> {
+  const previous = codexRunQueues.get(userId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // The tail settles only once every run ahead has finished too, so the
+  // queue entry is removed then, not when this run releases.
+  const tail = previous.then(() => current);
+  codexRunQueues.set(userId, tail);
+  tail.then(() => {
+    if (codexRunQueues.get(userId) === tail) codexRunQueues.delete(userId);
+  });
+
+  // A request cancelled while waiting leaves the queue at once; the runs
+  // behind it still wait for the ones ahead.
+  try {
+    await waitUnlessAborted(previous, abortSignal);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  return release;
+}
+
 function codexRunSettings(run: CliRunSettings) {
   return {
     allowNpx: env.CODEX_CLI_ALLOW_NPX,
@@ -372,8 +463,6 @@ function claudeCodeRunSettings(run: CliRunSettings) {
     ...(run.env ? { env: run.env } : {}),
   };
 }
-
-const TOOL_NAME_PREFIX = `mcp__${CLI_TOOLS_MCP_SERVER_NAME}__`;
 
 function prefixToolName(name: string): string {
   return `${TOOL_NAME_PREFIX}${name}`;
@@ -660,67 +749,6 @@ function createCliRunModel({
   } as unknown as LanguageModelV4;
 }
 
-// A fresh 0700 folder per call: an empty working directory, plus the user's
-// Claude config dir or Codex home. Codex rotates its refresh token, so a
-// changed auth.json is saved back before the folder is deleted.
-export async function startCliRun(
-  provider: string,
-  login: UserCliLogin | null,
-): Promise<CliRun> {
-  const runDir = await mkdtemp(path.join(os.tmpdir(), "inbox-zero-cli-run-"));
-  const removeRunDir = () =>
-    rm(runDir, { recursive: true, force: true }).catch(() => {
-      logger.warn("Could not remove CLI run folder", { provider });
-    });
-
-  try {
-    const cwd = path.join(runDir, "work");
-    await mkdir(cwd, { mode: 0o700 });
-
-    if (provider === Provider.CODEX_CLI) {
-      const codexHome = path.join(runDir, "codex");
-      await mkdir(codexHome, { mode: 0o700 });
-      if (!login) {
-        // The server's login is linked, not copied: Codex rewrites auth.json
-        // in place when it refreshes, so the refresh lands in the host file.
-        await writeCodexHome(codexHome);
-        await symlink(
-          path.join(getHostCodexHome(), "auth.json"),
-          path.join(codexHome, "auth.json"),
-        );
-        return {
-          cwd,
-          env: buildCodexEnv({ codexHome, home: runDir, serverLogin: true }),
-          finish: removeRunDir,
-        };
-      }
-      await writeCodexHome(codexHome, login.credential);
-      return {
-        cwd,
-        env: buildCodexEnv({ codexHome, home: runDir, serverLogin: false }),
-        finish: async () => {
-          await saveRefreshedCodexLogin(codexHome, login).catch(() => {
-            logger.error("Could not save refreshed Codex login");
-          });
-          await removeRunDir();
-        },
-      };
-    }
-
-    if (!login) return { cwd, finish: removeRunDir };
-    const configDir = path.join(runDir, "claude");
-    await mkdir(configDir, { mode: 0o700 });
-    return {
-      cwd,
-      env: buildClaudeUserEnv({ credential: login.credential, configDir }),
-      finish: removeRunDir,
-    };
-  } catch (error) {
-    await removeRunDir();
-    throw error;
-  }
-}
-
 async function saveRefreshedCodexLogin(codexHome: string, login: UserCliLogin) {
   const authJson = await readFile(
     path.join(codexHome, "auth.json"),
@@ -805,34 +833,6 @@ function isCliAuthenticationError(
   const stderr = (error as { data?: { stderr?: unknown } } | null)?.data
     ?.stderr;
   return typeof stderr === "string" && CODEX_AUTH_FAILURE_RE.test(stderr);
-}
-
-export async function acquireCodexRun(
-  userId: string,
-  abortSignal: AbortSignal | undefined,
-): Promise<() => void> {
-  const previous = codexRunQueues.get(userId) ?? Promise.resolve();
-  let release = () => {};
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  // The tail settles only once every run ahead has finished too, so the
-  // queue entry is removed then, not when this run releases.
-  const tail = previous.then(() => current);
-  codexRunQueues.set(userId, tail);
-  tail.then(() => {
-    if (codexRunQueues.get(userId) === tail) codexRunQueues.delete(userId);
-  });
-
-  // A request cancelled while waiting leaves the queue at once; the runs
-  // behind it still wait for the ones ahead.
-  try {
-    await waitUnlessAborted(previous, abortSignal);
-  } catch (error) {
-    release();
-    throw error;
-  }
-  return release;
 }
 
 // Waits for a stopped CLI to exit. Past the grace period it is logged; past

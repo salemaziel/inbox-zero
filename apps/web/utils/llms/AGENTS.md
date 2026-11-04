@@ -100,5 +100,5 @@ Phase B of the plan (rebuilding the fork's runs on upstream's provider table) is
 
 **Other notes**
 
-- Outside this folder: the fork URL-encodes Outlook `$filter` values in `utils/outlook/odata-escape.ts` so an encoded quote cannot end the literal. Upstream encodes only `$search`. Keep the fork's `$filter` encoding and don't add `$search` encoding on top of upstream's, or search terms get encoded twice.
+- Outside this folder: the fork URL-encodes Outlook `$filter` values in `utils/outlook/odata-escape.ts`. Upstream encodes only `$search`. Keep the fork's `$filter` encoding and don't add `$search` encoding on top of upstream's, or search terms get encoded twice.
 - `rerere` is turned on in this clone, so git replays a conflict resolution it has already recorded. Check the replayed result before committing.

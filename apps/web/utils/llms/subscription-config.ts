@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Provider } from "./config";
+import { Provider } from "@/utils/llms/config";
 
 // Codex's "ultra" level is left out: it hands work off to sub-agents, which a
 // locked-down run blocks, and it is the most expensive level.
