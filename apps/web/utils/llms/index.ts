@@ -64,7 +64,8 @@ import {
   assertTrialAiUsageAllowed,
   shouldForceNanoModel,
 } from "@/utils/llms/model-usage-guard";
-import { Provider, type ReasoningEffort } from "@/utils/llms/config";
+import { Provider } from "@/utils/llms/config";
+import type { ReasoningEffort } from "@/utils/llms/subscription-config";
 import {
   type CliLoginScope,
   checkUserCliLogin,

@@ -1,11 +1,10 @@
 import { z } from "zod";
 import { Frequency } from "@/generated/prisma/enums";
+import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
 import {
   aiTaskModelsSchema,
-  DEFAULT_PROVIDER,
-  Provider,
   reasoningEffortSchema,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 import { SENSITIVE_DATA_POLICIES } from "@/utils/dlp/sensitive-content";
 
 export const saveDigestScheduleBody = z.object({

@@ -4,7 +4,8 @@ import {
   getModel,
   getResolvedDeploymentRolePrimaryModelEntry,
 } from "./model";
-import { Provider, SUBSCRIPTION_MODELS } from "./config";
+import { Provider } from "./config";
+import { SUBSCRIPTION_MODELS } from "./subscription-config";
 import { env } from "@/env";
 import type { UserAIFields } from "./types";
 import { createAzure } from "@ai-sdk/azure";

@@ -8,7 +8,7 @@ import {
 } from "@/utils/actions/ai-subscription.validation";
 import { Prisma } from "@/generated/prisma/client";
 import { SafeError } from "@/utils/error";
-import { parseAiTaskModels } from "@/utils/llms/config";
+import { parseAiTaskModels } from "@/utils/llms/subscription-config";
 import {
   cancelSubscriptionLogin,
   disconnectSubscriptionLogin,

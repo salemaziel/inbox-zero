@@ -13,16 +13,16 @@ import { createOllama } from "ollama-ai-provider-v2";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createCerebras } from "@ai-sdk/cerebras";
 import { env } from "@/env";
+import { Provider } from "@/utils/llms/config";
 import {
   type AiTaskModelEntry,
   getRecommendedTaskModel,
   isSubscriptionProvider,
   parseAiTaskModels,
-  Provider,
   type ReasoningEffort,
   reasoningEffortSchema,
   SUBSCRIPTION_MODELS,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
 import { SafeError } from "../error";

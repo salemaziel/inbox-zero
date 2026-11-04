@@ -19,23 +19,25 @@ import type { OpenAiModelsResponse } from "@/app/api/ai/models/route";
 import type { GetAiSubscriptionResponse } from "@/app/api/user/ai-subscription/route";
 import { AlertBasic, AlertError } from "@/components/Alert";
 import {
+  DEFAULT_PROVIDER,
+  Provider,
+  providerOptions,
+} from "@/utils/llms/config";
+import {
   AI_TASK_MODEL_TYPES,
   type AiTaskModelType,
-  DEFAULT_PROVIDER,
   getRecommendedTaskModel,
   HIGH_VOLUME_TASK_TYPES,
   isCostlyTaskChoice,
   isSubscriptionProvider,
   type ModelWeight,
   parseAiTaskModels,
-  Provider,
-  providerOptions,
   type ReasoningEffort,
   reasoningEffortSchema,
   SUBSCRIPTION_MODELS,
   type SubscriptionModel,
   type SubscriptionProvider,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 import { useUser } from "@/hooks/useUser";
 import { useAccount } from "@/providers/EmailAccountProvider";
 import { prefixPath } from "@/utils/path";

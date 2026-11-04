@@ -4,15 +4,15 @@ import {
   getCodexModelListLogin,
   listCodexModels,
 } from "@/utils/llms/cli-provider";
+import { Provider } from "@/utils/llms/config";
 import {
   getSubscriptionModelWeight,
   isSubscriptionProvider,
-  Provider,
   REASONING_EFFORTS,
   type ReasoningEffort,
   SUBSCRIPTION_MODELS,
   type SubscriptionModel,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 import { createScopedLogger } from "@/utils/logger";
 
 const logger = createScopedLogger("llms/subscription-models");

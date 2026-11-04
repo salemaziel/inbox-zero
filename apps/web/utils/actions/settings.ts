@@ -11,19 +11,18 @@ import {
   updateDigestItemsBody,
   toggleDigestBody,
 } from "@/utils/actions/settings.validation";
+import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
 import {
   AI_TASK_MODEL_TYPES,
   type AiTaskModelEntry,
   type AiTaskModelType,
-  DEFAULT_PROVIDER,
   getRecommendedTaskModel,
   HIGH_VOLUME_TASK_TYPES,
   isSubscriptionProvider,
   parseAiTaskModels,
-  Provider,
   type ReasoningEffort,
   reasoningEffortSchema,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
   CLI_SUBSCRIPTION_PROVIDERS,

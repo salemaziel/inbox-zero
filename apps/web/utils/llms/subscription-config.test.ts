@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { Provider } from "@/utils/llms/config";
 import {
   aiTaskModelsSchema,
   getRecommendedTaskModel,
   isCostlyTaskChoice,
   parseAiTaskModels,
-  Provider,
   SUBSCRIPTION_MODELS,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 
 describe("getRecommendedTaskModel", () => {
   const codexModels = SUBSCRIPTION_MODELS[Provider.CODEX_CLI].models;

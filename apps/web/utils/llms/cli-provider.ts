@@ -15,7 +15,8 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { asSchema } from "ai";
 import { env } from "@/env";
 import { SafeError } from "@/utils/error";
-import { Provider, type ReasoningEffort } from "@/utils/llms/config";
+import { Provider } from "@/utils/llms/config";
+import type { ReasoningEffort } from "@/utils/llms/subscription-config";
 import { createScopedLogger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 

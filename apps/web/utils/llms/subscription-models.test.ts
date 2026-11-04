@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Provider, SUBSCRIPTION_MODELS } from "@/utils/llms/config";
+import { Provider } from "@/utils/llms/config";
+import { SUBSCRIPTION_MODELS } from "@/utils/llms/subscription-config";
 
 const { mockEnv, listCodexModels, getCodexModelListLogin } = vi.hoisted(() => ({
   mockEnv: { CLI_LLM_ENABLED: true },

@@ -6,11 +6,11 @@ import {
   updateAiSettingsAction,
 } from "./settings";
 import { Prisma } from "@/generated/prisma/client";
+import { Provider } from "@/utils/llms/config";
 import {
-  Provider,
   SUBSCRIPTION_MODELS,
   type SubscriptionModel,
-} from "@/utils/llms/config";
+} from "@/utils/llms/subscription-config";
 import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import { isDecisionModelApiKeyRejected } from "@/utils/decision-model/decision-model";
 
