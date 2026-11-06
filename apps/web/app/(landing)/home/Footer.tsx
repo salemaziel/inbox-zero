@@ -109,7 +109,6 @@ export const footerNavigation = {
     { name: "Twitter", href: "/twitter", target: "_blank" },
     { name: "GitHub", href: "/github", target: "_blank" },
     { name: "Discord", href: "/discord", target: "_blank" },
-    { name: "OSS Friends", href: "/oss-friends" },
     ...(HAS_BRAND_KIT ? [{ name: "Brand Kit", href: "/brand" }] : []),
     { name: "Email Blaster", href: "/game" },
     {
