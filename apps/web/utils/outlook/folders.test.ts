@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Client } from "@microsoft/microsoft-graph-client";
 import {
+  getOrCreateOutlookFolderIdByName,
   getOutlookFolderTree,
   getOutlookRootFolders,
   getOutlookChildFolders,
   addOutlookSystemFolderTypes,
   deleteOutlookFolder,
-  getOrCreateOutlookFolderIdByName,
   renameOutlookFolder,
 } from "./folders";
 import type { OutlookClient } from "./client";
@@ -48,27 +49,110 @@ describe("Outlook folder mutations", () => {
 });
 
 describe("getOrCreateOutlookFolderIdByName", () => {
-  it("URL-encodes the folder name once in the lookup filter", async () => {
-    const request = {
-      filter: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      top: vi.fn().mockReturnThis(),
-      get: vi.fn().mockResolvedValue({
-        value: [{ id: "folder-1", displayName: "O'Neil & 50% off" }],
-      }),
-    };
-    const client = {
-      getClient: () => ({ api: vi.fn().mockReturnValue(request) }),
-    } as unknown as OutlookClient;
+  it.each([
+    "Bills & Receipts",
+    "Partner's Invoices",
+    "Ticket #42 + 50% / Q?",
+    "Reçus & Factures",
+  ])("finds the existing folder %s without breaking the Graph URL", async (name) => {
+    const { client, requests } = createGraphClient((request) =>
+      request.method === "GET"
+        ? Response.json({ value: [{ id: "existing-id", displayName: name }] })
+        : Response.json({ error: { code: "Unexpected" } }, { status: 500 }),
+    );
 
-    await expect(
-      getOrCreateOutlookFolderIdByName(client, "O'Neil & 50% off", logger),
-    ).resolves.toBe("folder-1");
-    expect(request.filter).toHaveBeenCalledWith(
-      "displayName eq 'O''Neil%20%26%2050%25%20off'",
+    const id = await getOrCreateOutlookFolderIdByName(client, name, logger);
+
+    expect(id).toBe("existing-id");
+    expect(requests).toHaveLength(1);
+    const url = new URL(requests[0].url);
+    expect(url.hash).toBe("");
+    expect([...url.searchParams.keys()].sort()).toEqual([
+      "$filter",
+      "$select",
+      "$top",
+    ]);
+    expect(url.searchParams.get("$filter")).toBe(
+      `displayName eq '${name.replaceAll("'", "''")}'`,
     );
   });
+
+  it("uses the existing folder when creation reports it already exists", async () => {
+    const name = "Bills & Receipts";
+    const { client, requests } = createGraphClient((request) => {
+      if (request.method === "POST") {
+        return Response.json(
+          { error: { code: "ErrorFolderExists", message: "exists" } },
+          { status: 409 },
+        );
+      }
+      const url = new URL(request.url);
+      if (url.searchParams.has("$filter")) {
+        return Response.json({ value: [] });
+      }
+      if (!url.searchParams.has("$skiptoken")) {
+        return Response.json({
+          value: [
+            { id: "inbox-id", displayName: "Inbox" },
+            { id: "trailing-space-id", displayName: "Bills & Receipts " },
+          ],
+          "@odata.nextLink":
+            "https://graph.microsoft.com/v1.0/me/mailFolders?$skiptoken=page2",
+        });
+      }
+      return Response.json({
+        value: [{ id: "existing-id", displayName: "bills & receipts" }],
+      });
+    });
+
+    const id = await getOrCreateOutlookFolderIdByName(client, name, logger);
+
+    expect(id).toBe("existing-id");
+    expect(requests.map((request) => request.method)).toContain("POST");
+  });
 });
+
+describe("getOrCreateOutlookFolderIdByName conflict recovery", () => {
+  it("rethrows the original conflict when the fallback listing fails", async () => {
+    const { client } = createGraphClient((request) => {
+      if (request.method === "POST") {
+        return Response.json(
+          { error: { code: "ErrorFolderExists", message: "exists" } },
+          { status: 409 },
+        );
+      }
+      if (new URL(request.url).searchParams.has("$filter")) {
+        return Response.json({ value: [] });
+      }
+      return Response.json(
+        { error: { code: "ServiceUnavailable", message: "down" } },
+        { status: 503 },
+      );
+    });
+
+    await expect(
+      getOrCreateOutlookFolderIdByName(client, "Bills & Receipts", logger),
+    ).rejects.toMatchObject({ code: "ErrorFolderExists" });
+  });
+});
+
+function createGraphClient(handler: (request: Request) => Response) {
+  const requests: Request[] = [];
+  const graph = Client.initWithMiddleware({
+    middleware: {
+      execute: async (context) => {
+        const request = new Request(
+          context.request as string,
+          context.options as RequestInit,
+        );
+        requests.push(request);
+        context.response = handler(request);
+      },
+    },
+  });
+  const client = { getClient: () => graph } as unknown as OutlookClient;
+  return { client, requests };
+}
 
 function createMockClient(
   mockResponses: Record<string, { value: unknown[] }>,

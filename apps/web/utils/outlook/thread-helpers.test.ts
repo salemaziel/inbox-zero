@@ -44,7 +44,9 @@ describe("listThreadMessages", () => {
     expect(messages.map((message) => message.id)).toEqual(["m1", "m2", "m3"]);
     expect(get).toHaveBeenCalledTimes(2);
     expect(filters).toEqual([
-      "conversationId eq 'conv1%3D' and parentFolderId eq 'inbox''id'",
+      encodeURIComponent(
+        "conversationId eq 'conv1=' and parentFolderId eq 'inbox''id'",
+      ),
     ]);
   });
 
@@ -90,7 +92,9 @@ describe("listThreadMessages", () => {
     });
 
     expect(messages.map((message) => message.id)).toEqual(["m1"]);
-    expect(filters).toEqual(["conversationId eq 'AQ%2Bb%2Fc-d_e%3D%3D'"]);
+    expect(filters).toEqual([
+      encodeURIComponent("conversationId eq 'AQ+b/c-d_e=='"),
+    ]);
   });
 
   it("drops messages from other conversations before returning them", async () => {
