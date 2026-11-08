@@ -28,6 +28,7 @@ import { getSubscriptionModels } from "@/utils/llms/subscription-models";
 import {
   type CliLoginScope,
   isCliLlmOwner,
+  isCliLlmSharedUser,
 } from "@/utils/llms/subscription-access";
 import prisma from "@/utils/prisma";
 import {
@@ -476,7 +477,7 @@ export const toggleDigestAction = actionClient
   );
 
 // The subscriptions the user has connected, or all of them when the user may
-// fall back to the server's own login.
+// fall back to the server's own login, in full or as an approved shared user.
 async function getSubscriptionAccess(userId: string): Promise<{
   usableSubscriptions: string[];
   allowServerLogin: boolean;
@@ -491,7 +492,7 @@ async function getSubscriptionAccess(userId: string): Promise<{
       select: { provider: true },
     }),
   ]);
-  if (user && isCliLlmOwner(user)) {
+  if (user && (isCliLlmOwner(user) || isCliLlmSharedUser(user))) {
     return {
       usableSubscriptions: [...CLI_SUBSCRIPTION_PROVIDERS],
       allowServerLogin: true,

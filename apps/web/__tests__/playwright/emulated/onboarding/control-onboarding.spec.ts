@@ -4,6 +4,7 @@ import {
   chooseSignupIntent,
   getPersistedOnboardingState,
   openControlOnboarding,
+  passConnectAiStep,
   resetOnboardingTestState,
   setupOnboardingTestState,
 } from "./onboarding-test-helpers";
@@ -38,6 +39,7 @@ test("completes account setup and persists onboarding choices", async ({
 
   await page.getByRole("button", { name: "GitHub", exact: true }).click();
   await chooseSignupIntent(page, "AI assistant");
+  await passConnectAiStep(page);
   await expect(
     page.getByRole("heading", { name: "Your inbox, automatically sorted" }),
   ).toBeVisible({ timeout: 60_000 });

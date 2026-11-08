@@ -8,6 +8,7 @@ import { capturePlaywrightCheckpoint } from "../playwright-evidence";
 import {
   chooseSignupIntent,
   getSignupIntentState,
+  passConnectAiStep,
   resetOnboardingTestState,
   setupOnboardingTestState,
 } from "./onboarding-test-helpers";
@@ -34,6 +35,7 @@ test("Continue works while the background statistics request is still pending", 
   try {
     await page.goto(`/${emailAccountId}/onboarding?step=intent`);
     await chooseSignupIntent(page, "Both");
+    await passConnectAiStep(page);
     await expect(
       page.getByRole("heading", { name: "Your inbox, automatically sorted" }),
     ).toBeVisible();
@@ -81,6 +83,7 @@ test("Gmail throttling cannot block saving Both or navigating onboarding", async
       .not.toBe("idle");
     await page.goto(`/${emailAccountId}/onboarding?step=intent`);
     await chooseSignupIntent(page, "Both");
+    await passConnectAiStep(page);
     await expect(
       page.getByRole("heading", { name: "Your inbox, automatically sorted" }),
     ).toBeVisible({ timeout: 10_000 });

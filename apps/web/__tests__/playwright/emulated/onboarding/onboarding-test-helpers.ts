@@ -128,6 +128,14 @@ export async function chooseSignupIntent(page: Page, option: string) {
   await page.getByRole("button", { name: new RegExp(`^${option}`) }).click();
 }
 
+export async function passConnectAiStep(page: Page) {
+  await expect(
+    page.getByRole("heading", { name: "Connect your AI account" }),
+  ).toBeVisible({ timeout: 60_000 });
+  // The label depends on whether the test user already has an AI provider.
+  await page.getByRole("button", { name: /^(Skip for now|Continue)$/ }).click();
+}
+
 export async function getSignupIntentState() {
   return withClient(async (client) => {
     const result = await client.query<{

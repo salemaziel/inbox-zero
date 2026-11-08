@@ -21,6 +21,7 @@ describe("getVisibleOnboardingStepKeys", () => {
       STEP_KEYS.COMPANY_SIZE,
       STEP_KEYS.HOW_YOU_HEARD,
       STEP_KEYS.INTENT,
+      STEP_KEYS.CONNECT_AI,
       STEP_KEYS.EMAILS_SORTED,
       STEP_KEYS.CHAT,
       STEP_KEYS.DRAFT_REPLIES,
@@ -43,7 +44,7 @@ describe("getVisibleOnboardingStepKeys", () => {
       signupIntent,
     });
     expect(stepKeys[stepKeys.indexOf(STEP_KEYS.INTENT) + 1]).toBe(
-      STEP_KEYS.EMAILS_SORTED,
+      STEP_KEYS.CONNECT_AI,
     );
     expect(stepKeys).not.toContain(STEP_KEYS.MAIL_APP);
   });
@@ -76,6 +77,7 @@ describe("getVisibleOnboardingStepKeys", () => {
       STEP_KEYS.COMPANY_SIZE,
       STEP_KEYS.HOW_YOU_HEARD,
       STEP_KEYS.INTENT,
+      STEP_KEYS.CONNECT_AI,
       STEP_KEYS.EMAILS_SORTED,
       STEP_KEYS.CHAT,
       STEP_KEYS.BULK_UNSUBSCRIBE,
@@ -83,6 +85,17 @@ describe("getVisibleOnboardingStepKeys", () => {
       STEP_KEYS.CUSTOM_RULES,
       STEP_KEYS.INBOX_PROCESSED,
     ]);
+  });
+
+  it("hides the connect-AI step when AI model settings are disabled", () => {
+    expect(
+      getVisibleOnboardingStepKeys({
+        canInviteTeam: true,
+        autoDraftDisabled: false,
+        aiModelSettingsDisabled: true,
+        signupIntent: "AI_ASSISTANT",
+      }),
+    ).not.toContain(STEP_KEYS.CONNECT_AI);
   });
 
   it("starts self-hosted deployments at the intent step", () => {
@@ -120,6 +133,18 @@ describe("getOnboardingStepIndex", () => {
     expect(getOnboardingStepIndex("3", stepKeys)).toBe(
       stepKeys.indexOf(STEP_KEYS.CHAT),
     );
+  });
+
+  it("keeps unavailable legacy numeric steps falling back where they did before the connect-AI step", () => {
+    const selfHostedNoDraftKeys = getVisibleOnboardingStepKeys({
+      canInviteTeam: true,
+      autoDraftDisabled: true,
+      isSelfHosted: true,
+      signupIntent: "AI_ASSISTANT",
+    });
+    expect(
+      selfHostedNoDraftKeys[getOnboardingStepIndex("4", selfHostedNoDraftKeys)],
+    ).toBe(STEP_KEYS.BULK_UNSUBSCRIBE);
   });
 
   it("clamps oversized numeric steps to the last visible step", () => {

@@ -21,6 +21,7 @@ export const STEP_KEYS = {
   INBOX_PROCESSED: "inboxProcessed",
   INTENT: "intent",
   MAIL_APP: "mailApp",
+  CONNECT_AI: "connectAi",
 } as const;
 
 export type StepKey = (typeof STEP_KEYS)[keyof typeof STEP_KEYS];
@@ -34,6 +35,8 @@ const surveyStepOrder: readonly StepKey[] = [
 ];
 
 const aiAssistantStepOrder: readonly StepKey[] = [
+  // The assistant runs on the user's own AI account, so they connect it first.
+  STEP_KEYS.CONNECT_AI,
   STEP_KEYS.EMAILS_SORTED,
   STEP_KEYS.CHAT,
   STEP_KEYS.DRAFT_REPLIES,
@@ -69,11 +72,13 @@ export function getVisibleOnboardingStepKeys({
   canInviteTeam,
   autoDraftDisabled,
   isSelfHosted,
+  aiModelSettingsDisabled,
   signupIntent,
 }: {
   canInviteTeam: boolean;
   autoDraftDisabled: boolean;
   isSelfHosted?: boolean;
+  aiModelSettingsDisabled?: boolean;
   signupIntent: SignupIntent | null;
 }) {
   // Until the user picks, the AI branch stands in as the most common path.
@@ -95,6 +100,11 @@ export function getVisibleOnboardingStepKeys({
     }
 
     if (!canInviteTeam && stepKey === STEP_KEYS.INVITE_TEAM) {
+      return false;
+    }
+
+    // The step points users at the AI Model settings, which are hidden then.
+    if (aiModelSettingsDisabled && stepKey === STEP_KEYS.CONNECT_AI) {
       return false;
     }
 
@@ -151,7 +161,16 @@ export function getOnboardingStepIndex(
       if (legacyStepIndex !== -1) return legacyStepIndex;
     }
 
-    return clampStepIndex(numericStep - 1, visibleStepKeys.length);
+    // Steps added after numeric links were retired must not shift where an
+    // unavailable legacy step falls back to.
+    const preConnectAiStepKeys = visibleStepKeys.filter(
+      (stepKey) => stepKey !== STEP_KEYS.CONNECT_AI,
+    );
+    const fallbackStepKey =
+      preConnectAiStepKeys[
+        clampStepIndex(numericStep - 1, preConnectAiStepKeys.length)
+      ];
+    return fallbackStepKey ? visibleStepKeys.indexOf(fallbackStepKey) : 0;
   }
 
   const stepIndex = visibleStepKeys.indexOf(stepParam as StepKey);
@@ -159,7 +178,7 @@ export function getOnboardingStepIndex(
 }
 
 export function isOptionalOnboardingStep(stepKey: StepKey) {
-  return stepKey === STEP_KEYS.INVITE_TEAM;
+  return stepKey === STEP_KEYS.INVITE_TEAM || stepKey === STEP_KEYS.CONNECT_AI;
 }
 
 function clampStepIndex(stepIndex: number, totalSteps: number) {

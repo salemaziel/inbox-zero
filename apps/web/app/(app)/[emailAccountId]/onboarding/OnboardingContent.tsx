@@ -36,6 +36,7 @@ import {
 import { EmailStatsPreloader } from "@/components/EmailStatsPreloader";
 import { StepIntent } from "@/app/(app)/[emailAccountId]/onboarding/StepIntent";
 import { StepMailApp } from "@/app/(app)/[emailAccountId]/onboarding/StepMailApp";
+import { StepConnectAi } from "@/app/(app)/[emailAccountId]/onboarding/StepConnectAi";
 import type { SignupIntent } from "@/generated/prisma/enums";
 
 interface OnboardingContentProps {
@@ -75,6 +76,9 @@ export function OnboardingContent({
     [STEP_KEYS.HOW_YOU_HEARD]: () => <StepHowYouHeard onNext={onNext} />,
     [STEP_KEYS.INTENT]: () => <StepIntent onIntentSaved={onIntentSaved} />,
     [STEP_KEYS.MAIL_APP]: () => <StepMailApp onNext={onNext} />,
+    [STEP_KEYS.CONNECT_AI]: () => (
+      <StepConnectAi onNext={onNext} onSkip={onSkip} />
+    ),
     [STEP_KEYS.LABELS]: () => (
       <StepLabels
         provider={provider}
@@ -99,7 +103,7 @@ export function OnboardingContent({
             organizationId={membership?.organizationId ?? undefined}
             userName={membership?.userName}
             onNext={onNext}
-            onSkip={onSkipInviteTeam}
+            onSkip={onSkip}
           />
         )
       : undefined,
@@ -113,6 +117,9 @@ export function OnboardingContent({
         Boolean(env.NEXT_PUBLIC_AUTO_DRAFT_DISABLED) ||
         isDraftRepliesDisabledByRuleState(rules),
       isSelfHosted: Boolean(env.NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS),
+      aiModelSettingsDisabled: Boolean(
+        env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED,
+      ),
       signupIntent: intent,
     }).filter((key) => isDefined(stepMap[key]));
   const visibleStepKeys = getVisibleStepKeys(signupIntent);
@@ -203,7 +210,7 @@ export function OnboardingContent({
     getOnboardingStepPath,
   ]);
 
-  const onSkipInviteTeam = useCallback(() => {
+  const onSkip = useCallback(() => {
     if (!currentStepKey) return;
 
     analytics.onSkip({

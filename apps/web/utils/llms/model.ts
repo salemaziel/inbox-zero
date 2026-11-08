@@ -26,7 +26,7 @@ import { assertCliLlmEnabled, isCliProvider } from "./cli-provider";
 import {
   type CliLoginScope,
   CONNECT_SUBSCRIPTION_MESSAGE,
-  isCliLlmOwner,
+  getCliLoginScope,
 } from "./subscription-access";
 import { selectSubscriptionCliModel } from "./subscription-run";
 
@@ -80,8 +80,8 @@ export function getModel(
   userAi: UserAIFields,
   modelType: ModelType = "default",
 ): SelectModel {
-  const allowServerCliLogin = isCliLlmOwner(userAi);
-  const cliLogin = { userId: userAi.id, allowServerLogin: allowServerCliLogin };
+  const cliLogin = getCliLoginScope(userAi);
+  const allowServerCliLogin = cliLogin.allowServerLogin;
   const taskModel = getUserTaskModel(userAi, modelType);
   const provider = taskModel?.provider ?? userAi.aiProvider;
   const usesOwnCliLogin = provider != null && isCliProvider(provider);
@@ -419,6 +419,12 @@ function createOpenRouterProviderOptions(
       reasoning: { effort: REASONING_EFFORT_BY_MODEL_TYPE[modelType] },
     },
   };
+}
+
+// Whether a user who has not connected their own AI account still gets a
+// working model from the deployment's configured list.
+export function hasDeploymentModel(allowServerCliLogin: boolean) {
+  return !!resolveRoleModelList("default", allowServerCliLogin);
 }
 
 function selectDeploymentModelByType(

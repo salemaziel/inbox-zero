@@ -47,6 +47,7 @@ vi.mock("./StepHowYouHeard", () => ({ StepHowYouHeard: () => null }));
 vi.mock("./StepInviteTeam", () => ({ StepInviteTeam: () => null }));
 vi.mock("./StepIntent", () => ({ StepIntent: () => null }));
 vi.mock("./StepMailApp", () => ({ StepMailApp: () => null }));
+vi.mock("./StepConnectAi", () => ({ StepConnectAi: () => null }));
 
 beforeEach(() => {
   vi.clearAllMocks();
