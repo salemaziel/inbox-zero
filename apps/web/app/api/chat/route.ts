@@ -15,6 +15,7 @@ import {
 } from "@/utils/ai/assistant/chat";
 import type { Logger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
+import { CHAT_ACCOUNT_MISMATCH_ERROR_CODE } from "@/utils/config";
 import type { Prisma } from "@/generated/prisma/client";
 import { convertToUIMessages } from "@/components/assistant-chat/helpers";
 import { SafeError, captureException } from "@/utils/error";
@@ -38,6 +39,12 @@ import {
   assistantInputSchema,
 } from "@/utils/actions/assistant-chat.validation";
 import { buildInlineEmailActionSystemMessage } from "@/utils/ai/assistant/inline-email-actions";
+import {
+  getLatestStoredMailView,
+  getMailViewChange,
+  getStoredMailView,
+  withMailViewNote,
+} from "@/utils/ai/assistant/mail-view-context";
 import {
   mergeSeenRulesRevision,
   saveLastSeenRulesRevision,
@@ -125,8 +132,15 @@ export const POST = withEmailAccount("chat", async (request) => {
   }
 
   if (chat.emailAccountId !== emailAccountId) {
+    request.logger.warn("Chat belongs to another email account", {
+      chatId: data.id,
+    });
     return NextResponse.json(
-      { error: "You are not authorized to access this chat" },
+      {
+        error: "This chat belongs to a different email account.",
+        errorCode: CHAT_ACCOUNT_MISMATCH_ERROR_CODE,
+        isKnownError: true,
+      },
       { status: 403 },
     );
   }
@@ -160,6 +174,21 @@ export const POST = withEmailAccount("chat", async (request) => {
     const hiddenInlineActionMessage =
       buildHiddenInlineActionMessage(inlineActions);
 
+    const latestCompaction = chat.compactions[0];
+
+    const messagesForModel = latestCompaction
+      ? chat.messages.filter(
+          (m) => m.createdAt >= latestCompaction.compactedBeforeCreatedAt,
+        )
+      : chat.messages;
+
+    // Compared against what the model still sees, so a state compacted out of
+    // the history is recorded again.
+    const mailViewChange = getMailViewChange({
+      previous: getLatestStoredMailView(messagesForModel),
+      incoming: data.mailView,
+    });
+
     await saveChatMessage({
       chat: { connect: { id: chat.id } },
       id: message.id,
@@ -169,6 +198,7 @@ export const POST = withEmailAccount("chat", async (request) => {
         runId: chatRunId,
         context,
         inlineActions,
+        mailView: mailViewChange,
       }),
     });
 
@@ -179,17 +209,16 @@ export const POST = withEmailAccount("chat", async (request) => {
       }),
     );
 
-    const latestCompaction = chat.compactions[0];
-
-    const messagesForModel = latestCompaction
-      ? chat.messages.filter(
-          (m) => m.createdAt >= latestCompaction.compactedBeforeCreatedAt,
-        )
-      : chat.messages;
-
     const conversationUiMessages = [
-      ...convertToUIMessages({ ...chat, messages: messagesForModel }),
-      message,
+      ...convertToUIMessages({
+        ...chat,
+        messages: messagesForModel.map((m) =>
+          m.role === "user"
+            ? withMailViewNote(m, getStoredMailView(m.metadata))
+            : m,
+        ),
+      }),
+      withMailViewNote(message, mailViewChange),
     ];
 
     const uiMessages = [
@@ -318,6 +347,7 @@ export const POST = withEmailAccount("chat", async (request) => {
       context,
       chatId: chat.id,
       supportsInlineEmailCards: data.supportsInlineEmailCards,
+      mailScreen: data.mailView !== undefined,
       chatLastSeenRulesRevision: chat.lastSeenRulesRevision,
       chatHasHistory,
       memories,

@@ -19,8 +19,14 @@ import { convertToUIMessages } from "@/components/assistant-chat/helpers";
 import type { ChatMessage } from "@/components/assistant-chat/types";
 import { useChatMessages } from "@/hooks/useChatMessages";
 import { useAccount } from "@/providers/EmailAccountProvider";
-import { EMAIL_ACCOUNT_HEADER } from "@/utils/config";
-import type { MessageContext } from "@/utils/ai/assistant/chat-context-validation";
+import {
+  CHAT_ACCOUNT_MISMATCH_ERROR_CODE,
+  EMAIL_ACCOUNT_HEADER,
+} from "@/utils/config";
+import type {
+  MailViewContext,
+  MessageContext,
+} from "@/utils/ai/assistant/chat-context-validation";
 import { InlineEmailActionProvider } from "@/components/assistant-chat/inline-email-action-context";
 import {
   mergeInlineEmailActions,
@@ -32,8 +38,17 @@ import {
   ASSISTANT_CHAT_MAX_TEXT_LENGTH_MESSAGE,
 } from "@/utils/actions/assistant-chat.validation";
 import { createClientLogger } from "@/utils/logger-client";
+import {
+  type MailScreenAction,
+  parseMailScreenAction,
+} from "@/utils/ai/assistant/mail-screen-action";
 
 const logger = createClientLogger("assistant-chat");
+
+const CHAT_SEND_FAILED_MESSAGE =
+  "We couldn't send your message. Please try again.";
+const CHAT_ACCOUNT_MISMATCH_MESSAGE =
+  "That chat belongs to another email account, so we started a new one. Send your message again.";
 
 export type Attachment = {
   id: string;
@@ -48,6 +63,12 @@ type ChatMessagePart =
   | { type: "file"; url: string; filename: string; mediaType: string }
   | { type: "text"; text: string };
 
+type ChatSendError = {
+  chatId: string;
+  message: string;
+  offerNewChat: boolean;
+};
+
 type PendingChatRequest = {
   attachmentCount: number;
   chatId: string;
@@ -61,7 +82,8 @@ type ChatContextType = {
   input: string;
   chatId: string | null;
   persistedMessageIds: Set<string>;
-  setInput: (input: string) => void;
+  sendError: Omit<ChatSendError, "chatId"> | null;
+  setInput: React.Dispatch<React.SetStateAction<string>>;
   setChatId: (chatId: string | null) => void;
   setNewChat: () => void;
   submitTextMessage: (text: string) => Promise<void>;
@@ -70,9 +92,12 @@ type ChatContextType = {
   context: MessageContext | null;
   setContext: (context: MessageContext | null) => void;
   setAmbientContext: (context: MessageContext | null) => void;
+  setMailView: (mailView: MailViewContext | null) => void;
+  setMailScreenActionHandler: (
+    handler: ((action: MailScreenAction) => void) | null,
+  ) => void;
   attachments: Attachment[];
   setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>;
-  requestError: string | null;
 };
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -88,10 +113,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     null,
   );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [requestError, setRequestError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const [inlineActions, setInlineActions] = useState<InlineEmailAction[]>([]);
   const inlineActionsRef = useRef(inlineActions);
   const pendingInlineActionsRef = useRef<InlineEmailAction[] | null>(null);
+  // Read at send time only, so screen changes don't re-render the chat.
+  const mailViewRef = useRef<MailViewContext | null>(null);
+  const mailScreenActionHandlerRef = useRef<
+    ((action: MailScreenAction) => void) | null
+  >(null);
   const pendingRequestRef = useRef<PendingChatRequest | null>(null);
   const pendingRequestContextRef = useRef<MessageContext | null>(null);
   const previousChatIdRef = useRef(chatId);
@@ -110,16 +140,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [draftChatId, setDraftChatId] = useState(generateUUID);
   if (chatId === draftChatId) setDraftChatId(generateUUID());
 
-  const { data } = useChatMessages(chatId);
+  const { data, error: chatLoadError } = useChatMessages(chatId);
   const persistedMessageIds = useMemo(
     () => new Set(data?.messages.map((message) => message.id) ?? []),
     [data?.messages],
   );
 
   const setNewChat = useCallback(() => {
-    setRequestError(null);
     setChatId(generateUUID());
   }, [setChatId]);
+
+  const showSendError = useCallback((error: ChatSendError) => {
+    setSendError(error);
+    toastError({ description: error.message });
+  }, []);
 
   const queueInlineAction = useCallback(
     (type: InlineEmailActionType, threadIds: string[]) => {
@@ -144,6 +178,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             message: messages.at(-1),
             supportsInlineEmailCards: true,
             inlineActions: pendingInlineActionsRef.current ?? undefined,
+            mailView: mailViewRef.current ?? undefined,
             ...body,
           },
         };
@@ -152,6 +187,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     // messages: initialMessages, // NOTE: couldn't get this to work
     experimental_throttle: 100,
     generateId: generateUUID,
+    // Fires only for streamed calls, not for history. A resumed run replays
+    // from its first chunk, so its calls are skipped rather than re-applied
+    // over whatever the user did on the screen since.
+    onToolCall: ({ toolCall }) => {
+      if (toolCall.dynamic || toolCall.toolName !== "controlMailScreen") return;
+      if (resumingRef.current) return;
+      const action = parseMailScreenAction(toolCall.input);
+      if ("error" in action) return;
+      mailScreenActionHandlerRef.current?.(action);
+    },
     onFinish: async ({ isAbort }) => {
       pendingInlineActionsRef.current = null;
       pendingRequestRef.current = null;
@@ -172,7 +217,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         pendingInlineActionsRef.current = null;
         pendingRequestRef.current = null;
         pendingRequestContextRef.current = null;
-        setRequestError(streamErrorMessage);
+        showSendError({
+          chatId: chatId ?? chat.id,
+          message: streamErrorMessage,
+          offerNewChat: false,
+        });
         return;
       }
 
@@ -185,8 +234,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      interruptedRef.current = true;
-      if (document.visibilityState === "visible") resumeActiveRun();
+      const isAccountMismatch = isChatAccountMismatchError(error);
+      interruptedRef.current = !isAccountMismatch;
+      if (document.visibilityState === "visible" && !isAccountMismatch)
+        resumeActiveRun();
 
       // The server already has the message once the reply starts streaming,
       // so a dropped connection is reattached rather than reported as unsent.
@@ -218,21 +269,69 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (pendingRequest) pendingRequest.sendError = error;
-      setRequestError(
-        reportChatRequestError({
-          emailAccountId,
-          error,
-          fallbackChatId: chatId ?? chat.id,
-          request: pendingRequest,
-        }),
-      );
       pendingRequestRef.current = null;
       pendingRequestContextRef.current = null;
+
+      if (isAccountMismatch) {
+        logger.warn("Assistant chat belongs to another email account", {
+          chatId: pendingRequest?.chatId ?? chatId ?? chat.id,
+          emailAccountId,
+        });
+        // The unsent message goes back in the input, so a fresh chat lets the
+        // user send it again instead of failing on every retry.
+        const newChatId = generateUUID();
+        setChatId(newChatId);
+        showSendError({
+          chatId: newChatId,
+          message: CHAT_ACCOUNT_MISMATCH_MESSAGE,
+          offerNewChat: false,
+        });
+        return;
+      }
+
+      reportChatRequestError({
+        emailAccountId,
+        error,
+        fallbackChatId: chatId ?? chat.id,
+        request: pendingRequest,
+      });
+      showSendError({
+        chatId: pendingRequest?.chatId ?? chatId ?? chat.id,
+        message: getChatSendErrorMessage(error),
+        offerNewChat: true,
+      });
     },
   });
 
   const isRunActive =
     chat.status === "submitted" || chat.status === "streaming";
+
+  // The URL can carry a chat from another account (e.g. an old link). Sending
+  // to it can never succeed, so start a fresh chat in its place.
+  const isLoadedChatFromOtherAccount =
+    chatLoadError?.info?.errorCode === CHAT_ACCOUNT_MISMATCH_ERROR_CODE;
+  useEffect(() => {
+    // A send already in flight fails with the same mismatch and recovers in
+    // onError; switching chats now would abort it and drop the unsent message.
+    if (!chatId || !isLoadedChatFromOtherAccount || isRunActive) return;
+    logger.warn("Assistant chat belongs to another email account", {
+      chatId,
+      emailAccountId,
+    });
+    const newChatId = generateUUID();
+    setChatId(newChatId);
+    // Keep showing why a send that just ended failed.
+    setSendError((current) =>
+      current?.chatId === chatId ? { ...current, chatId: newChatId } : current,
+    );
+  }, [
+    chatId,
+    emailAccountId,
+    isLoadedChatFromOtherAccount,
+    isRunActive,
+    setChatId,
+  ]);
+
   const handledDataRef = useRef<{ chatId: string; data: typeof data } | null>(
     null,
   );
@@ -337,6 +436,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setInlineActions([]);
   }, [chat.setMessages, emailAccountId, setChatId]);
 
+  const setMailView = useCallback((mailView: MailViewContext | null) => {
+    mailViewRef.current = mailView;
+  }, []);
+
+  const setMailScreenActionHandler = useCallback(
+    (handler: ((action: MailScreenAction) => void) | null) => {
+      mailScreenActionHandlerRef.current = handler;
+    },
+    [],
+  );
+
   const setDisplayedContext = useCallback((next: MessageContext | null) => {
     setContext(next);
     if (!next) setAmbientContext(null);
@@ -365,7 +475,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!chatId) setChatId(chat.id);
-      setRequestError(null);
+      setSendError(null);
       stoppedRef.current = false;
       interruptedRef.current = false;
 
@@ -501,6 +611,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           fallbackChatId: chatId ?? chat.id,
           request: pendingRequestRef.current,
         });
+        showSendError({
+          chatId: chatId ?? chat.id,
+          message: CHAT_SEND_FAILED_MESSAGE,
+          offerNewChat: true,
+        });
       }
       return;
     }
@@ -515,7 +630,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         mergeAttachments(submittedAttachments, current),
       );
     });
-  }, [attachments, chat.id, chatId, emailAccountId, input, sendMessageParts]);
+  }, [
+    attachments,
+    chat.id,
+    chatId,
+    emailAccountId,
+    input,
+    sendMessageParts,
+    showSendError,
+  ]);
 
   return (
     <ChatContext.Provider
@@ -524,6 +647,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         chatId,
         input,
         persistedMessageIds,
+        sendError:
+          sendError?.chatId === chat.id
+            ? {
+                message: sendError.message,
+                offerNewChat: sendError.offerNewChat,
+              }
+            : null,
         setInput,
         setChatId,
         setNewChat,
@@ -533,9 +663,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         context: context ?? ambientContext,
         setContext: setDisplayedContext,
         setAmbientContext,
+        setMailView,
+        setMailScreenActionHandler,
         attachments,
         setAttachments,
-        requestError,
       }}
     >
       <InlineEmailActionProvider value={{ queueAction: queueInlineAction }}>
@@ -609,17 +740,11 @@ function reportChatRequestError({
   });
   logger.flush().catch(() => undefined);
 
-  // The chat shows the server's message inline, so it isn't also a toast or an
-  // exception report.
-  const clientMessage = getClientErrorMessage(error);
-  if (clientMessage) return clientMessage;
-
-  toastError({
-    description: "We couldn't send your message. Please try again.",
-  });
+  // Expected 4xx messages (such as asking the user to connect an AI
+  // subscription) are shown to the user, not reported as exceptions.
+  if (getClientErrorMessage(error)) return;
   console.error(error);
   captureException(error);
-  return null;
 }
 
 // The chat route only returns its own message on 4xx, where it is safe to show
@@ -661,4 +786,43 @@ function getErrorStatusCode(error: unknown) {
 
   const statusCode = (error as Record<string, unknown>).statusCode;
   return typeof statusCode === "number" ? statusCode : null;
+}
+
+function isChatAccountMismatchError(error: unknown) {
+  return (
+    getChatRequestErrorBody(error)?.errorCode ===
+    CHAT_ACCOUNT_MISMATCH_ERROR_CODE
+  );
+}
+
+function getChatSendErrorMessage(error: unknown) {
+  const statusCode = getErrorStatusCode(error);
+  const serverMessage = getChatRequestErrorBody(error)?.error;
+  // 4xx responses explain what the user can do; 5xx bodies are not for users.
+  if (
+    statusCode !== null &&
+    statusCode < 500 &&
+    typeof serverMessage === "string" &&
+    serverMessage.trim()
+  ) {
+    return serverMessage;
+  }
+  return CHAT_SEND_FAILED_MESSAGE;
+}
+
+function getChatRequestErrorBody(
+  error: unknown,
+): Record<string, unknown> | null {
+  if (!error || typeof error !== "object") return null;
+  const responseBody = (error as Record<string, unknown>).responseBody;
+  if (typeof responseBody !== "string") return null;
+
+  try {
+    const body: unknown = JSON.parse(responseBody);
+    return body && typeof body === "object"
+      ? (body as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
