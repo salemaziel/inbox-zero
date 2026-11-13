@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useLingui } from "@lingui/react/macro";
 import { useAction } from "next-safe-action/hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,18 +24,19 @@ import type { SaveDecisionModelApiKeyBody } from "@/utils/actions/settings.valid
 import { getActionErrorMessage } from "@/utils/error";
 
 export function DecisionModelSection() {
+  const { t } = useLingui();
   const { data, mutate } = useUser();
 
   const { execute, isExecuting } = useAction(
     updateDecisionModelSettingsAction,
     {
       onSuccess: () => {
-        toastSuccess({ description: "Settings updated!" });
+        toastSuccess({ description: t`Settings updated!` });
       },
       onError: (error) => {
         toastError({
           description: getActionErrorMessage(error.error, {
-            prefix: "Failed to update settings",
+            prefix: t`Failed to update settings`,
           }),
         });
       },

@@ -823,7 +823,13 @@ export async function createSqliteMailStore(
                 confirmed,
                 input.operation.intent.change,
               );
-              await upsertConfirmed(tx, { ...confirmed, ...next });
+              await upsertConfirmed(tx, {
+                ...confirmed,
+                ...next,
+                deleted:
+                  confirmed.deleted ||
+                  input.operation.intent.change.kind === "discard_draft",
+              });
             }
           }
           await tx.execute(
@@ -1026,20 +1032,33 @@ export async function createSqliteMailStore(
           "SELECT revision, content_json FROM drafts WHERE account_id = ? AND draft_id = ?",
           [key.accountId, key.draftId],
         );
-        if (!current[0]) return { status: "missing" as const };
-        try {
-          const parsed = draftContentSchema.safeParse(
-            JSON.parse(String(current[0].content_json)),
-          );
-          if (!parsed.success) return { status: "missing" as const };
-          return {
-            status: "found" as const,
-            draftRevision: Number(current[0].revision),
-            content: parsed.data,
-          };
-        } catch {
-          return { status: "missing" as const };
-        }
+        const content =
+          current[0] && parseDraftContent(current[0].content_json);
+        if (!content) return { status: "missing" as const };
+        return {
+          status: "found" as const,
+          draftRevision: Number(current[0].revision),
+          content,
+        };
+      });
+    },
+    async listDrafts(accountId) {
+      return driver.read(async (tx) => {
+        const rows = await tx.query(
+          "SELECT draft_id, revision, content_json FROM drafts WHERE account_id = ? ORDER BY draft_id",
+          [accountId],
+        );
+        return rows.flatMap((row) => {
+          const content = parseDraftContent(row.content_json);
+          if (!content) return [];
+          return [
+            {
+              key: { accountId, draftId: String(row.draft_id) },
+              draftRevision: Number(row.revision),
+              content,
+            },
+          ];
+        });
       });
     },
     async admitSend(input) {
@@ -2884,6 +2903,13 @@ async function recomputeTargets(tx: SqlTransaction, targets: MessageKey[]) {
         };
       });
     const effective = deriveEffectiveMessage(confirmed, pending);
+    if (effective.deleted) {
+      await tx.execute(
+        "DELETE FROM effective_messages WHERE account_id = ? AND message_id = ?",
+        [target.accountId, target.messageId],
+      );
+      continue;
+    }
     const flags = roleFlags(effective.roles);
     await tx.execute(
       `INSERT INTO effective_messages(
@@ -3554,3 +3580,12 @@ async function defaultStoreSha256(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 export type { SyncPage, ConversationKey };
+
+function parseDraftContent(value: import("./driver").SqlValue) {
+  try {
+    const parsed = draftContentSchema.safeParse(JSON.parse(String(value)));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}

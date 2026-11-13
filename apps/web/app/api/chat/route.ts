@@ -24,8 +24,8 @@ import {
   compactMessages,
   buildCompactionSummaryMessage,
   extractMemories,
-  RECENT_MESSAGES_TO_KEEP,
 } from "@/utils/ai/assistant/compact";
+import { toChatActionTotals } from "@/utils/ai/assistant/chat-action-totals";
 import { getInboxStatsForChatContext } from "@/utils/ai/assistant/get-inbox-stats-for-chat-context";
 import { formatUtcDate } from "@/utils/date";
 import {
@@ -59,6 +59,9 @@ import {
 } from "@/utils/chat/active-run";
 
 export const maxDuration = 800;
+
+const RUN_FAILED_NOTICE =
+  "Sorry, something went wrong and I couldn't finish my reply. Please try again.";
 
 export const POST = withEmailAccount("chat", async (request) => {
   const emailAccountId = request.auth.emailAccountId;
@@ -189,7 +192,7 @@ export const POST = withEmailAccount("chat", async (request) => {
       incoming: data.mailView,
     });
 
-    await saveChatMessage({
+    const savedUserMessage = await saveChatMessage({
       chat: { connect: { id: chat.id } },
       id: message.id,
       role: "user",
@@ -243,25 +246,29 @@ export const POST = withEmailAccount("chat", async (request) => {
 
     if (shouldCompact(modelMessages)) {
       try {
-        const { compactedMessages, summary, compactedCount } =
-          await compactMessages({
-            messages: modelMessages,
-            user,
-            logger: request.logger,
-          });
+        const {
+          compactedMessages,
+          summary,
+          compactedCount,
+          recentUserMessageCount,
+        } = await compactMessages({
+          messages: modelMessages,
+          actionTotals: toChatActionTotals(chat.actionTotals),
+          user,
+          logger: request.logger,
+        });
 
         if (compactedCount > 0 && summary.trim().length > 0) {
           modelMessages = compactedMessages;
 
-          // Compute boundary: keep at least RECENT_MESSAGES_TO_KEEP DB messages.
-          // messagesForModel doesn't include the new user message (saved after query),
-          // so we keep RECENT_MESSAGES_TO_KEEP from the existing set.
-          const keepFromIndex = Math.max(
-            0,
-            messagesForModel.length - RECENT_MESSAGES_TO_KEEP,
-          );
-          const compactedBeforeCreatedAt =
-            messagesForModel[keepFromIndex]?.createdAt ?? new Date();
+          // The new message and the hidden inline-action message are kept
+          // but not among the stored messages loaded for this run.
+          const compactedBeforeCreatedAt = getCompactionBoundary({
+            storedMessages: messagesForModel,
+            keptStoredUserMessageCount:
+              recentUserMessageCount - 1 - (hiddenInlineActionMessage ? 1 : 0),
+            newMessageCreatedAt: savedUserMessage.createdAt,
+          });
 
           const [, memories] = await Promise.all([
             prisma.$transaction([
@@ -373,37 +380,71 @@ export const POST = withEmailAccount("chat", async (request) => {
       logger: runLogger,
     });
 
+    const handleRunError = (error: unknown) => {
+      runLogger.error("Assistant chat run failed", { error });
+      captureException(error, { extra: { chatId: chat.id } });
+      return getSafeStreamErrorText(error) ?? RUN_FAILED_NOTICE;
+    };
+
     const stream = createUIMessageStream({
       generateId: () => streamId,
-      onError: getStreamErrorText,
+      onError: handleRunError,
       execute: async ({ writer }) => {
         let responseMessage: UIMessage | null = null;
+        let runFailed = false;
+        let safeErrorSent = false;
 
         for await (const chunk of result.toUIMessageStream({
           sendFinish: false,
-          onError: getStreamErrorText,
+          onError: handleRunError,
           onEnd: ({ responseMessage: finishedResponseMessage }) => {
             responseMessage = finishedResponseMessage;
           },
         })) {
+          // The client treats an error chunk as an unsent message, but the
+          // user message is already saved, so the failure is shown as a reply.
+          if (chunk.type === "error") {
+            runFailed = true;
+            // A safe error (for example, reconnect your AI subscription) goes
+            // to the client as-is so the chat can show its own prompt.
+            if (isSafeStreamErrorText(chunk.errorText)) {
+              writer.write(chunk);
+              safeErrorSent = true;
+            }
+            continue;
+          }
           writer.write(chunk);
         }
 
+        assistantRun.visibleTextProduced = hasVisibleAssistantText(
+          responseMessage ? [responseMessage] : [],
+        );
+
         if (chatRun.abortSignal.aborted) return;
+        if (safeErrorSent) return;
 
-        const warning = getToolFailureWarning(responseMessage);
-        if (!warning) return;
+        const notice =
+          runFailed || !hasAssistantReply(responseMessage)
+            ? RUN_FAILED_NOTICE
+            : getToolFailureWarning(responseMessage);
+        if (!notice) return;
 
-        runLogger.warn("Assistant chat completed with tool failures");
+        if (notice === RUN_FAILED_NOTICE) {
+          runLogger.warn("Assistant chat run ended without a reply", {
+            runFailed,
+          });
+        } else {
+          runLogger.warn("Assistant chat completed with tool failures");
+        }
 
-        const warningPartId = crypto.randomUUID();
-        writer.write({ type: "text-start", id: warningPartId });
+        const noticePartId = crypto.randomUUID();
+        writer.write({ type: "text-start", id: noticePartId });
         writer.write({
           type: "text-delta",
-          id: warningPartId,
-          delta: `\n\n${warning}`,
+          id: noticePartId,
+          delta: `\n\n${notice}`,
         });
-        writer.write({ type: "text-end", id: warningPartId });
+        writer.write({ type: "text-end", id: noticePartId });
       },
       onEnd: async ({ messages: endMessages, isAborted }) => {
         try {
@@ -412,7 +453,6 @@ export const POST = withEmailAccount("chat", async (request) => {
           const messages = isAborted
             ? endMessages.map(removeIncompleteToolParts)
             : endMessages;
-          assistantRun.visibleTextProduced = hasVisibleAssistantText(messages);
           const persistableMessages = messages.filter(
             isPersistableAssistantMessage,
           );
@@ -525,6 +565,7 @@ async function createNewChat({
       include: {
         messages: { orderBy: { createdAt: "asc" } },
         compactions: { orderBy: { createdAt: "desc" }, take: 1 },
+        actionTotals: { select: { action: true, count: true } },
       },
     });
     logger.info("New chat created", { chatId: newChat.id, emailAccountId });
@@ -541,6 +582,7 @@ async function getChatWithCompactions(chatId: string) {
     include: {
       messages: { orderBy: { createdAt: "asc" } },
       compactions: { orderBy: { createdAt: "desc" }, take: 1 },
+      actionTotals: { select: { action: true, count: true } },
     },
   });
 }
@@ -598,7 +640,7 @@ function buildHiddenInlineActionMessage(
 
   return {
     id: crypto.randomUUID(),
-    role: "system" as const,
+    role: "user" as const,
     parts: [{ type: "text" as const, text }],
   } satisfies UIMessage;
 }
@@ -616,9 +658,19 @@ function hasRenderableAssistantResponse(
   if (!parts?.length) return false;
 
   return parts.some((part) => {
+    if (part.type === "step-start") return false;
     if (part.type !== "text") return true;
     return part.text.trim().length > 0;
   });
+}
+
+// Reasoning alone is not an answer; tool results show as cards.
+function hasAssistantReply(message: UIMessage | null) {
+  return !!message?.parts.some(
+    (part) =>
+      (part.type === "text" && part.text.trim().length > 0) ||
+      "toolCallId" in part,
+  );
 }
 
 function hasVisibleAssistantText(messages: UIMessage[]) {
@@ -629,6 +681,28 @@ function hasVisibleAssistantText(messages: UIMessage[]) {
         (part) => part.type === "text" && part.text.trim().length > 0,
       ),
   );
+}
+
+// The stored message where the kept history starts, so the next run replays
+// exactly what the summary left out.
+function getCompactionBoundary({
+  storedMessages,
+  keptStoredUserMessageCount,
+  newMessageCreatedAt,
+}: {
+  storedMessages: { role: string; createdAt: Date }[];
+  keptStoredUserMessageCount: number;
+  newMessageCreatedAt: Date;
+}) {
+  if (keptStoredUserMessageCount <= 0) return newMessageCreatedAt;
+
+  let remaining = keptStoredUserMessageCount;
+  for (let index = storedMessages.length - 1; index >= 0; index--) {
+    if (storedMessages[index].role !== "user") continue;
+    remaining--;
+    if (remaining === 0) return storedMessages[index].createdAt;
+  }
+  return storedMessages[0]?.createdAt ?? newMessageCreatedAt;
 }
 
 function getToolCallIdsFromUiParts(parts: UIMessage["parts"] | undefined) {
@@ -686,9 +760,13 @@ function removeIncompleteToolParts(message: UIMessage): UIMessage {
 // An error inside the reply stream keeps the SDK's generic text unless it is
 // a safe error, whose message (for example, reconnect your AI subscription)
 // is sent as JSON, like the route's 4xx responses, for the client to show.
-function getStreamErrorText(error: unknown) {
+function getSafeStreamErrorText(error: unknown) {
   if (error instanceof SafeError && error.safeMessage) {
     return JSON.stringify({ error: error.safeMessage });
   }
-  return "An error occurred.";
+  return null;
+}
+
+function isSafeStreamErrorText(text: string) {
+  return text.startsWith('{"error":');
 }

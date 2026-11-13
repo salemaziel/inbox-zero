@@ -36,7 +36,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "parse5": "8.1.0"
+    "marked": "18.1.1",
+    "parse5": "8.1.1"
   },
   "peerDependencies": {
     "dompurify": "3.4.17",

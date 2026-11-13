@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { msg } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import {
   HomeIcon,
   UserIcon,
@@ -9,6 +10,7 @@ import {
   HeadphonesIcon,
   ShoppingCartIcon,
 } from "lucide-react";
+import { LandingLink } from "@/components/new-landing/LandingLink";
 import { cn } from "@/utils";
 import {
   NavigationMenu,
@@ -20,13 +22,13 @@ import {
   navigationMenuTriggerStyle,
 } from "@/components/ui/navigation-menu";
 
-const navigation = [{ name: "Pricing", href: "/pricing" }];
+const navigation = [{ name: msg`Pricing`, href: "/pricing" }];
 
 const useCases = [
   {
-    title: "Founders",
+    title: msg`Founders`,
     href: "/founders",
-    description: "Scale your startup while AI handles your inbox",
+    description: msg`Scale your startup while AI handles your inbox`,
     icon: RocketIcon,
     iconColor: "text-new-purple-600",
     borderColor: "from-new-purple-200 to-new-purple-300",
@@ -34,9 +36,9 @@ const useCases = [
     hoverBg: "hover:bg-new-purple-50/[0.44]",
   },
   {
-    title: "Small Business",
+    title: msg`Small Business`,
     href: "/small-business",
-    description: "Grow your business with automated email management",
+    description: msg`Grow your business with automated email management`,
     icon: BuildingIcon,
     iconColor: "text-new-green-500",
     borderColor: "from-new-green-150 to-new-green-200",
@@ -44,9 +46,9 @@ const useCases = [
     hoverBg: "hover:bg-new-green-50",
   },
   {
-    title: "Content Creators",
+    title: msg`Content Creators`,
     href: "/creator",
-    description: "Streamline brand partnerships and collaborations",
+    description: msg`Streamline brand partnerships and collaborations`,
     icon: UserIcon,
     iconColor: "text-new-blue-600",
     borderColor: "from-new-blue-150 to-new-blue-200",
@@ -54,9 +56,9 @@ const useCases = [
     hoverBg: "hover:bg-new-blue-50/50",
   },
   {
-    title: "Real Estate",
+    title: msg`Real Estate`,
     href: "/real-estate",
-    description: "AI email management for real estate professionals",
+    description: msg`AI email management for real estate professionals`,
     icon: HomeIcon,
     iconColor: "text-new-pink-500",
     borderColor: "from-new-pink-150 to-new-pink-200",
@@ -64,9 +66,9 @@ const useCases = [
     hoverBg: "hover:bg-new-pink-50/[0.44]",
   },
   {
-    title: "Customer Support",
+    title: msg`Customer Support`,
     href: "/customer-support",
-    description: "Deliver faster support with AI-powered responses",
+    description: msg`Deliver faster support with AI-powered responses`,
     icon: HeadphonesIcon,
     iconColor: "text-new-orange-600",
     borderColor: "from-new-orange-150 to-new-orange-200",
@@ -74,9 +76,9 @@ const useCases = [
     hoverBg: "hover:bg-new-orange-50/50",
   },
   {
-    title: "E-commerce",
+    title: msg`E-commerce`,
     href: "/ecommerce",
-    description: "Automate order updates and customer communications",
+    description: msg`Automate order updates and customer communications`,
     icon: ShoppingCartIcon,
     iconColor: "text-new-indigo-600",
     borderColor: "from-new-indigo-150 to-new-indigo-200",
@@ -86,6 +88,8 @@ const useCases = [
 ];
 
 export function HeaderLinks() {
+  const { i18n } = useLingui();
+
   return (
     <div className="hidden lg:flex lg:items-center lg:gap-x-8">
       <NavigationMenu>
@@ -93,14 +97,14 @@ export function HeaderLinks() {
           {/* Solutions Dropdown */}
           <NavigationMenuItem>
             <NavigationMenuTrigger className="text-sm font-semibold font-geist leading-6 text-gray-900">
-              Solutions
+              <Trans>Solutions</Trans>
             </NavigationMenuTrigger>
             <NavigationMenuContent>
               <ul className="grid w-[640px] grid-cols-2 gap-2 p-4">
                 {useCases.map((useCase) => (
                   <EnhancedListItem
-                    key={useCase.title}
-                    title={useCase.title}
+                    key={useCase.href}
+                    title={i18n._(useCase.title)}
                     href={useCase.href}
                     icon={useCase.icon}
                     iconColor={useCase.iconColor}
@@ -108,7 +112,7 @@ export function HeaderLinks() {
                     borderColor={useCase.borderColor}
                     hoverBg={useCase.hoverBg}
                   >
-                    {useCase.description}
+                    {i18n._(useCase.description)}
                   </EnhancedListItem>
                 ))}
               </ul>
@@ -117,17 +121,17 @@ export function HeaderLinks() {
 
           {/* Regular Navigation Items */}
           {navigation.map((item) => (
-            <NavigationMenuItem key={item.name}>
+            <NavigationMenuItem key={item.href}>
               <NavigationMenuLink
                 asChild
                 className={navigationMenuTriggerStyle()}
               >
-                <Link
+                <LandingLink
                   href={item.href}
                   className="text-sm font-semibold font-geist leading-6 text-gray-900"
                 >
-                  {item.name}
-                </Link>
+                  {i18n._(item.name)}
+                </LandingLink>
               </NavigationMenuLink>
             </NavigationMenuItem>
           ))}
@@ -159,7 +163,7 @@ function EnhancedListItem({
   return (
     <li {...props}>
       <NavigationMenuLink asChild>
-        <Link
+        <LandingLink
           href={href}
           className={cn(
             "group block select-none space-y-1 rounded-xl p-4 leading-none no-underline outline-none transition-all duration-200 focus:bg-accent focus:text-accent-foreground",
@@ -191,7 +195,7 @@ function EnhancedListItem({
               </p>
             </div>
           </div>
-        </Link>
+        </LandingLink>
       </NavigationMenuLink>
     </li>
   );

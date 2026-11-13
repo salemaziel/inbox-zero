@@ -6,6 +6,7 @@ import {
   createRule,
   getIntegrationSetupMessage,
 } from "@/utils/rule/rule";
+import { isDuplicateError } from "@/utils/prisma-helpers";
 import {
   findSenderOnlyOverlapConflict,
   formatSenderOnlyOverlapError,
@@ -106,6 +107,14 @@ export const createRuleTool = ({
           ...(setupMessage && { message: setupMessage }),
         };
       } catch (error) {
+        if (isDuplicateError(error, "name")) {
+          logger.warn("Rule name already exists", { ruleName: name });
+          return {
+            success: false,
+            error: `No rule was created. A rule named "${name}" already exists. Update that rule instead, or create this one with a different name.`,
+          };
+        }
+
         const message = error instanceof Error ? error.message : String(error);
 
         logger.error("Failed to create rule", { error });

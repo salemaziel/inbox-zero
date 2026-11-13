@@ -5,6 +5,7 @@ import type {
 } from "./commands";
 import type {
   DraftReadResult,
+  StoredDraft,
   DraftSaveResult,
   SaveDraft,
   SubmitSend,
@@ -72,6 +73,10 @@ const LOW_PRIORITY_CATCH_UP_INTERVAL_MS = 10 * 60_000;
 // when they have not run recently, so a burst of pushes stays cheap.
 const LOW_PRIORITY_REQUESTED_MIN_INTERVAL_MS = 2 * 60_000;
 const MAX_MAILBOX_WINDOW_PAGES = 40;
+// Change history replays oldest first. A stream still behind after this many
+// pages, such as one reopened after days away, takes the provider's newest
+// page first so new mail shows without waiting for the whole replay.
+const NEWEST_PAGE_AFTER_BACKLOG_PAGES = 2;
 
 export type WorkAdmission =
   | { status: "scheduled" | "already_satisfied" }
@@ -126,6 +131,7 @@ export type MailClient = {
   submitConversations(input: SubmitConversationCommand): Promise<Admission>;
   saveDraft(input: SaveDraft): Promise<DraftSaveResult>;
   readDraft(key: DraftKey): Promise<DraftReadResult>;
+  listDrafts(accountId: string): Promise<StoredDraft[]>;
   submitSend(input: SubmitSend): Promise<Admission>;
   cancelOperation(
     key: OperationKey,
@@ -200,7 +206,7 @@ export function createMailEngine(input: {
       return queries.observe(mailboxQueryKey(query), () =>
         store.readMailboxView(query).then((result) => ({
           revision: result.revision,
-          data: result.view,
+          data: { ...result.view, searchStatus: mailboxSearchStatus(query) },
         })),
       );
     },
@@ -222,7 +228,7 @@ export function createMailEngine(input: {
             databaseEpoch: `${result.revision.databaseEpoch}:pages:${pageCount}`,
             sequence: result.revision.sequence,
           },
-          data: result.view,
+          data: { ...result.view, searchStatus: mailboxSearchStatus(query) },
         })),
       );
       return {
@@ -278,6 +284,9 @@ export function createMailEngine(input: {
     },
     readDraft(key) {
       return store.readDraft(key);
+    },
+    listDrafts(accountId) {
+      return store.listDrafts(accountId);
     },
     async submitSend(send) {
       const admission = await store.admitSend(send);
@@ -517,13 +526,19 @@ export function createMailEngine(input: {
             });
             continue;
           }
-          const hydrated = await source.hydrate({
-            session: work.session,
-            requestId: work.jobId,
-            signal: signal ?? new AbortController().signal,
-            keys: work.keys,
-            purpose: work.purpose,
-          });
+          const hydrated = await source
+            .hydrate({
+              session: work.session,
+              requestId: work.jobId,
+              signal: signal ?? new AbortController().signal,
+              keys: work.keys,
+              purpose: work.purpose,
+            })
+            .catch(async (error) => {
+              updateSearchHydration(work.keys, "error");
+              await queries.refreshAll();
+              throw error;
+            });
           if (hydrated.status === "ok") {
             await store.applyHydration({
               session: work.session,
@@ -532,29 +547,83 @@ export function createMailEngine(input: {
               changes: hydrated.value.changes,
               bodies: hydrated.value.bodies,
             });
+            const unavailableKeys = hydrated.value.unresolved
+              .filter((item) => item.reason === "unavailable")
+              .map((item) => item.key);
+            updateSearchHydration(
+              work.keys.filter(
+                (key) =>
+                  !unavailableKeys.some(
+                    (unavailable) =>
+                      unavailable.accountId === key.accountId &&
+                      unavailable.messageId === key.messageId,
+                  ),
+              ),
+              "ready",
+            );
+            updateSearchHydration(unavailableKeys, "error");
             await queries.refreshAll();
             for (const jobId of work.jobIds ?? [work.jobId])
               await store.completeJob({ jobId, attemptId: work.attemptId });
+          } else if (
+            hydrated.status === "blocked_auth" ||
+            hydrated.reason === "unavailable"
+          ) {
+            updateSearchHydration(work.keys, "error");
+            await queries.refreshAll();
           }
           continue;
         }
         if (work.kind === "search") {
-          const searched = await source.search({
-            session: work.session,
-            requestId: work.jobId,
-            signal: signal ?? new AbortController().signal,
-            predicate: work.predicate,
-            page: work.page,
-            pageSize: 50,
-          });
-          if (searched.status === "ok") {
-            if (searched.value.matches.length > 0) {
-              await store.enqueueHydration({
-                keys: searched.value.matches,
-                purpose: "body",
+          const search = remoteSearches.get(
+            remoteSearchKey(work.accountId, work.predicate),
+          );
+          const searched = await source
+            .search({
+              session: work.session,
+              requestId: work.jobId,
+              signal: signal ?? new AbortController().signal,
+              predicate: work.predicate,
+              page: work.page,
+              pageSize: 50,
+            })
+            .catch(async (error) => {
+              if (search) search.failed = true;
+              await store.completeJob({
+                jobId: work.jobId,
+                attemptId: work.attemptId,
               });
+              await queries.refreshAll();
+              throw error;
+            });
+          const failed =
+            searched.status === "blocked_auth" ||
+            (searched.status === "paused" && searched.reason === "unavailable");
+          if (search) search.failed = failed;
+          if (failed)
+            await store.completeJob({
+              jobId: work.jobId,
+              attemptId: work.attemptId,
+            });
+          if (searched.status === "ok") {
+            for (const key of searched.value.matches)
+              search?.hydration.set(key.messageId, "loading");
+            if (searched.value.matches.length > 0) {
+              await store
+                .enqueueHydration({
+                  keys: searched.value.matches,
+                  purpose: "body",
+                })
+                .catch(async (error) => {
+                  if (search) search.failed = true;
+                  await store.completeJob({
+                    jobId: work.jobId,
+                    attemptId: work.attemptId,
+                  });
+                  await queries.refreshAll();
+                  throw error;
+                });
             }
-            await queries.refreshAll();
           }
           if (
             searched.status !== "paused" &&
@@ -569,9 +638,10 @@ export function createMailEngine(input: {
               predicate: work.predicate,
               page: work.page,
               nextPage:
-                searched.status === "ok" ? searched.value.nextPage : undefined,
+                searched.status === "ok" ? searched.value.nextPage : null,
             });
           }
+          await queries.refreshAll();
           continue;
         }
         const readFence = openChangeRead();
@@ -635,7 +705,11 @@ export function createMailEngine(input: {
       for (const predicate of extractTextPredicates(query.predicate)) {
         const key = remoteSearchKey(accountId, predicate);
         const search = remoteSearches.get(key);
-        if (!search) {
+        if (
+          !search ||
+          search.failed ||
+          [...search.hydration.values()].includes("error")
+        ) {
           const created: RemoteSearch = {
             accountId,
             predicate,
@@ -643,6 +717,8 @@ export function createMailEngine(input: {
             fetchedPages: 0,
             nextPage: null,
             pendingPage: undefined,
+            failed: false,
+            hydration: new Map(),
           };
           remoteSearches.set(key, created);
           enqueueRemoteSearchPage(created, null);
@@ -658,18 +734,13 @@ export function createMailEngine(input: {
     accountId: string;
     predicate: MailPredicate;
     page: string | null;
-    nextPage: string | null | undefined;
+    nextPage: string | null;
   }) {
     const key = remoteSearchKey(input.accountId, input.predicate);
     const search = remoteSearches.get(key);
     // A page no view is waiting on, like one queued before a restart, ends
     // there instead of continuing into the next page.
     if (!search || search.pendingPage !== input.page) return;
-    // A failed search starts over the next time a view asks for it.
-    if (input.nextPage === undefined) {
-      remoteSearches.delete(key);
-      return;
-    }
     search.fetchedPages += 1;
     search.nextPage = input.nextPage;
     search.pendingPage = undefined;
@@ -695,11 +766,49 @@ export function createMailEngine(input: {
         predicate: search.predicate,
         page,
       })
-      .catch(() => {
-        remoteSearches.delete(
-          remoteSearchKey(search.accountId, search.predicate),
-        );
+      .catch(async () => {
+        search.failed = true;
+        await queries.refreshAll();
       });
+  }
+
+  function mailboxSearchStatus(
+    query: ConversationQuery,
+  ): MailboxView["searchStatus"] {
+    const predicates = extractTextPredicates(query.predicate);
+    if (!predicates.length) return;
+    let loading = false;
+    for (const accountId of query.accountIds) {
+      for (const predicate of predicates) {
+        const search = remoteSearches.get(
+          remoteSearchKey(accountId, predicate),
+        );
+        if (!search) continue;
+        if (search.failed || [...search.hydration.values()].includes("error"))
+          return "error";
+        if (search.pendingPage !== undefined || search.hydration.size)
+          loading = true;
+      }
+    }
+    return loading ? "loading" : "ready";
+  }
+
+  function updateSearchHydration(
+    keys: MessageKey[],
+    status: "ready" | "error",
+  ) {
+    for (const search of remoteSearches.values()) {
+      if (!search.hydration.size) continue;
+      for (const key of keys) {
+        if (
+          search.accountId !== key.accountId ||
+          !search.hydration.has(key.messageId)
+        )
+          continue;
+        if (status === "ready") search.hydration.delete(key.messageId);
+        else search.hydration.set(key.messageId, "error");
+      }
+    }
   }
 
   function forgetRemoteSearches(accountId: string) {
@@ -1054,6 +1163,7 @@ export function createMailEngine(input: {
       streams.push(...streams.splice(0, nextStreamIndex));
     }
     const dueStreams: typeof streams = [];
+    const behindStreams: SyncStreamPosition[] = [];
     // Bootstrap scans share one slice per pass, so a mailbox with many
     // folders can't run the lane into its timeout before later folders get a
     // turn. Folders left over go first on the next pass.
@@ -1143,7 +1253,7 @@ export function createMailEngine(input: {
             const changes = results[index] as SyncReadResult;
             // Applying a page holds the store, so let host reads in between.
             if (index > 0) await yieldToHost();
-            await applyStreamChanges({
+            const behind = await applyStreamChanges({
               session,
               idleGate,
               stream,
@@ -1151,6 +1261,7 @@ export function createMailEngine(input: {
               readFence,
               signal,
             });
+            if (behind) behindStreams.push(behind);
           }
         } finally {
           closeChangeRead(readFence);
@@ -1169,7 +1280,7 @@ export function createMailEngine(input: {
             pageSize: 50,
             signal,
           });
-          await applyStreamChanges({
+          const behind = await applyStreamChanges({
             session,
             idleGate,
             stream,
@@ -1177,14 +1288,23 @@ export function createMailEngine(input: {
             readFence,
             signal,
           });
+          if (behind) behindStreams.push(behind);
         } finally {
           closeChangeRead(readFence);
         }
       }
     }
+    // Every page read in this pass is applied first, so the newest page is
+    // the latest state written and the replay after it only reads later state.
+    for (const position of behindStreams) {
+      if (signal.aborted) return;
+      await yieldToHost();
+      await ingestNewestPage(session, idleGate, position, signal);
+    }
     await catchUpAssistantIfDue(idleGate, account, signal);
   }
 
+  /** Resolves the stream's new position when it is far enough behind that its newest page should go in ahead of the replay. */
   async function applyStreamChanges({
     session,
     idleGate,
@@ -1199,10 +1319,10 @@ export function createMailEngine(input: {
     changes: SyncReadResult;
     readFence: number;
     signal: AbortSignal;
-  }) {
+  }): Promise<SyncStreamPosition | null> {
     // A stopped lane may have been replaced, and its late result must not
     // move the shared catch-up schedule.
-    if (signal.aborted) return;
+    if (signal.aborted) return null;
     if (changes.status === "page") {
       const page = withoutMessagesSettledSince(changes.page, readFence);
       const applied = await store.applySyncPage({
@@ -1211,17 +1331,29 @@ export function createMailEngine(input: {
         bodies: page.bodies,
       });
       if (applied.status === "committed") {
+        let backlogPages = 0;
         if (page.roundComplete) {
           idleGate.nextStreamCatchUpAtMs.set(
             stream.streamId,
             runtime.nowMs() + streamCatchUpInterval(idleGate, stream.streamId),
           );
+          idleGate.streamBacklogPages.delete(stream.streamId);
+          idleGate.newestPageIngested.delete(stream.streamId);
         } else {
           idleGate.nextStreamCatchUpAtMs.delete(stream.streamId);
+          backlogPages =
+            (idleGate.streamBacklogPages.get(stream.streamId) ?? 0) + 1;
+          idleGate.streamBacklogPages.set(stream.streamId, backlogPages);
         }
         await queries.refreshAll();
         await noteConnection(session.accountId, "ok");
         notifySyncPageCommitted(page);
+        // Asked again on every later page until it lands, so a failed or
+        // interrupted fetch is retried rather than waiting out the replay.
+        return backlogPages >= NEWEST_PAGE_AFTER_BACKLOG_PAGES &&
+          !idleGate.newestPageIngested.has(stream.streamId)
+          ? page.to
+          : null;
       } else {
         idleGate.nextStreamCatchUpAtMs.delete(stream.streamId);
       }
@@ -1232,6 +1364,8 @@ export function createMailEngine(input: {
         stream.streamId,
         runtime.nowMs() + streamCatchUpInterval(idleGate, stream.streamId),
       );
+      idleGate.streamBacklogPages.delete(stream.streamId);
+      idleGate.newestPageIngested.delete(stream.streamId);
       const resetStream = { ...stream, streamId: changes.scopeId };
       await ingestBootstrap({
         session,
@@ -1248,6 +1382,71 @@ export function createMailEngine(input: {
         runtime.nowMs() + streamCatchUpInterval(idleGate, stream.streamId),
       );
       await noteConnection(session.accountId, changes.status);
+    }
+    return null;
+  }
+
+  // Lists the stream's newest messages the way a bootstrap's first page does
+  // and applies them at the stream's current checkpoint, which stays put, so
+  // the replay still covers every older change behind them.
+  async function ingestNewestPage(
+    session: { accountId: string; generation: string },
+    idleGate: IdleCatchUpGate,
+    position: SyncStreamPosition,
+    signal: AbortSignal,
+  ) {
+    const requestId = runtime.randomId();
+    const readFence = openChangeRead();
+    try {
+      const bootstrap = await source.beginBootstrap({
+        session,
+        requestId,
+        signal,
+        scope: await resolveScope(session, position.streamId, signal),
+        afterMs: null,
+      });
+      if (bootstrap.status !== "ok") {
+        await noteConnection(session.accountId, bootstrap.status);
+        return;
+      }
+      const newest = await source.enumerate({
+        session,
+        requestId: `${requestId}-newest`,
+        signal,
+        bootstrapId: bootstrap.value.bootstrapId,
+        page: bootstrap.value.enumerationToken,
+        pageSize: 50,
+      });
+      if (newest.status !== "ok") {
+        await noteConnection(session.accountId, newest.status);
+        return;
+      }
+      const page = withoutMessagesSettledSince(
+        {
+          session,
+          requestId,
+          from: position,
+          to: position,
+          changes: newest.value.changes,
+          requiredHydration: newest.value.requiredHydration,
+          bodies: newest.value.bodies,
+          roundComplete: false,
+        },
+        readFence,
+      );
+      const applied = await store.applySyncPage({
+        page,
+        ownerId,
+        bodies: page.bodies,
+      });
+      if (applied.status === "committed") {
+        // A stopped lane may have been replaced, and its late result must not
+        // mark a newer backlog as already shown.
+        if (!signal.aborted) idleGate.newestPageIngested.add(position.streamId);
+        await queries.refreshAll();
+      }
+    } finally {
+      closeChangeRead(readFence);
     }
   }
 
@@ -1305,6 +1504,8 @@ export function createMailEngine(input: {
       requestCount: 0,
       scopesDiscoveredAt: null,
       streamCheckedAt: new Map(),
+      streamBacklogPages: new Map(),
+      newestPageIngested: new Set(),
     };
     idleCatchUpGates.set(accountId, created);
     return created;
@@ -1523,6 +1724,9 @@ type IdleCatchUpGate = {
   requestCount: number;
   scopesDiscoveredAt: CheckStamp | null;
   streamCheckedAt: Map<string, CheckStamp>;
+  streamBacklogPages: Map<string, number>;
+  /** Streams whose current backlog already has its newest page in. */
+  newestPageIngested: Set<string>;
 };
 
 type CheckStamp = { atMs: number; requestCount: number };
@@ -1539,6 +1743,8 @@ type RemoteSearch = {
   nextPage: string | null;
   // The page queued for this search, or undefined when none is.
   pendingPage: string | null | undefined;
+  failed: boolean;
+  hydration: Map<string, "loading" | "error">;
 };
 
 function remoteSearchKey(accountId: string, predicate: MailPredicate) {

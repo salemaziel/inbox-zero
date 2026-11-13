@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { BarChartIcon } from "lucide-react";
 import { type SubmitHandler, useForm } from "react-hook-form";
 import useSWR from "swr";
@@ -160,6 +161,7 @@ function ModelSectionForm(props: {
     isSubscriptionProvider(provider)
       ? getRecommendedTaskModel(provider, type, getModels(provider))
       : null;
+  const { t } = useLingui();
 
   const {
     register,
@@ -322,7 +324,7 @@ function ModelSectionForm(props: {
         <>
           {modelSelectOptions.length ? (
             <Select
-              label="Model"
+              label={t`Model`}
               options={modelSelectOptions}
               explainText={mainModel?.description ?? undefined}
               {...register("aiModel", {
@@ -342,7 +344,7 @@ function ModelSectionForm(props: {
             <Input
               type="text"
               name="aiModel"
-              label="Model"
+              label={t`Model`}
               registerProps={register("aiModel")}
               error={errors.aiModel}
             />
@@ -542,7 +544,7 @@ function ModelSectionForm(props: {
       )}
 
       {globalError?.message && (
-        <AlertError title="Error saving" description={globalError.message} />
+        <AlertError title={t`Error saving`} description={globalError.message} />
       )}
 
       {aiProvider === Provider.OPEN_AI &&
@@ -550,24 +552,24 @@ function ModelSectionForm(props: {
         modelSelectOptions.length === 0 &&
         (hasStoredAiApiKey ? (
           <AlertError
-            title="Invalid API Key"
-            description="We couldn't validate your API key. Please try again."
+            title={t`Invalid API Key`}
+            description={t`We couldn't validate your API key. Please try again.`}
           />
         ) : (
           <AlertBasic
-            title="API Key"
-            description="Click Save to view available models for your API key."
+            title={t`API Key`}
+            description={t`Click Save to view available models for your API key.`}
           />
         ))}
 
       <div className="flex items-center gap-2">
         <Button type="submit" size="sm" loading={isSubmitting}>
-          Save
+          <Trans>Save</Trans>
         </Button>
         <Button asChild variant="outline" size="sm">
           <Link href={prefixPath(emailAccountId, "/usage")}>
             <BarChartIcon className="mr-2 size-4" />
-            View usage
+            <Trans>View usage</Trans>
           </Link>
         </Button>
       </div>

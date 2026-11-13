@@ -20,6 +20,7 @@ import {
   type StopCondition,
   NoObjectGeneratedError,
   TypeValidationError,
+  type Experimental_Steering,
 } from "ai";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { captureAiGeneration } from "@posthog/ai";
@@ -209,7 +210,10 @@ type LlmFallbackFailure = {
   category: LlmFallbackFailureCategory;
 };
 
-type ProviderCostSource = "openrouter_usage" | "openrouter_step_usage_sum";
+type ProviderCostSource =
+  | "openrouter_usage"
+  | "openrouter_step_usage_sum"
+  | "perplexity_usage";
 
 type UsageMetadata = {
   providerReportedCost?: number;
@@ -275,6 +279,8 @@ type ToolCallAgentStreamOptions = BaseStreamOptions & {
   onEnd?: StreamTextOnEndCallback<Record<string, Tool>>;
   onStepEnd?: GenerateTextOnStepEndCallback<Record<string, Tool>>;
   onModelResolved?: (resolvedModel: ToolCallAgentResolvedModel) => void;
+  // Called once per model attempt; steering objects are single-use.
+  createSteering?: () => Experimental_Steering;
   temperature?: number;
   abortSignal?: AbortSignal;
 };
@@ -925,6 +931,7 @@ export async function toolCallAgentStream(options: ToolCallAgentStreamOptions) {
     onStepEnd,
     onModelResolved,
     sensitiveDataPolicy,
+    createSteering,
     temperature,
     abortSignal,
   } = options;
@@ -1042,6 +1049,11 @@ export async function toolCallAgentStream(options: ToolCallAgentStreamOptions) {
       return await agent.stream({
         messages: protectedMessages as ModelMessage[],
         experimental_transform: smoothStream({ chunking: "word" }),
+        // Bridged CLI models run their tools themselves and ignore
+        // activeTools, so a steered tool-free step can't be enforced there.
+        experimental_steering: bridgedAgent.bridged
+          ? undefined
+          : createSteering?.(),
         onStepEnd,
         abortSignal,
       });
@@ -1863,7 +1875,19 @@ function dedupeRepairCandidates(
 function getUsageMetadata(result: unknown): UsageMetadata {
   const stepCount = getStepCount(result);
   const toolCallCount = getToolCallCount(result);
-  const providerCost = getOpenRouterProviderCost(result);
+  const perplexity = getObjectProperty(
+    getObjectProperty(result, "providerMetadata"),
+    "perplexity",
+  );
+  const perplexityCost = getFiniteNumber(getProperty(perplexity, "cost"));
+  const providerCost =
+    perplexityCost !== undefined
+      ? {
+          providerReportedCost: perplexityCost,
+          providerCostSource: "perplexity_usage" as const,
+          providerUpstreamInferenceCost: undefined,
+        }
+      : getOpenRouterProviderCost(result);
 
   return {
     stepCount,
@@ -1897,6 +1921,11 @@ async function saveUsageWithMetadata({
   hasUserApiKey: boolean;
 }) {
   const usageMetadata = getUsageMetadata(result);
+  const perplexity = getObjectProperty(
+    getObjectProperty(result, "providerMetadata"),
+    "perplexity",
+  );
+  const resolvedModel = getProperty(perplexity, "model");
 
   await saveAiUsage({
     userId,
@@ -1904,7 +1933,10 @@ async function saveUsageWithMetadata({
     emailAccountId,
     usage,
     provider,
-    model,
+    model:
+      provider === "perplexity" && typeof resolvedModel === "string"
+        ? resolvedModel
+        : model,
     label,
     hasUserApiKey,
     providerReportedCost: usageMetadata.providerReportedCost,
@@ -1998,10 +2030,10 @@ function getOpenRouterUsage(value: unknown): {
   const providerMetadata = getObjectProperty(value, "providerMetadata");
   const openRouterMetadata = getObjectProperty(providerMetadata, "openrouter");
   const usage = getObjectProperty(openRouterMetadata, "usage");
-  const costDetails = getObjectProperty(usage, "cost_details");
+  const costDetails = getObjectProperty(usage, "costDetails");
   const cost = getFiniteNumber(getProperty(usage, "cost"));
   const upstreamInferenceCost = getFiniteNumber(
-    getProperty(costDetails, "upstream_inference_cost"),
+    getProperty(costDetails, "upstreamInferenceCost"),
   );
 
   if (cost === undefined && upstreamInferenceCost === undefined) return null;

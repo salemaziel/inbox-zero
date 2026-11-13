@@ -8,7 +8,10 @@ import {
   getGmailMailChangesPage,
   hydrateGmailMailMessages,
 } from "@/utils/gmail/local-mail-sync";
-import { matchesSenderFilter } from "@/utils/split-inbox/sender-filter";
+import {
+  matchesRecipientFilter,
+  matchesSenderFilter,
+} from "@/utils/split-inbox/sender-filter";
 import type { gmail_v1 } from "@googleapis/gmail";
 import chunk from "lodash/chunk";
 import type { Attachment as MailAttachment } from "nodemailer/lib/mailer";
@@ -847,8 +850,8 @@ export class GmailProvider implements EmailProvider {
     fromEmails: string[],
     ownerEmail: string,
     emailAccountId: string,
-  ): Promise<void> {
-    await this.archiveMessagesFromSenders(
+  ): Promise<number> {
+    return this.archiveMessagesFromSenders(
       fromEmails,
       ownerEmail,
       emailAccountId,
@@ -1288,16 +1291,6 @@ export class GmailProvider implements EmailProvider {
     return messages.filter((message) =>
       message.labelIds?.includes(GmailLabel.INBOX),
     );
-  }
-
-  async getPreviousConversationMessages(
-    messageIds: string[],
-  ): Promise<ParsedMessage[]> {
-    return getMessagesBatch({
-      messageIds,
-      accessToken: getAccessTokenFromClient(this.client),
-      logger: this.logger,
-    });
   }
 
   async removeThreadLabel(threadId: string, labelId: string): Promise<void> {
@@ -1876,6 +1869,7 @@ export class GmailProvider implements EmailProvider {
     return this.withRateLimitTracking("get-threads-with-query", async () => {
       const {
         fromEmail,
+        toEmail,
         after,
         before,
         isUnread,
@@ -1890,6 +1884,13 @@ export class GmailProvider implements EmailProvider {
 
         if (fromEmail) {
           queryParts.push(`from:${fromEmail}`);
+        }
+
+        if (toEmail) {
+          // Gmail doesn't match "to:@domain", only the bare domain, which is
+          // looser, so domain matches are narrowed again below.
+          const recipient = toEmail.trim().replace(/^@/, "");
+          queryParts.push(`{to:${recipient} cc:${recipient}}`);
         }
 
         if (after) {
@@ -1957,8 +1958,12 @@ export class GmailProvider implements EmailProvider {
       const threads: EmailThread[] = [];
       const maxResults = options.maxResults || 50;
       const domainFilter = fromEmail?.trim().startsWith("@") ? fromEmail : null;
+      const recipientDomainFilter = toEmail?.trim().startsWith("@")
+        ? toEmail
+        : null;
+      const filtersLocally = Boolean(domainFilter || recipientDomainFilter);
       let nextPageToken = options.pageToken;
-      for (let page = 0; page < (domainFilter ? 5 : 1); page++) {
+      for (let page = 0; page < (filtersLocally ? 5 : 1); page++) {
         const result = await getThreadsWithNextPageToken({
           gmail: this.client,
           q: getQuery(),
@@ -1982,9 +1987,20 @@ export class GmailProvider implements EmailProvider {
         threads.push(
           ...hydrated.filter(
             (thread) =>
-              !domainFilter ||
+              !filtersLocally ||
               thread.messages.some((message) => {
-                if (!matchesSenderFilter(message.headers.from, domainFilter))
+                if (
+                  domainFilter &&
+                  !matchesSenderFilter(message.headers.from, domainFilter)
+                )
+                  return false;
+                if (
+                  recipientDomainFilter &&
+                  !matchesRecipientFilter(
+                    message.headers,
+                    recipientDomainFilter,
+                  )
+                )
                   return false;
                 const labels = message.labelIds ?? [];
                 if (resolvedLabelIds?.some((label) => !labels.includes(label)))

@@ -187,11 +187,12 @@ export interface EmailProvider {
     labelId?: string,
   ): Promise<void>;
   blockUnsubscribedEmail(messageId: string): Promise<void>;
+  /** Returns the number of messages actually moved out of the inbox. */
   bulkArchiveFromSenders(
     fromEmails: string[],
     ownerEmail: string,
     emailAccountId: string,
-  ): Promise<void>;
+  ): Promise<number>;
   bulkArchiveSenderOrThrow(
     fromEmail: string,
     ownerEmail: string,
@@ -353,9 +354,6 @@ export interface EmailProvider {
   getOriginalMessage(
     originalMessageId: string | undefined,
   ): Promise<ParsedMessage | null>;
-  getPreviousConversationMessages(
-    messageIds: string[],
-  ): Promise<ParsedMessage[]>;
   /**
    * The addresses the user can send from. Empty when the provider doesn't
    * offer a choice, so mail goes out from the account address.

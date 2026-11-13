@@ -1,5 +1,7 @@
 "use client";
 
+import { msg, plural } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useEffect, useState } from "react";
 import { useAction } from "next-safe-action/hooks";
 import type { GetIntegrationsResponse } from "@/app/api/mcp/integrations/route";
@@ -29,6 +31,7 @@ import { useAccount } from "@/providers/EmailAccountProvider";
 import { NativeTokenPasteDialog } from "./NativeTokenPasteDialog";
 import { RequestAccessDialog } from "./RequestAccessDialog";
 import { startMcpOAuth } from "./startMcpOAuth";
+import { INTEGRATION_DESCRIPTION_MESSAGES } from "./integration-messages";
 import { truncate } from "@/utils/string";
 import { useProductAnalytics } from "@/hooks/useProductAnalytics";
 import { getActionErrorMessage } from "@/utils/error";
@@ -44,6 +47,7 @@ export function IntegrationRow({
   integration,
   onConnectionChange,
 }: IntegrationRowProps) {
+  const { t, i18n } = useLingui();
   const { emailAccountId } = useAccount();
   const analytics = useProductAnalytics("integrations");
   const [connecting, setConnecting] = useState(false);
@@ -93,10 +97,20 @@ export function IntegrationRow({
 
   const connected = !!conn;
   const isActive = conn?.isActive || false;
-  const toolsCount = conn?.tools?.filter((t) => t.isEnabled).length || 0;
+  const toolsCount = conn?.tools?.filter((tool) => tool.isEnabled).length || 0;
   const totalTools = conn?.tools?.length || 0;
   const connectionId = conn?.id;
   const tools = conn?.tools || [];
+  const descriptionMessage = isCustom
+    ? undefined
+    : INTEGRATION_DESCRIPTION_MESSAGES[integration.name];
+  const manageToolsLabel = t`${plural(toolsCount, {
+    one: `Manage tools (# of ${totalTools} on)`,
+    other: `Manage tools (# of ${totalTools} on)`,
+  })}`;
+  const description = descriptionMessage
+    ? i18n._(descriptionMessage)
+    : integration.description;
 
   const handleConnect = async () => {
     analytics.captureAction("integration_connect_started", {
@@ -120,8 +134,8 @@ export function IntegrationRow({
         reason: "unsupported_auth_type",
       });
       toastError({
-        title: "Error connecting to integration",
-        description: "API token connections are not supported yet",
+        title: t`Error connecting to integration`,
+        description: t`API token connections are not supported yet`,
       });
       return;
     }
@@ -145,11 +159,11 @@ export function IntegrationRow({
         error,
       );
       toastError({
-        title: `Error connecting to ${integration.displayName}`,
+        title: t`Error connecting to ${integration.displayName}`,
         description:
           error instanceof Error && error.message
             ? error.message
-            : "Please try again or contact support if the issue persists.",
+            : t`Please try again or contact support if the issue persists.`,
       });
       setConnecting(false);
     }
@@ -182,19 +196,21 @@ export function IntegrationRow({
 
       if (result?.serverError) {
         toastError({
-          title: "Error updating integration",
+          title: t`Error updating integration`,
           description: result.serverError,
         });
       } else {
         toastSuccess({
-          description: `${integration.displayName} ${nextActive ? "resumed" : "paused"}`,
+          description: nextActive
+            ? t`${integration.displayName} resumed`
+            : t`${integration.displayName} paused`,
         });
         onConnectionChange();
       }
     } catch (error) {
       toastError({
-        title: "Error updating integration",
-        description: error instanceof Error ? error.message : "Unknown error",
+        title: t`Error updating integration`,
+        description: error instanceof Error ? error.message : t`Unknown error`,
       });
     }
   };
@@ -213,17 +229,17 @@ export function IntegrationRow({
 
       if (result?.serverError) {
         toastError({
-          title: "Error toggling tool",
+          title: t`Error toggling tool`,
           description: result.serverError,
         });
       } else {
-        toastSuccess({ description: "Tool updated" });
+        toastSuccess({ description: t`Tool updated` });
         onConnectionChange();
       }
     } catch (error) {
       toastError({
-        title: "Error toggling tool",
-        description: error instanceof Error ? error.message : "Unknown error",
+        title: t`Error toggling tool`,
+        description: error instanceof Error ? error.message : t`Unknown error`,
       });
     }
   };
@@ -242,20 +258,20 @@ export function IntegrationRow({
         const { toolsCount } = result.data;
         toastSuccess({
           description: isNative
-            ? "Connected."
-            : `Connected. ${toolsCount} ${toolsCount === 1 ? "tool" : "tools"} available.`,
+            ? t`Connected.`
+            : t`Connected. ${plural(toolsCount, { one: "# tool available.", other: "# tools available." })}`,
         });
       } else {
         toastError({
-          title: `Could not connect to ${integration.displayName}`,
+          title: t`Could not connect to ${integration.displayName}`,
           description: getActionErrorMessage(result),
         });
       }
       onConnectionChange();
     } catch (error) {
       toastError({
-        title: `Could not connect to ${integration.displayName}`,
-        description: error instanceof Error ? error.message : "Unknown error",
+        title: t`Could not connect to ${integration.displayName}`,
+        description: error instanceof Error ? error.message : t`Unknown error`,
       });
     } finally {
       setTesting(false);
@@ -265,8 +281,8 @@ export function IntegrationRow({
 
   const handleDisconnect = async () => {
     const confirmMessage = isCustom
-      ? "Are you sure you want to remove this server? This permanently deletes its connection, credentials, and tools."
-      : "Are you sure you want to disconnect this integration? This will remove all associated tools.";
+      ? t`Are you sure you want to remove this server? This permanently deletes its connection, credentials, and tools.`
+      : t`Are you sure you want to disconnect this integration? This will remove all associated tools.`;
 
     if (!confirm(confirmMessage)) return;
 
@@ -288,7 +304,7 @@ export function IntegrationRow({
 
       if (result?.serverError) {
         toastError({
-          title: "Error disconnecting",
+          title: t`Error disconnecting`,
           description: result.serverError,
         });
       } else {
@@ -296,17 +312,17 @@ export function IntegrationRow({
           integration: integration.name,
         });
         toastSuccess({
-          title: isCustom ? "Server removed" : "Disconnected successfully",
+          title: isCustom ? t`Server removed` : t`Disconnected successfully`,
           description: isCustom
-            ? `Removed ${integration.displayName}`
-            : `Disconnected from ${integration.displayName}`,
+            ? t`Removed ${integration.displayName}`
+            : t`Disconnected from ${integration.displayName}`,
         });
         onConnectionChange();
       }
     } catch (error) {
       toastError({
-        title: "Error disconnecting",
-        description: error instanceof Error ? error.message : "Unknown error",
+        title: t`Error disconnecting`,
+        description: error instanceof Error ? error.message : t`Unknown error`,
       });
     } finally {
       setDisconnecting(false);
@@ -323,13 +339,17 @@ export function IntegrationRow({
               <div className="flex items-center gap-2">
                 <span>{integration.shortName || integration.displayName}</span>
                 {integration.comingSoon && (
-                  <Badge variant="secondary">Coming soon</Badge>
+                  <Badge variant="secondary">
+                    <Trans>Coming soon</Trans>
+                  </Badge>
                 )}
-                {isCustom && <Badge variant="secondary">Custom</Badge>}
+                {isCustom && (
+                  <Badge variant="secondary">
+                    <Trans>Custom</Trans>
+                  </Badge>
+                )}
               </div>
-              {integration.description && (
-                <MutedText>{integration.description}</MutedText>
-              )}
+              {description && <MutedText>{description}</MutedText>}
             </div>
           </div>
         </TableCell>
@@ -340,11 +360,13 @@ export function IntegrationRow({
             <div className="flex items-center gap-2">
               {connected ? (
                 isActive ? (
-                  <span className="text-green-600 text-sm">✓ Connected</span>
+                  <span className="text-green-600 text-sm">
+                    <Trans>✓ Connected</Trans>
+                  </span>
                 ) : (
                   <>
                     <span className="text-muted-foreground text-sm">
-                      Paused
+                      <Trans>Paused</Trans>
                     </span>
                     {isNative && (
                       <Button
@@ -353,7 +375,7 @@ export function IntegrationRow({
                         onClick={handleConnect}
                         disabled={connecting}
                       >
-                        {connecting ? "Reconnecting..." : "Reconnect"}
+                        {connecting ? t`Reconnecting...` : t`Reconnect`}
                       </Button>
                     )}
                   </>
@@ -366,17 +388,17 @@ export function IntegrationRow({
                   disabled={connecting}
                 >
                   {connecting
-                    ? "Connecting..."
+                    ? t`Connecting...`
                     : integration.authType === "api-token" &&
                         integration.connectKind !== "token-redirect"
-                      ? "Connect with API Key"
-                      : "Connect"}
+                      ? t`Connect with API Key`
+                      : t`Connect`}
                 </Button>
               )}
             </div>
           ) : (
             <TypographyP className="text-sm text-gray-500">
-              No Auth Required
+              <Trans>No Auth Required</Trans>
             </TypographyP>
           )}
         </TableCell>
@@ -387,7 +409,7 @@ export function IntegrationRow({
                 <Button
                   variant="ghost"
                   size="iconSm"
-                  aria-label="Integration actions"
+                  aria-label={t`Integration actions`}
                 >
                   <MoreVertical className="h-4 w-4" />
                 </Button>
@@ -397,9 +419,7 @@ export function IntegrationRow({
                   <>
                     {!isNative && tools.length > 0 && (
                       <DropdownMenuItem onClick={handleToggleToolsExpanded}>
-                        {expandedTools
-                          ? "Hide tools"
-                          : `Manage tools (${toolsCount} of ${totalTools} on)`}
+                        {expandedTools ? t`Hide tools` : manageToolsLabel}
                       </DropdownMenuItem>
                     )}
                     {isActive && (
@@ -410,18 +430,18 @@ export function IntegrationRow({
                         }}
                         disabled={testing}
                       >
-                        {testing ? "Testing..." : "Test connection"}
+                        {testing ? t`Testing...` : t`Test connection`}
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem onClick={handleTogglePause}>
-                      {isActive ? "Pause" : "Resume"}
+                      {isActive ? t`Pause` : t`Resume`}
                     </DropdownMenuItem>
                     {(integration.authType === "oauth" || isNative) && (
                       <DropdownMenuItem
                         onClick={handleConnect}
                         disabled={connecting}
                       >
-                        {connecting ? "Reconnecting..." : "Reconnect"}
+                        {connecting ? t`Reconnecting...` : t`Reconnect`}
                       </DropdownMenuItem>
                     )}
                   </>
@@ -431,7 +451,7 @@ export function IntegrationRow({
                   disabled={disconnecting}
                   className="text-red-600"
                 >
-                  {getDisconnectLabel({ isCustom, disconnecting })}
+                  {i18n._(getDisconnectLabel({ isCustom, disconnecting }))}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -462,8 +482,8 @@ function getDisconnectLabel({
   isCustom: boolean;
   disconnecting: boolean;
 }) {
-  if (isCustom) return disconnecting ? "Removing..." : "Remove";
-  return disconnecting ? "Disconnecting..." : "Disconnect";
+  if (isCustom) return disconnecting ? msg`Removing...` : msg`Remove`;
+  return disconnecting ? msg`Disconnecting...` : msg`Disconnect`;
 }
 
 interface ToolsListProps {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useLingui } from "@lingui/react/macro";
 import { Tooltip } from "@/components/Tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/utils";
@@ -15,19 +16,20 @@ export function SelectAllCheckbox({
   onSelectAll: () => void;
   onClearSelection: () => void;
 }) {
+  const { t } = useLingui();
   const allSelected = threadCount > 0 && selectedCount === threadCount;
 
   return (
     <Tooltip
-      content={allSelected ? "Deselect all conversations" : undefined}
+      content={allSelected ? t`Deselect all conversations` : undefined}
       shortcuts={
         allSelected
           ? undefined
-          : [{ id: "selectAll", label: "Select all conversations" }]
+          : [{ id: "selectAll", label: t`Select all conversations` }]
       }
     >
       <Checkbox
-        aria-label="Select all conversations"
+        aria-label={t`Select all conversations`}
         checked={allSelected}
         className={cn(mailCheckboxClassName, "shrink-0")}
         disabled={threadCount === 0}
@@ -46,10 +48,10 @@ export function SelectAllCheckbox({
 /**
  * Shared by the row checkboxes so select-all lines up with them and matches.
  * Keyed on `aria-checked` because a wrapping tooltip trigger overwrites
- * `data-state`. Checked is a blue outline and tick, not a fill, to stay light.
+ * `data-state`. Checked is a blue tick on the plain box, not a fill, to stay light.
  */
 export const mailCheckboxClassName =
-  "size-3.5 rounded border-input aria-checked:border-primary aria-checked:bg-transparent aria-checked:text-primary data-[state=checked]:bg-transparent data-[state=checked]:text-primary [&_svg]:size-2.5";
+  "size-3.5 rounded border-input aria-checked:bg-transparent aria-checked:text-primary data-[state=checked]:bg-transparent data-[state=checked]:text-primary [&_svg]:size-2.5";
 
 /**
  * Row checkboxes are revealed on hover and get an invisible hit area that

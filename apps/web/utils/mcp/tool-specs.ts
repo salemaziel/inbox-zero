@@ -412,12 +412,21 @@ export function getIntegrationActionLabel(action?: {
   integrationName?: string | null;
   integrationToolName?: string | null;
 }): string {
-  const spec = getIntegrationToolSpec(
+  return (
+    getIntegrationActionSpec(action)?.actionLabel ??
+    GENERIC_INTEGRATION_ACTION_LABEL
+  );
+}
+
+/** The spec an action calls. Every integration action names its tool. */
+export function getIntegrationActionSpec(action?: {
+  integrationName?: string | null;
+  integrationToolName?: string | null;
+}): IntegrationToolSpec | undefined {
+  return getIntegrationToolSpec(
     action?.integrationName,
     action?.integrationToolName,
   );
-
-  return spec?.actionLabel ?? GENERIC_INTEGRATION_ACTION_LABEL;
 }
 
 export function getIntegrationActionDisplayValue(action: {
@@ -425,10 +434,7 @@ export function getIntegrationActionDisplayValue(action: {
   integrationToolName?: string | null;
   integrationArgs?: unknown;
 }): string | null {
-  const spec = getIntegrationToolSpec(
-    action.integrationName,
-    action.integrationToolName,
-  );
+  const spec = getIntegrationActionSpec(action);
   if (!spec?.displayArgKey) return null;
 
   const args = action.integrationArgs;

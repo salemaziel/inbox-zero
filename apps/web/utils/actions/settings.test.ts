@@ -5,8 +5,10 @@ import {
   updateSensitiveDataPolicyAction,
   updateAiSettingsAction,
 } from "./settings";
+import { APICallError } from "ai";
 import { Prisma } from "@/generated/prisma/client";
-import { Provider } from "@/utils/llms/config";
+import { DEFAULT_PROVIDER, Provider } from "@/utils/llms/config";
+import { getModel } from "@/utils/llms/model";
 import {
   SUBSCRIPTION_MODELS,
   type SubscriptionModel,
@@ -21,18 +23,30 @@ vi.mock("@/utils/auth", () => ({
   })),
 }));
 
-const { clearSpecificErrorMessagesMock, mockEnv } = vi.hoisted(() => ({
-  clearSpecificErrorMessagesMock: vi.fn(),
-  mockEnv: {
-    AZURE_RESOURCE_NAME: "azure-resource",
-    CLI_LLM_ENABLED: true,
-    CLI_LLM_OWNER_EMAILS: "owner@example.com" as string | undefined,
-    EMAIL_ENCRYPT_SECRET: "test-email-secret",
-    EMAIL_ENCRYPT_SALT: "test-email-salt",
-    NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED: false,
-    NEXT_PUBLIC_SENSITIVE_DATA_POLICY_LOCKED: false,
-  },
+const { clearSpecificErrorMessagesMock, mockEnv, mockGenerateText } =
+  vi.hoisted(() => ({
+    clearSpecificErrorMessagesMock: vi.fn(),
+    mockGenerateText: vi.fn(),
+    mockEnv: {
+      AZURE_RESOURCE_NAME: "azure-resource",
+      CLI_LLM_ENABLED: true,
+      CLI_LLM_OWNER_EMAILS: "owner@example.com" as string | undefined,
+      EMAIL_ENCRYPT_SECRET: "test-email-secret",
+      EMAIL_ENCRYPT_SALT: "test-email-salt",
+      NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED: false,
+      NEXT_PUBLIC_SENSITIVE_DATA_POLICY_LOCKED: false,
+    },
+  }));
+
+vi.mock("ai", async (importActual) => ({
+  ...(await importActual<typeof import("ai")>()),
+  generateText: mockGenerateText,
 }));
+
+vi.mock("@/utils/llms/model", async (importActual) => {
+  const actual = await importActual<typeof import("@/utils/llms/model")>();
+  return { ...actual, getModel: vi.fn(actual.getModel) };
+});
 
 vi.mock("@/env", () => ({
   env: mockEnv,
@@ -70,6 +84,100 @@ describe("updateAiSettingsAction", () => {
     vi.mocked(getSubscriptionModels).mockImplementation(async (provider) => [
       ...(SUBSCRIPTION_MODELS[provider]?.models ?? []),
     ]);
+    mockGenerateText.mockResolvedValue({ text: "OK" });
+  });
+
+  it("rejects a model the provider does not recognize", async () => {
+    mockGenerateText.mockRejectedValueOnce(
+      createApiCallError(404, "The model `gpt-typo` does not exist"),
+    );
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-typo",
+      aiApiKey: "new-api-key",
+    });
+
+    expect(result?.serverError).toMatch(/model/i);
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a model ID OpenRouter says is not valid", async () => {
+    mockGenerateText.mockRejectedValueOnce(
+      createApiCallError(400, "openai/gpt-typo is not a valid model ID"),
+    );
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.OPENROUTER,
+      aiModel: "openai/gpt-typo",
+      aiApiKey: "new-api-key",
+    });
+
+    expect(result?.serverError).toMatch(/model/i);
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an API key the provider does not accept", async () => {
+    mockGenerateText.mockRejectedValueOnce(
+      createApiCallError(401, "Incorrect API key provided"),
+    );
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-5.1",
+      aiApiKey: "bad-api-key",
+    });
+
+    expect(result?.serverError).toMatch(/API key/i);
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("still saves when the check fails for a reason unrelated to the settings", async () => {
+    mockGenerateText.mockRejectedValueOnce(
+      createApiCallError(503, "Service unavailable"),
+    );
+
+    const result = await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-5.1",
+      aiApiKey: "new-api-key",
+    });
+
+    expect(result?.serverError).toBeUndefined();
+    expect(prisma.user.updateMany).toHaveBeenCalled();
+  });
+
+  it("checks the model with the stored key when the form leaves it blank", async () => {
+    await updateAiSettingsAction({
+      aiProvider: Provider.OPEN_AI,
+      aiModel: "gpt-5.1",
+      aiApiKey: undefined,
+    });
+
+    expect(getModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiProvider: Provider.OPEN_AI,
+        aiModel: "gpt-5.1",
+        aiApiKey: "stored-api-key",
+      }),
+      "default",
+    );
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText.mock.calls[0]?.[0]).toMatchObject({
+      model: { modelId: "gpt-5.1" },
+      providerOptions: { openai: expect.objectContaining({ store: false }) },
+    });
+  });
+
+  it("does not check the model when switching back to the default provider", async () => {
+    await updateAiSettingsAction({
+      aiProvider: DEFAULT_PROVIDER,
+      aiModel: "",
+      aiApiKey: undefined,
+    });
+
+    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).toHaveBeenCalled();
   });
 
   it("keeps the stored API key when the provider is unchanged and the form leaves it blank", async () => {
@@ -641,4 +749,13 @@ function codexModel(
     defaultEffort: null,
     weight: null,
   };
+}
+
+function createApiCallError(statusCode: number, message: string) {
+  return new APICallError({
+    message,
+    url: "https://api.example.com/v1/responses",
+    requestBodyValues: {},
+    statusCode,
+  });
 }

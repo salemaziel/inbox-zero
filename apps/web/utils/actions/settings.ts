@@ -1,5 +1,6 @@
 "use server";
 
+import { generateText } from "ai";
 import { actionClient } from "@/utils/actions/safe-action";
 import {
   saveAiSettingsBody,
@@ -39,7 +40,14 @@ import { actionClientUser } from "@/utils/actions/safe-action";
 import { ActionType, SystemType } from "@/generated/prisma/enums";
 import { Prisma } from "@/generated/prisma/client";
 import { clearSpecificErrorMessages, ErrorType } from "@/utils/error-messages";
-import { SafeError } from "@/utils/error";
+import {
+  getAIApiCallError,
+  isIncorrectAPIKeyError,
+  isInvalidAIModelError,
+  SafeError,
+} from "@/utils/error";
+import type { Logger } from "@/utils/logger";
+import { getModel } from "@/utils/llms/model";
 import { env } from "@/env";
 import { addActionOwnershipToInput } from "@/utils/rule/rule";
 import { isSensitiveDataPolicyLocked } from "@/utils/dlp/policy.server";
@@ -207,6 +215,20 @@ export const updateAiSettingsAction = actionClientUser
         if (!nextAiApiKey) {
           throw new SafeError("You must provide an API key for this provider");
         }
+      }
+
+      if (
+        aiProvider !== DEFAULT_PROVIDER &&
+        !isSubscriptionProvider(aiProvider) &&
+        nextAiApiKey
+      ) {
+        await assertAiModelAvailable({
+          userId,
+          aiProvider,
+          aiModel,
+          aiApiKey: nextAiApiKey,
+          logger,
+        });
       }
 
       const result = await prisma.user.updateMany({
@@ -561,5 +583,72 @@ async function assertSubscriptionChoice(
     throw new SafeError(
       `${entry.label} doesn't offer that thinking level. Pick another one.`,
     );
+  }
+}
+
+// A typo in a custom model name otherwise only shows up later, as failed or
+// empty AI runs. Only definite model or key errors block the save; anything
+// else (rate limits, outages) is not the user's settings.
+async function assertAiModelAvailable({
+  userId,
+  aiProvider,
+  aiModel,
+  aiApiKey,
+  logger,
+}: {
+  userId: string;
+  aiProvider: string;
+  aiModel: string;
+  aiApiKey: string;
+  logger: Logger;
+}) {
+  // Only API-key providers reach this check, so no CLI login or per-task
+  // model applies; the identity fields are not used for them.
+  const { model, modelName, providerOptions } = getModel(
+    {
+      id: userId,
+      email: "",
+      emailVerified: null,
+      aiProvider,
+      aiModel: aiModel || null,
+      aiApiKey,
+      aiReasoningEffort: null,
+      aiTaskModels: null,
+    },
+    "default",
+  );
+
+  try {
+    await generateText({
+      model,
+      providerOptions,
+      prompt: "Reply with OK.",
+      maxOutputTokens: 16,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    const apiError = getAIApiCallError(error);
+
+    if (apiError && isIncorrectAPIKeyError(apiError)) {
+      throw new SafeError(
+        "The provider rejected this API key. Check the key and try again.",
+      );
+    }
+
+    if (
+      apiError &&
+      (apiError.statusCode === 404 || isInvalidAIModelError(apiError))
+    ) {
+      throw new SafeError(
+        `The provider doesn't recognize the model "${modelName}". Check the model name and try again.`,
+      );
+    }
+
+    logger.warn("Could not verify AI model settings", {
+      error,
+      provider: aiProvider,
+      modelName,
+    });
   }
 }

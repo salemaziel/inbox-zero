@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { MessageDescriptor } from "@lingui/core";
+import { useLingui } from "@lingui/react/macro";
 import { env } from "@/env";
 import { Logo } from "@/components/new-landing/common/Logo";
 import { cn } from "@/utils";
@@ -7,6 +9,8 @@ import { Paragraph } from "@/components/new-landing/common/Typography";
 import { UnicornScene } from "@/components/new-landing/UnicornScene";
 import { footerNavigation } from "@/app/(landing)/home/Footer";
 import { BRAND_LOGO_URL } from "@/utils/branding";
+import { LanguageSwitcher } from "@/components/new-landing/LanguageSwitcher";
+import { LandingLink } from "@/components/new-landing/LandingLink";
 
 interface FooterProps {
   className: string;
@@ -14,6 +18,8 @@ interface FooterProps {
 }
 
 export function Footer({ className, variant = "default" }: FooterProps) {
+  const { t } = useLingui();
+
   if (env.NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS) return null;
 
   return (
@@ -30,36 +36,46 @@ export function Footer({ className, variant = "default" }: FooterProps) {
         <nav aria-label="Footer">
           <div className="mt-16 grid grid-cols-2 gap-8 lg:grid-cols-5 xl:col-span-2 xl:mt-0">
             <div>
-              <FooterList title="Product" items={footerNavigation.main} />
+              <FooterList title={t`Product`} items={footerNavigation.main} />
             </div>
             <div>
-              <FooterList title="Use Cases" items={footerNavigation.useCases} />
+              <FooterList
+                title={t`Use Cases`}
+                items={footerNavigation.useCases}
+              />
               <div className="mt-6">
                 <FooterList
-                  title="Industries"
+                  title={t`Industries`}
                   items={footerNavigation.industries}
                 />
               </div>
             </div>
             <div>
-              <FooterList title="Support" items={footerNavigation.support} />
+              <FooterList title={t`Support`} items={footerNavigation.support} />
               <div className="mt-6">
-                <FooterList title="Free Tools" items={footerNavigation.tools} />
+                <FooterList
+                  title={t`Free Tools`}
+                  items={footerNavigation.tools}
+                />
               </div>
             </div>
             <div>
-              <FooterList title="Company" items={footerNavigation.company} />
+              <FooterList title={t`Company`} items={footerNavigation.company} />
             </div>
             <div>
-              <FooterList title="Legal" items={footerNavigation.legal} />
+              <FooterList title={t`Legal`} items={footerNavigation.legal} />
               <div className="mt-6">
-                <FooterList title="Compare" items={footerNavigation.compare} />
+                <FooterList
+                  title={t`Compare`}
+                  items={footerNavigation.compare}
+                />
               </div>
             </div>
           </div>
         </nav>
-        <div className="mt-40 flex items-center justify-between">
+        <div className="mt-40 flex flex-wrap items-center justify-between gap-6">
           <Logo />
+          <LanguageSwitcher />
           <div className="flex items-center gap-4">
             {footerNavigation.social.map((item) => (
               <Link
@@ -83,8 +99,10 @@ export function Footer({ className, variant = "default" }: FooterProps) {
 
 function FooterList(props: {
   title: string;
-  items: { name: string; href: string; target?: string }[];
+  items: { name: MessageDescriptor; href: string; target?: string }[];
 }) {
+  const { i18n } = useLingui();
+
   return (
     <>
       <Paragraph
@@ -97,15 +115,15 @@ function FooterList(props: {
       </Paragraph>
       <ul className="mt-6 space-y-3">
         {props.items.map((item) => (
-          <li key={item.name}>
-            <Link
+          <li key={item.href}>
+            <LandingLink
               href={item.href}
               target={item.target}
               prefetch={false}
               className="text-sm leading-6 text-gray-500 hover:text-gray-900"
             >
-              {item.name}
-            </Link>
+              {i18n._(item.name)}
+            </LandingLink>
           </li>
         ))}
       </ul>

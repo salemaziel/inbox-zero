@@ -5,6 +5,7 @@ import prisma from "@/utils/__mocks__/prisma";
 import { createTestLogger, getMockMessage } from "@/__tests__/helpers";
 import { createEmailProvider } from "@/utils/email/provider";
 import { SafeError } from "@/utils/error";
+import { addChatActionTotals } from "@/utils/ai/assistant/chat-action-totals";
 import {
   forwardEmailTool,
   getAccountOverviewTool,
@@ -17,6 +18,7 @@ import {
 } from "./chat-inbox-tools";
 
 vi.mock("@/utils/prisma");
+vi.mock("@/utils/ai/assistant/chat-action-totals");
 vi.mock("@/utils/email/provider");
 vi.mock("@/utils/posthog", () => ({
   posthogCaptureEvent: vi.fn().mockResolvedValue(undefined),
@@ -120,16 +122,13 @@ describe("chat inbox tools", () => {
       logger,
     });
 
-    const result = await (toolInstance.execute as any)({
+    const result = await asSchema(toolInstance.inputSchema).validate!({
       to: "Jack Cohen",
       subject: "Hello",
       messageHtml: "<p>Hi there</p>",
     });
 
-    expect(result).toEqual({
-      error: "Invalid sendEmail input: to must include valid email address(es)",
-    });
-    expect(createEmailProvider).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
   });
 
   it("prepares threaded reply flow without sending immediately", async () => {
@@ -264,17 +263,13 @@ describe("chat inbox tools", () => {
       logger,
     });
 
-    const result = await (toolInstance.execute as any)({
+    const result = await asSchema(toolInstance.inputSchema).validate!({
       messageId: "message-1",
       to: "Jack Cohen",
       content: "Forwarding this along.",
     });
 
-    expect(result).toEqual({
-      error:
-        "Invalid forwardEmail input: to must include valid email address(es)",
-    });
-    expect(createEmailProvider).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
   });
 
   it("resolves a label name before archiving threads", async () => {
@@ -324,6 +319,60 @@ describe("chat inbox tools", () => {
       successCount: 2,
       requestedCount: 2,
     });
+  });
+
+  it("reports the chat's running totals alongside this call's counts", async () => {
+    vi.mocked(createEmailProvider).mockResolvedValue({
+      markReadThread: vi.fn().mockResolvedValue(undefined),
+    } as any);
+    vi.mocked(addChatActionTotals).mockResolvedValue({
+      threads_archived: 1595,
+      threads_marked_unread: 2,
+    });
+
+    const result = await (
+      manageInboxTool({
+        email: TEST_EMAIL,
+        emailAccountId: "email-account-1",
+        provider: "google",
+        logger,
+        chatId: "chat-1",
+      }).execute as any
+    )({
+      action: "mark_read_threads",
+      read: false,
+      threadIds: ["thread-1", "thread-2"],
+    });
+
+    expect(addChatActionTotals).toHaveBeenCalledWith({
+      chatId: "chat-1",
+      counts: { threads_marked_unread: 2 },
+    });
+    expect(result).toMatchObject({
+      success: true,
+      successCount: 2,
+      totalsInThisChat: { threads_archived: 1595, threads_marked_unread: 2 },
+    });
+  });
+
+  it("still reports a completed action when the chat totals cannot be saved", async () => {
+    vi.mocked(createEmailProvider).mockResolvedValue({
+      archiveThreadWithLabel: vi.fn().mockResolvedValue(undefined),
+    } as any);
+    vi.mocked(addChatActionTotals).mockRejectedValue(new Error("db down"));
+
+    const result = await (
+      manageInboxTool({
+        email: TEST_EMAIL,
+        emailAccountId: "email-account-1",
+        provider: "google",
+        logger,
+        chatId: "chat-1",
+      }).execute as any
+    )({ action: "archive_threads", threadIds: ["thread-1"] });
+
+    expect(result).toMatchObject({ success: true, successCount: 1 });
+    expect(result).not.toHaveProperty("totalsInThisChat");
   });
 
   it("requires action-specific Gmail manageInbox fields", async () => {
@@ -883,6 +932,72 @@ describe("chat inbox tools", () => {
       successCount: 0,
       requestedCount: 1,
       failedThreadIds: ["thread-1"],
+    });
+  });
+
+  it("retries a thread action with the thread ID when given a message ID", async () => {
+    const markReadThread = vi.fn(async (threadId: string) => {
+      if (threadId !== "thread-1") {
+        throw new Error("Requested entity was not found.");
+      }
+    });
+    const getMessage = vi
+      .fn()
+      .mockResolvedValue({ id: "message-2", threadId: "thread-1" });
+
+    vi.mocked(createEmailProvider).mockResolvedValue({
+      markReadThread,
+      getMessage,
+    } as any);
+
+    const result = await (
+      manageInboxTool({
+        email: TEST_EMAIL,
+        emailAccountId: "email-account-1",
+        provider: "google",
+        logger,
+      }).execute as any
+    )({
+      action: "mark_read_threads",
+      read: true,
+      threadIds: ["message-2"],
+    });
+
+    expect(getMessage).toHaveBeenCalledWith("message-2");
+    expect(markReadThread).toHaveBeenLastCalledWith("thread-1", true);
+    expect(result).toMatchObject({ success: true, successCount: 1 });
+  });
+
+  it("reports a missing thread as failed when the ID is not a message either", async () => {
+    const markReadThread = vi
+      .fn()
+      .mockRejectedValue(new Error("Requested entity was not found."));
+    const getMessage = vi
+      .fn()
+      .mockRejectedValue(new Error("Requested entity was not found."));
+
+    vi.mocked(createEmailProvider).mockResolvedValue({
+      markReadThread,
+      getMessage,
+    } as any);
+
+    const result = await (
+      manageInboxTool({
+        email: TEST_EMAIL,
+        emailAccountId: "email-account-1",
+        provider: "google",
+        logger,
+      }).execute as any
+    )({
+      action: "mark_read_threads",
+      read: true,
+      threadIds: ["missing-1"],
+    });
+
+    expect(markReadThread).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      success: false,
+      failedThreadIds: ["missing-1"],
     });
   });
 });
@@ -2350,9 +2465,9 @@ describe("chat inbox tools - sender categories", () => {
     expect(result.totalQueuedSenders).toBe(8);
   });
 
-  it("startSenderCategorization reports an AI access error before queuing work", async () => {
+  it("startSenderCategorization offers an upgrade instead of failing when the plan lacks AI access", async () => {
     mockValidateUserAndAiAccess.mockRejectedValue(
-      new SafeError("Please upgrade for AI access"),
+      new SafeError("Please upgrade for AI access", 403),
     );
 
     const toolInstance = startSenderCategorizationTool({
@@ -2364,8 +2479,30 @@ describe("chat inbox tools - sender categories", () => {
 
     const result = await (toolInstance.execute as any)({});
 
-    expect(result).toEqual({ error: "Please upgrade for AI access" });
+    expect(result).toEqual({
+      upgradeRequired: true,
+      message: expect.any(String),
+    });
+    expect(result).not.toHaveProperty("error");
     expect(createEmailProvider).not.toHaveBeenCalled();
+    expect(mockStartBulkCategorization).not.toHaveBeenCalled();
+  });
+
+  it("startSenderCategorization reports other access failures as errors", async () => {
+    mockValidateUserAndAiAccess.mockRejectedValue(
+      new SafeError("User not found"),
+    );
+
+    const result = await (
+      startSenderCategorizationTool({
+        email: TEST_EMAIL,
+        emailAccountId: "email-account-1",
+        provider: "google",
+        logger,
+      }).execute as any
+    )({});
+
+    expect(result).toEqual({ error: "User not found" });
     expect(mockStartBulkCategorization).not.toHaveBeenCalled();
   });
 

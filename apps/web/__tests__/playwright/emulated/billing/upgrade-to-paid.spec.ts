@@ -55,6 +55,17 @@ test("starts a trial from the post-onboarding upgrade page", async ({
   await expect(
     page.locator(`button[aria-describedby="${STARTER_TIER}"]`),
   ).toHaveText("Current plan", { timeout: 60_000 });
+
+  // The same plan on the other billing interval is offered as a plan change.
+  await page.getByRole("radio", { name: "Monthly" }).click();
+  await expect(
+    page.locator(`button[aria-describedby="${STARTER_TIER}"]`),
+  ).toHaveText("Switch to this plan");
+  await capturePlaywrightCheckpoint(
+    page,
+    test.info(),
+    "billing-interval-switch",
+  );
 });
 
 test("records the paid conversion once the first invoice is paid", async ({

@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { I18n } from "@lingui/core";
+import { msg } from "@lingui/core/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import {
   AlertCircleIcon,
   BellIcon,
@@ -15,12 +18,7 @@ import type { ReplyDraftMode } from "@/utils/mail-engine/reply-drafts";
 import { useIsOnline } from "@/hooks/useIsOnline";
 import { InlineActionButton } from "@/components/InlineActionButton";
 import type { ScheduledEmailsResponse } from "@/app/api/user/scheduled-emails/route";
-import {
-  cancelScheduledEmailAction,
-  cancelEmailReminderAction,
-  retryScheduledEmailAction,
-} from "@/utils/actions/scheduled-email";
-import { getActionErrorMessage } from "@/utils/error";
+import { useScheduledEmailActions } from "@/hooks/useScheduledEmailActions";
 import { getLatestScheduledSendId } from "@/components/email-list/latest-scheduled-send";
 import {
   canEditEngineSend,
@@ -47,8 +45,11 @@ export function ThreadDeliveryStatus({
   refetch: () => void;
   canEditReply: boolean;
 }) {
+  const { t, i18n } = useLingui();
   const client = useOptionalMailClient();
   const { mutate: mutateCache } = useSWRConfig();
+  const { cancelSend, retrySend, cancelReminder } =
+    useScheduledEmailActions(emailAccountId);
   const online = useIsOnline();
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -135,19 +136,11 @@ export function ThreadDeliveryStatus({
       setActionError(
         failure instanceof Error
           ? failure.message
-          : "Could not update delivery.",
+          : t`Could not update delivery.`,
       );
     } finally {
       setBusy(false);
     }
-  };
-  const scheduledAction = async (
-    action: typeof cancelScheduledEmailAction,
-    id: string,
-  ) => {
-    const result = await action(emailAccountId, { id });
-    if (result?.serverError || result?.validationErrors)
-      throw new Error(getActionErrorMessage(result));
   };
   const scheduledRows = (data?.scheduledEmails ?? []).filter(
     (row) =>
@@ -166,7 +159,7 @@ export function ThreadDeliveryStatus({
     [dismissedSendIds, outbox],
   );
   return (
-    <section className="space-y-1" aria-label="Reply delivery status">
+    <section className="space-y-1" aria-label={t`Reply delivery status`}>
       {visible.map((row) => {
         const showStatus = shouldShowEngineDeliveryStatus({
           online,
@@ -192,19 +185,19 @@ export function ThreadDeliveryStatus({
               className="flex items-center gap-2 font-medium text-foreground"
             >
               <DeliveryIcon status={iconStatus} offline={!online} />
-              {engineDeliveryLabel(row.status, online)}
+              {engineDeliveryLabel(row.status, online, i18n)}
             </p>
             {(row.status === "uncertain" || row.status === "failed") && (
               <a
                 className="underline underline-offset-4"
                 href={`/${emailAccountId}/mail?type=sent`}
               >
-                Check Sent
+                <Trans>Check Sent</Trans>
               </a>
             )}
             {row.status === "failed" && (
               <InlineActionButton
-                aria-label="Dismiss failed reply"
+                aria-label={t`Dismiss failed reply`}
                 disabled={busy}
                 onClick={() =>
                   setDismissedSendIds((current) => [
@@ -213,7 +206,7 @@ export function ThreadDeliveryStatus({
                   ])
                 }
               >
-                Dismiss
+                <Trans>Dismiss</Trans>
               </InlineActionButton>
             )}
             {canEditReply && canEditEngineSend(row.status, online) && (
@@ -236,7 +229,7 @@ export function ThreadDeliveryStatus({
                       });
                       if (result && result.status !== "cancelled") {
                         throw new Error(
-                          "This reply's status changed. Refresh the thread and try again.",
+                          t`This reply's status changed. Refresh the thread and try again.`,
                         );
                       }
                     }
@@ -263,7 +256,7 @@ export function ThreadDeliveryStatus({
                   })
                 }
               >
-                Edit reply
+                <Trans>Edit reply</Trans>
               </InlineActionButton>
             )}
           </div>
@@ -280,31 +273,25 @@ export function ThreadDeliveryStatus({
               className="flex items-center gap-2 font-medium text-foreground"
             >
               <DeliveryIcon status={row.status.toLowerCase()} />
-              {scheduledDeliveryLabel(row)}
+              {scheduledDeliveryLabel(row, i18n)}
             </p>
             {["PENDING", "BLOCKED_AUTH", "FAILED"].includes(row.status) &&
               !isUnconfirmedScheduledEmail(row) && (
                 <InlineActionButton
-                  aria-label="Cancel send"
-                  disabled={busy || !online}
-                  onClick={() =>
-                    act(() =>
-                      scheduledAction(cancelScheduledEmailAction, row.id),
-                    )
-                  }
+                  aria-label={t`Cancel send`}
+                  disabled={!online}
+                  onClick={() => cancelSend(row.id)}
                 >
-                  Cancel
+                  <Trans>Cancel</Trans>
                 </InlineActionButton>
               )}
             {["BLOCKED_AUTH", "FAILED"].includes(row.status) && (
               <InlineActionButton
-                aria-label="Retry send"
-                disabled={busy || !online}
-                onClick={() =>
-                  act(() => scheduledAction(retryScheduledEmailAction, row.id))
-                }
+                aria-label={t`Retry send`}
+                disabled={!online}
+                onClick={() => retrySend(row.id)}
               >
-                Retry
+                <Trans>Retry</Trans>
               </InlineActionButton>
             )}
             {row.status === "UNCERTAIN" && (
@@ -312,7 +299,7 @@ export function ThreadDeliveryStatus({
                 className="underline underline-offset-4"
                 href={`/${emailAccountId}/mail?type=sent`}
               >
-                Check Sent
+                <Trans>Check Sent</Trans>
               </a>
             )}
           </div>
@@ -322,20 +309,19 @@ export function ThreadDeliveryStatus({
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <p className="flex items-center gap-2">
                   <BellIcon aria-hidden className="size-3.5 shrink-0" />
-                  Reminder if no reply by {formatTime(row.remindAt)}
+                  <Trans>
+                    Reminder if no reply by{" "}
+                    {formatTime(row.remindAt, i18n.locale)}
+                  </Trans>
                 </p>
                 {row.reminderStatus === "PENDING" &&
                   !isUnconfirmedScheduledEmail(row) && (
                     <InlineActionButton
-                      aria-label="Cancel reminder"
-                      disabled={busy || !online}
-                      onClick={() =>
-                        act(() =>
-                          scheduledAction(cancelEmailReminderAction, row.id),
-                        )
-                      }
+                      aria-label={t`Cancel reminder`}
+                      disabled={!online}
+                      onClick={() => cancelReminder(row.id)}
                     >
-                      Cancel
+                      <Trans>Cancel</Trans>
                     </InlineActionButton>
                   )}
               </div>
@@ -344,17 +330,19 @@ export function ThreadDeliveryStatus({
       ))}
       {!online && scheduledRows.length > 0 && (
         <p role="status" className="text-muted-foreground text-xs">
-          Offline. Showing the last known status.
+          <Trans>Offline. Showing the last known status.</Trans>
         </p>
       )}
       {online && error && scheduledRows.length > 0 && (
         <div className="flex items-center gap-2 text-muted-foreground text-xs">
-          <p role="status">Could not refresh. Showing the last known status.</p>
+          <p role="status">
+            <Trans>Could not refresh. Showing the last known status.</Trans>
+          </p>
           <InlineActionButton
             disabled={isValidating}
             onClick={() => mutate().catch(() => undefined)}
           >
-            Retry
+            <Trans>Retry</Trans>
           </InlineActionButton>
         </div>
       )}
@@ -387,8 +375,8 @@ export function threadScheduledEmailsKey(
   ];
 }
 
-function formatTime(value: string | Date) {
-  return new Date(value).toLocaleString(undefined, {
+function formatTime(value: string | Date, locale: string) {
+  return new Date(value).toLocaleString(locale, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -398,20 +386,23 @@ function formatTime(value: string | Date) {
 
 function scheduledDeliveryLabel(
   row: ScheduledEmailsResponse["scheduledEmails"][number],
+  i18n: I18n,
 ) {
   switch (row.status) {
-    case "PENDING":
+    case "PENDING": {
+      const sendAt = formatTime(row.sendAt, i18n.locale);
       return isUnconfirmedScheduledEmail(row)
-        ? `Scheduling for ${formatTime(row.sendAt)}…`
-        : `Scheduled for ${formatTime(row.sendAt)}`;
+        ? i18n._(msg`Scheduling for ${sendAt}…`)
+        : i18n._(msg`Scheduled for ${sendAt}`);
+    }
     case "PROCESSING":
-      return "Sending…";
+      return i18n._(msg`Sending…`);
     case "SENT":
-      return "Reply sent";
+      return i18n._(msg`Reply sent`);
     case "UNCERTAIN":
-      return "Couldn't confirm delivery";
+      return i18n._(msg`Couldn't confirm delivery`);
     default:
-      return "Reply could not be sent";
+      return i18n._(msg`Reply could not be sent`);
   }
 }
 
