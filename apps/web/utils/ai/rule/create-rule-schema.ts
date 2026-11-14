@@ -159,10 +159,11 @@ export const createRuleActionSchema = (
       if (action.type === ActionType.INTEGRATION) {
         // The model must name one listed app + tool pair, so the save path
         // never has to guess between tools.
+        const { integrationName, integrationToolName } = action as RuleAction;
         const isListedTool = integrationToolSpecs.some(
           (spec) =>
-            spec.integration === action.integrationName &&
-            spec.tool === action.integrationToolName,
+            spec.integration === integrationName &&
+            spec.tool === integrationToolName,
         );
         if (isListedTool) return;
         ctx.addIssue({
