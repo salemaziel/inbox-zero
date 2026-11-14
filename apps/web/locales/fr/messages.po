@@ -221,6 +221,11 @@ msgstr "{0, plural, one {Marqué comme spam} other {# conversations marquées co
 msgid "{0, plural, one {Marked as unread} other {Marked # conversations as unread}}"
 msgstr "{0, plural, one {Marqué comme non lu} other {# conversations marquées comme non lues}}"
 
+#. placeholder {0}: threadIds.length
+#: components/assistant-chat/tools.tsx
+msgid "{0, plural, one {Move # email to trash} other {Move # emails to trash}}"
+msgstr "{0, plural, one {Mettre # e-mail à la corbeille} other {Mettre # e-mails à la corbeille}}"
+
 #. placeholder {0}: open.openCount
 #: components/email-list/SentMessageOpenStatus.tsx
 msgid "{0, plural, one {Opened # time · Last opened {lastOpened}} other {Opened # times · Last opened {lastOpened}}}"
@@ -473,7 +478,7 @@ msgstr "{executedRulesCount, plural, one {# e-mail traité par l’assistant} ot
 
 #: components/email-list/EmailAttachments.tsx
 msgid "{failed} of {total} attachments failed to download"
-msgstr"Échec du téléchargement de {failed} pièces jointes sur {total}"
+msgstr "Échec du téléchargement de {failed} pièces jointes sur {total}"
 
 #: app/(app)/[emailAccountId]/mail/use-thread-actions.ts
 msgid "{failedCount, plural, one {Couldn't queue # of {total} as read} other {Couldn't queue # of {total} as read}}"
@@ -2172,10 +2177,6 @@ msgstr "Archiver automatiquement les futurs e-mails"
 msgid "Auto categorize"
 msgstr "Catégoriser automatiquement"
 
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
-msgid "Auto draft replies"
-msgstr "Rédiger automatiquement des brouillons de réponse"
-
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/BulkActions.tsx
 msgid "Auto-archive"
 msgstr "Archivage automatique"
@@ -2210,10 +2211,6 @@ msgstr "Classer automatiquement les pièces jointes"
 msgid "Auto-filing started!"
 msgstr "Classement automatique lancé !"
 
-#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Auto-generate drafts"
-msgstr "Générer automatiquement des brouillons"
-
 #: app/(app)/[emailAccountId]/quick-bulk-archive/BulkArchiveTab.tsx
 msgid "Automated notification"
 msgstr "Notification automatique"
@@ -2237,10 +2234,6 @@ msgstr "Catégorise automatiquement les expéditeurs pour l’archivage groupé 
 #: app/(app)/[emailAccountId]/smart-categories/setup/SmartCategoriesOnboarding.tsx
 msgid "Automatically categorize who emails you for better inbox management and smarter automation."
 msgstr "Catégorise automatiquement les personnes qui t’écrivent pour mieux gérer ta boîte de réception et automatiser plus intelligemment."
-
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
-msgid "Automatically draft replies written in your tone to emails needing a reply."
-msgstr "Rédige automatiquement, dans ton style, des brouillons de réponse aux e-mails qui en nécessitent une."
 
 #: app/(app)/[emailAccountId]/settings/BillingSection.tsx
 msgid "Automatically send each Stripe invoice to the billing email."
@@ -2627,6 +2620,10 @@ msgstr "Annuler la voix"
 #: app/(app)/[emailAccountId]/meetings/recording-status.ts
 msgid "Cancelled"
 msgstr "Annulé"
+
+#: components/assistant-chat/tools.tsx
+msgid "Cancelled. Nothing changed."
+msgstr "Annulé. Rien n'a été modifié."
 
 #: app/(app)/[emailAccountId]/meetings/recording-status.ts
 msgid "Cancelling"
@@ -3825,6 +3822,10 @@ msgstr "Impossible de joindre {filename}."
 msgid "Could not attach {filename}. Try again."
 msgstr "Impossible de joindre {filename}. Réessaie."
 
+#: components/assistant-chat/tools.tsx
+msgid "Could not cancel. Try again."
+msgstr "Impossible d'annuler. Réessaie."
+
 #: app/(app)/shared/[conversationId]/SharedConversationReader.tsx
 msgid "Could not check conversation access. Retry or refresh this page."
 msgstr "Impossible de vérifier l’accès à la conversation. Réessaie ou actualise cette page."
@@ -3886,6 +3887,10 @@ msgstr "Impossible de charger le contenu de l’e-mail : {0}"
 #: app/(app)/[emailAccountId]/compose/compose-error-messages.ts
 msgid "Could not load the draft's attachments."
 msgstr "Impossible de charger les pièces jointes du brouillon."
+
+#: components/assistant-chat/tools.tsx
+msgid "Could not move these emails to trash."
+msgstr "Impossible de mettre ces e-mails à la corbeille."
 
 #: app/(app)/[emailAccountId]/compose/compose-error-messages.ts
 msgid "Could not queue this email. Try again."
@@ -4814,10 +4819,6 @@ msgstr "Brouillon"
 msgid "Draft a follow-up email"
 msgstr "Rédiger un e-mail de relance"
 
-#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Draft a nudge when you haven't heard back."
-msgstr "Rédige une relance quand tu n’as pas eu de réponse."
-
 #: app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
 msgid "Draft a reply for every email, even when uncertain."
 msgstr "Rédige une réponse pour chaque e-mail, même en cas de doute."
@@ -4842,6 +4843,10 @@ msgstr "Confiance du brouillon mise à jour"
 msgid "Draft content (optional)"
 msgstr "Contenu du brouillon (facultatif)"
 
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Draft follow-up emails"
+msgstr "Rédiger des e-mails de relance"
+
 #: app/(app)/[emailAccountId]/assistant/settings/DraftKnowledgeSetting.tsx
 msgid "Draft knowledge base"
 msgstr "Base de connaissances pour les brouillons"
@@ -4851,9 +4856,14 @@ msgid "Draft ready"
 msgstr "Brouillon prêt"
 
 #: app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
 #: app/(app)/[emailAccountId]/onboarding/StepDraft.tsx
 msgid "Draft replies"
 msgstr "Brouillons de réponse"
+
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+msgid "Draft replies in your tone to emails that need a reply. Turning this off keeps the To Reply label."
+msgstr "Rédige des brouillons de réponse dans votre ton pour les e-mails qui attendent une réponse. Le désactiver conserve le libellé To Reply."
 
 #: app/(app)/[emailAccountId]/onboarding/illustrations/CustomRulesIllustration.tsx
 msgid "Draft replies to customer questions using our help docs"
@@ -6012,6 +6022,9 @@ msgid "Failed to save account order"
 msgstr "Impossible d’enregistrer l’ordre des comptes"
 
 #: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Failed to save follow-up settings"
+msgstr "Impossible d’enregistrer les paramètres de relance"
+
 #: app/(app)/[emailAccountId]/assistant/settings/ProactiveUpdatesSetting.tsx
 #: app/(app)/[emailAccountId]/briefs/page.tsx
 #: app/(app)/[emailAccountId]/meetings/MeetingRecorderSettingsDialog.tsx
@@ -6023,8 +6036,8 @@ msgid "Failed to save signature"
 msgstr "Impossible d’enregistrer la signature"
 
 #: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Failed to scan"
-msgstr "Impossible d’analyser"
+msgid "Failed to scan for follow-ups"
+msgstr "Impossible de rechercher les relances"
 
 #: app/(app)/[emailAccountId]/briefs/UpcomingMeetings.tsx
 #: app/(app)/[emailAccountId]/onboarding-brief/StepSendTestBrief.tsx
@@ -6119,6 +6132,14 @@ msgstr "Impossible de mettre à jour les sites de documentation"
 msgid "Failed to update draft confidence"
 msgstr "Impossible de mettre à jour la confiance du brouillon"
 
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+msgid "Failed to update draft replies"
+msgstr "Impossible de mettre à jour les brouillons de réponse"
+
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Failed to update follow-up reminders"
+msgstr "Impossible de mettre à jour les rappels de relance"
+
 #: app/(app)/[emailAccountId]/assistant/settings/HiddenAiDraftLinksSetting.tsx
 msgid "Failed to update hidden AI draft links setting"
 msgstr "Impossible de mettre à jour le paramètre des liens masqués dans les brouillons IA"
@@ -6157,7 +6178,6 @@ msgid "Failed to update setting"
 msgstr "Impossible de mettre à jour le paramètre"
 
 #: app/(app)/[emailAccountId]/assistant/settings/DigestSetting.tsx
-#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
 #: app/(app)/[emailAccountId]/settings/DecisionModelSection.tsx
 #: app/(app)/[emailAccountId]/settings/OrgAnalyticsConsentSection.tsx
 #: app/(app)/organization/[organizationId]/OrgAnalyticsConsentBanner.tsx
@@ -7873,8 +7893,12 @@ msgid "Label emails from Stripe as @[Stripe] and archive them"
 msgstr "Libelle les e-mails de Stripe avec @[Stripe] et archive-les"
 
 #: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Label emails where you haven't heard back or haven't replied."
-msgstr "Libelle les e-mails auxquels tu n'as pas eu de réponse ou auxquels tu n'as pas répondu."
+msgid "Label emails where you haven't heard back or haven't replied, and draft a nudge when you haven't heard back."
+msgstr "Étiquette les e-mails sans réponse de votre part ou de votre interlocuteur, et rédige une relance quand on ne vous a pas répondu."
+
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Label emails where you haven't heard back or haven't replied. Does not draft emails."
+msgstr "Étiquette les e-mails sans réponse de votre part ou de votre interlocuteur. Ne rédige aucun e-mail."
 
 #: app/(app)/[emailAccountId]/assistant/examples.ts
 msgid "Label emails with feedback from customers about our product as @[Customer Feedback]"
@@ -8062,6 +8086,10 @@ msgstr "Apprends à utiliser l'assistant personnel IA pour libeller, archiver et
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/BulkUnsubscribeSection.tsx
 msgid "Learn how to use the Bulk Unsubscribe to unsubscribe from and archive unwanted emails."
 msgstr "Apprends à utiliser le désabonnement groupé pour te désabonner des e-mails indésirables et les archiver."
+
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+msgid "Learned from label removal"
+msgstr "Appris en retirant le libellé"
 
 #: app/(app)/[emailAccountId]/assistant/group/LearnedPatterns.tsx
 #: app/(app)/[emailAccountId]/assistant/RuleForm.tsx
@@ -8855,6 +8883,10 @@ msgstr "Déplacer vers la boîte de réception"
 msgid "Move to review"
 msgstr "Déplacer vers « À examiner »"
 
+#: components/assistant-chat/tools.tsx
+msgid "Move to trash"
+msgstr "Mettre à la corbeille"
+
 #: app/(app)/[emailAccountId]/mail/LabelPickerDialog.tsx
 msgid "Move to…"
 msgstr "Déplacer vers…"
@@ -8872,6 +8904,10 @@ msgstr "Déplacé vers {folderName}"
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/hooks.ts
 msgid "Moving to review {count, plural, one {# sender} other {# senders}}..."
 msgstr "Déplacement vers « À examiner » de {count, plural, one {# expéditeur} other {# expéditeurs}}..."
+
+#: components/assistant-chat/tools.tsx
+msgid "Moving to trash..."
+msgstr "Mise à la corbeille..."
 
 #: app/(app)/[emailAccountId]/mail/LabelPickerDialog.tsx
 msgid "Moving…"
@@ -10070,6 +10106,10 @@ msgid "Pending confirmation"
 msgstr "Confirmation en attente"
 
 #: components/assistant-chat/tools.tsx
+msgid "Pending confirmation. Nothing has moved yet."
+msgstr "Confirmation en attente. Rien n'a encore été déplacé."
+
+#: components/assistant-chat/tools.tsx
 msgid "Pending deletion"
 msgstr "Suppression en attente"
 
@@ -10272,6 +10312,10 @@ msgstr "Préparation de la suppression de la règle « {0} »..."
 #: components/assistant-chat/message-part.tsx
 msgid "Preparing to delete rule \"{ruleName}\"..."
 msgstr "Préparation de la suppression de la règle « {ruleName} »..."
+
+#: components/assistant-chat/message-part.tsx
+msgid "Preparing to move emails to trash..."
+msgstr "Préparation de la mise à la corbeille des e-mails..."
 
 #: app/(app)/[emailAccountId]/assistant/condition-messages.ts
 msgid "Preset"
@@ -10781,7 +10825,9 @@ msgid "Remove"
 msgstr "Retirer"
 
 #. placeholder {0}: attachment.filename
+#. placeholder {0}: item.value
 #. placeholder {0}: participant.name
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
 #: app/(app)/[emailAccountId]/compose/ComposeAttachmentList.tsx
 #: components/team-comments/ConversationParticipants.tsx
 msgid "Remove {0}"
@@ -12860,6 +12906,11 @@ msgstr "L'enregistrement est en cours de traitement. Les notes apparaîtront ici
 msgid "The recording is there, but summarizing it kept failing. The transcript is still available below."
 msgstr "L'enregistrement est disponible, mais son résumé a échoué à plusieurs reprises. La transcription reste disponible ci-dessous."
 
+#. placeholder {0}: item.value
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+msgid "The rule can match {0} again"
+msgstr "La règle peut de nouveau s'appliquer à {0}"
+
 #: app/(app)/[emailAccountId]/assistant/RuleForm.tsx
 #: components/assistant-chat/tools.tsx
 msgid "The rule has been deleted."
@@ -12984,16 +13035,10 @@ msgstr "Une erreur s'est produite lors de la mise à la corbeille des e-mails"
 msgid "There was an error updating the rule."
 msgstr "Une erreur s'est produite lors de la mise à jour de la règle."
 
-#. placeholder {0}: error.message
 #. placeholder {0}: result.serverError || ""
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
 #: app/(app)/[emailAccountId]/onboarding/StepDraft.tsx
 msgid "There was an error: {0}"
 msgstr "Une erreur s'est produite : {0}"
-
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
-msgid "There was an error: Unknown error"
-msgstr "Une erreur s'est produite : erreur inconnue"
 
 #. placeholder {0}: warning.placeholder
 #: app/(app)/[emailAccountId]/compose/SendWarningsDialog.tsx
@@ -13510,6 +13555,10 @@ msgstr "Désactiver l'onglet"
 msgid "Turn off the {0} split"
 msgstr "Désactiver l'onglet {0}"
 
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Turn on Draft replies to use this."
+msgstr "Activez Brouillons de réponse pour utiliser cette option."
+
 #: app/(app)/[emailAccountId]/mail/NewSplitDialog.tsx
 msgid "Turn on split"
 msgstr "Activer l'onglet"
@@ -13602,9 +13651,15 @@ msgstr "Sans catégorie"
 msgid "Understand what's filling up your inbox"
 msgstr "Comprends ce qui remplit ta boîte de réception"
 
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
 #: app/(app)/[emailAccountId]/clean/EmailFirehoseItem.tsx
 msgid "Undo"
 msgstr "Annuler"
+
+#. placeholder {0}: item.value
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+msgid "Undo exclusion for {0}"
+msgstr "Annuler l'exclusion de {0}"
 
 #: lib/shortcuts/registry.ts
 msgid "Undo last action"
@@ -13632,6 +13687,8 @@ msgid "Unknown date"
 msgstr "Date inconnue"
 
 #: app/(app)/[emailAccountId]/assistant/ProcessRules.tsx
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
 #: app/(app)/[emailAccountId]/bulk-archive/AutoCategorizationSetup.tsx
 #: app/(app)/[emailAccountId]/drive/DriveSetup.tsx
 #: app/(app)/[emailAccountId]/integrations/IntegrationRow.tsx
@@ -14543,6 +14600,10 @@ msgstr "Veux-tu que les e-mails nettoyés soient archivés ou marqués comme lus
 #: app/(app)/[emailAccountId]/compose/ComposeEmailForm.tsx
 msgid "Write a message…"
 msgstr "Écris un message…"
+
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Write a nudge draft when you haven't heard back."
+msgstr "Rédige un brouillon de relance quand on ne vous a pas répondu."
 
 #: app/(app)/[emailAccountId]/settings/api-key-messages.ts
 msgid "Write rules"

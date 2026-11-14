@@ -221,6 +221,11 @@ msgstr "{0, plural, one {Marcada como spam} other {# conversas marcadas como spa
 msgid "{0, plural, one {Marked as unread} other {Marked # conversations as unread}}"
 msgstr "{0, plural, one {Marcada como não lida} other {# conversas marcadas como não lidas}}"
 
+#. placeholder {0}: threadIds.length
+#: components/assistant-chat/tools.tsx
+msgid "{0, plural, one {Move # email to trash} other {Move # emails to trash}}"
+msgstr "{0, plural, one {Mover # e-mail para a lixeira} other {Mover # e-mails para a lixeira}}"
+
 #. placeholder {0}: open.openCount
 #: components/email-list/SentMessageOpenStatus.tsx
 msgid "{0, plural, one {Opened # time · Last opened {lastOpened}} other {Opened # times · Last opened {lastOpened}}}"
@@ -473,7 +478,7 @@ msgstr "{executedRulesCount, plural, one {# e-mail processado pelo assistente} o
 
 #: components/email-list/EmailAttachments.tsx
 msgid "{failed} of {total} attachments failed to download"
-msgstr"Falha ao baixar {failed} de {total} anexos"
+msgstr "Falha ao baixar {failed} de {total} anexos"
 
 #: app/(app)/[emailAccountId]/mail/use-thread-actions.ts
 msgid "{failedCount, plural, one {Couldn't queue # of {total} as read} other {Couldn't queue # of {total} as read}}"
@@ -2172,10 +2177,6 @@ msgstr "Arquivar automaticamente e-mails futuros"
 msgid "Auto categorize"
 msgstr "Categorizar automaticamente"
 
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
-msgid "Auto draft replies"
-msgstr "Redigir respostas automaticamente"
-
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/BulkActions.tsx
 msgid "Auto-archive"
 msgstr "Arquivar automaticamente"
@@ -2210,10 +2211,6 @@ msgstr "Organizar anexos automaticamente"
 msgid "Auto-filing started!"
 msgstr "Organização automática iniciada!"
 
-#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Auto-generate drafts"
-msgstr "Gerar rascunhos automaticamente"
-
 #: app/(app)/[emailAccountId]/quick-bulk-archive/BulkArchiveTab.tsx
 msgid "Automated notification"
 msgstr "Notificação automática"
@@ -2237,10 +2234,6 @@ msgstr "Categorize remetentes automaticamente para arquivamento em massa e para 
 #: app/(app)/[emailAccountId]/smart-categories/setup/SmartCategoriesOnboarding.tsx
 msgid "Automatically categorize who emails you for better inbox management and smarter automation."
 msgstr "Categorize automaticamente quem envia e-mails para você, para gerenciar melhor sua caixa de entrada e ter automações mais inteligentes."
-
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
-msgid "Automatically draft replies written in your tone to emails needing a reply."
-msgstr "Redija automaticamente respostas no seu tom para e-mails que precisam de resposta."
 
 #: app/(app)/[emailAccountId]/settings/BillingSection.tsx
 msgid "Automatically send each Stripe invoice to the billing email."
@@ -2627,6 +2620,10 @@ msgstr "Cancelar voz"
 #: app/(app)/[emailAccountId]/meetings/recording-status.ts
 msgid "Cancelled"
 msgstr "Cancelado"
+
+#: components/assistant-chat/tools.tsx
+msgid "Cancelled. Nothing changed."
+msgstr "Cancelado. Nada foi alterado."
 
 #: app/(app)/[emailAccountId]/meetings/recording-status.ts
 msgid "Cancelling"
@@ -3825,6 +3822,10 @@ msgstr "Não foi possível anexar {filename}."
 msgid "Could not attach {filename}. Try again."
 msgstr "Não foi possível anexar {filename}. Tente novamente."
 
+#: components/assistant-chat/tools.tsx
+msgid "Could not cancel. Try again."
+msgstr "Não foi possível cancelar. Tente novamente."
+
 #: app/(app)/shared/[conversationId]/SharedConversationReader.tsx
 msgid "Could not check conversation access. Retry or refresh this page."
 msgstr "Não foi possível verificar o acesso à conversa. Tente novamente ou atualize esta página."
@@ -3886,6 +3887,10 @@ msgstr "Não foi possível carregar o conteúdo do e-mail: {0}"
 #: app/(app)/[emailAccountId]/compose/compose-error-messages.ts
 msgid "Could not load the draft's attachments."
 msgstr "Não foi possível carregar os anexos do rascunho."
+
+#: components/assistant-chat/tools.tsx
+msgid "Could not move these emails to trash."
+msgstr "Não foi possível mover estes e-mails para a lixeira."
 
 #: app/(app)/[emailAccountId]/compose/compose-error-messages.ts
 msgid "Could not queue this email. Try again."
@@ -4814,10 +4819,6 @@ msgstr "Rascunho"
 msgid "Draft a follow-up email"
 msgstr "Redigir um e-mail de acompanhamento"
 
-#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Draft a nudge when you haven't heard back."
-msgstr "Redija um lembrete quando você não tiver resposta."
-
 #: app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
 msgid "Draft a reply for every email, even when uncertain."
 msgstr "Redigir uma resposta para todos os e-mails, mesmo quando houver incerteza."
@@ -4842,6 +4843,10 @@ msgstr "Confiança do rascunho atualizada"
 msgid "Draft content (optional)"
 msgstr "Conteúdo do rascunho (opcional)"
 
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Draft follow-up emails"
+msgstr "Redigir e-mails de acompanhamento"
+
 #: app/(app)/[emailAccountId]/assistant/settings/DraftKnowledgeSetting.tsx
 msgid "Draft knowledge base"
 msgstr "Base de conhecimento para rascunhos"
@@ -4851,9 +4856,14 @@ msgid "Draft ready"
 msgstr "Rascunho pronto"
 
 #: app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
 #: app/(app)/[emailAccountId]/onboarding/StepDraft.tsx
 msgid "Draft replies"
 msgstr "Redigir respostas"
+
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+msgid "Draft replies in your tone to emails that need a reply. Turning this off keeps the To Reply label."
+msgstr "Redige respostas no seu tom para e-mails que precisam de resposta. Desativar mantém o marcador To Reply."
 
 #: app/(app)/[emailAccountId]/onboarding/illustrations/CustomRulesIllustration.tsx
 msgid "Draft replies to customer questions using our help docs"
@@ -6012,6 +6022,9 @@ msgid "Failed to save account order"
 msgstr "Falha ao salvar a ordem das contas"
 
 #: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Failed to save follow-up settings"
+msgstr "Falha ao salvar as configurações de acompanhamento"
+
 #: app/(app)/[emailAccountId]/assistant/settings/ProactiveUpdatesSetting.tsx
 #: app/(app)/[emailAccountId]/briefs/page.tsx
 #: app/(app)/[emailAccountId]/meetings/MeetingRecorderSettingsDialog.tsx
@@ -6023,8 +6036,8 @@ msgid "Failed to save signature"
 msgstr "Falha ao salvar a assinatura"
 
 #: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Failed to scan"
-msgstr "Falha ao verificar"
+msgid "Failed to scan for follow-ups"
+msgstr "Falha ao procurar acompanhamentos"
 
 #: app/(app)/[emailAccountId]/briefs/UpcomingMeetings.tsx
 #: app/(app)/[emailAccountId]/onboarding-brief/StepSendTestBrief.tsx
@@ -6119,6 +6132,14 @@ msgstr "Falha ao atualizar os sites de documentação"
 msgid "Failed to update draft confidence"
 msgstr "Falha ao atualizar a confiança do rascunho"
 
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+msgid "Failed to update draft replies"
+msgstr "Falha ao atualizar a redação de respostas"
+
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Failed to update follow-up reminders"
+msgstr "Falha ao atualizar os lembretes de acompanhamento"
+
 #: app/(app)/[emailAccountId]/assistant/settings/HiddenAiDraftLinksSetting.tsx
 msgid "Failed to update hidden AI draft links setting"
 msgstr "Falha ao atualizar a configuração de links ocultos em rascunhos da IA"
@@ -6157,7 +6178,6 @@ msgid "Failed to update setting"
 msgstr "Falha ao atualizar a configuração"
 
 #: app/(app)/[emailAccountId]/assistant/settings/DigestSetting.tsx
-#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
 #: app/(app)/[emailAccountId]/settings/DecisionModelSection.tsx
 #: app/(app)/[emailAccountId]/settings/OrgAnalyticsConsentSection.tsx
 #: app/(app)/organization/[organizationId]/OrgAnalyticsConsentBanner.tsx
@@ -7873,8 +7893,12 @@ msgid "Label emails from Stripe as @[Stripe] and archive them"
 msgstr "Marque e-mails do Stripe como @[Stripe] e arquive-os"
 
 #: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
-msgid "Label emails where you haven't heard back or haven't replied."
-msgstr "Marque e-mails sem retorno ou que você ainda não respondeu."
+msgid "Label emails where you haven't heard back or haven't replied, and draft a nudge when you haven't heard back."
+msgstr "Marca e-mails sem resposta sua ou da outra pessoa e redige um lembrete quando não responderam a você."
+
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Label emails where you haven't heard back or haven't replied. Does not draft emails."
+msgstr "Marca e-mails sem resposta sua ou da outra pessoa. Não redige e-mails."
 
 #: app/(app)/[emailAccountId]/assistant/examples.ts
 msgid "Label emails with feedback from customers about our product as @[Customer Feedback]"
@@ -8062,6 +8086,10 @@ msgstr "Saiba como usar o Assistente Pessoal de IA para marcar, arquivar e muito
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/BulkUnsubscribeSection.tsx
 msgid "Learn how to use the Bulk Unsubscribe to unsubscribe from and archive unwanted emails."
 msgstr "Saiba como usar o Cancelamento de inscrições em massa para cancelar inscrições e arquivar e-mails indesejados."
+
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+msgid "Learned from label removal"
+msgstr "Aprendido ao remover o marcador"
 
 #: app/(app)/[emailAccountId]/assistant/group/LearnedPatterns.tsx
 #: app/(app)/[emailAccountId]/assistant/RuleForm.tsx
@@ -8855,6 +8883,10 @@ msgstr "Mover para a caixa de entrada"
 msgid "Move to review"
 msgstr "Mover para revisão"
 
+#: components/assistant-chat/tools.tsx
+msgid "Move to trash"
+msgstr "Mover para a lixeira"
+
 #: app/(app)/[emailAccountId]/mail/LabelPickerDialog.tsx
 msgid "Move to…"
 msgstr "Mover para…"
@@ -8872,6 +8904,10 @@ msgstr "Movido para {folderName}"
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/hooks.ts
 msgid "Moving to review {count, plural, one {# sender} other {# senders}}..."
 msgstr "Movendo para revisão {count, plural, one {# remetente} other {# remetentes}}..."
+
+#: components/assistant-chat/tools.tsx
+msgid "Moving to trash..."
+msgstr "Movendo para a lixeira..."
 
 #: app/(app)/[emailAccountId]/mail/LabelPickerDialog.tsx
 msgid "Moving…"
@@ -10070,6 +10106,10 @@ msgid "Pending confirmation"
 msgstr "Confirmação pendente"
 
 #: components/assistant-chat/tools.tsx
+msgid "Pending confirmation. Nothing has moved yet."
+msgstr "Confirmação pendente. Nada foi movido ainda."
+
+#: components/assistant-chat/tools.tsx
 msgid "Pending deletion"
 msgstr "Exclusão pendente"
 
@@ -10272,6 +10312,10 @@ msgstr "Preparando para excluir a regra “{0}”..."
 #: components/assistant-chat/message-part.tsx
 msgid "Preparing to delete rule \"{ruleName}\"..."
 msgstr "Preparando para excluir a regra “{ruleName}”..."
+
+#: components/assistant-chat/message-part.tsx
+msgid "Preparing to move emails to trash..."
+msgstr "Preparando para mover e-mails para a lixeira..."
 
 #: app/(app)/[emailAccountId]/assistant/condition-messages.ts
 msgid "Preset"
@@ -10781,7 +10825,9 @@ msgid "Remove"
 msgstr "Remover"
 
 #. placeholder {0}: attachment.filename
+#. placeholder {0}: item.value
 #. placeholder {0}: participant.name
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
 #: app/(app)/[emailAccountId]/compose/ComposeAttachmentList.tsx
 #: components/team-comments/ConversationParticipants.tsx
 msgid "Remove {0}"
@@ -12860,6 +12906,11 @@ msgstr "A gravação está sendo processada. As anotações vão aparecer aqui q
 msgid "The recording is there, but summarizing it kept failing. The transcript is still available below."
 msgstr "A gravação está disponível, mas o resumo continuou falhando. A transcrição ainda está disponível abaixo."
 
+#. placeholder {0}: item.value
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+msgid "The rule can match {0} again"
+msgstr "A regra pode voltar a corresponder a {0}"
+
 #: app/(app)/[emailAccountId]/assistant/RuleForm.tsx
 #: components/assistant-chat/tools.tsx
 msgid "The rule has been deleted."
@@ -12984,16 +13035,10 @@ msgstr "Ocorreu um erro ao mover os e-mails para a lixeira"
 msgid "There was an error updating the rule."
 msgstr "Ocorreu um erro ao atualizar a regra."
 
-#. placeholder {0}: error.message
 #. placeholder {0}: result.serverError || ""
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
 #: app/(app)/[emailAccountId]/onboarding/StepDraft.tsx
 msgid "There was an error: {0}"
 msgstr "Ocorreu um erro: {0}"
-
-#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
-msgid "There was an error: Unknown error"
-msgstr "Ocorreu um erro: erro desconhecido"
 
 #. placeholder {0}: warning.placeholder
 #: app/(app)/[emailAccountId]/compose/SendWarningsDialog.tsx
@@ -13510,6 +13555,10 @@ msgstr "Desativar aba"
 msgid "Turn off the {0} split"
 msgstr "Desativar a aba {0}"
 
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Turn on Draft replies to use this."
+msgstr "Ative Redigir respostas para usar isto."
+
 #: app/(app)/[emailAccountId]/mail/NewSplitDialog.tsx
 msgid "Turn on split"
 msgstr "Ativar aba"
@@ -13602,9 +13651,15 @@ msgstr "Sem categoria"
 msgid "Understand what's filling up your inbox"
 msgstr "Entenda o que está lotando sua caixa de entrada"
 
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
 #: app/(app)/[emailAccountId]/clean/EmailFirehoseItem.tsx
 msgid "Undo"
 msgstr "Desfazer"
+
+#. placeholder {0}: item.value
+#: app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+msgid "Undo exclusion for {0}"
+msgstr "Desfazer a exclusão de {0}"
 
 #: lib/shortcuts/registry.ts
 msgid "Undo last action"
@@ -13632,6 +13687,8 @@ msgid "Unknown date"
 msgstr "Data desconhecida"
 
 #: app/(app)/[emailAccountId]/assistant/ProcessRules.tsx
+#: app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
 #: app/(app)/[emailAccountId]/bulk-archive/AutoCategorizationSetup.tsx
 #: app/(app)/[emailAccountId]/drive/DriveSetup.tsx
 #: app/(app)/[emailAccountId]/integrations/IntegrationRow.tsx
@@ -14543,6 +14600,10 @@ msgstr "Você quer que os e-mails limpos sejam arquivados ou marcados como lidos
 #: app/(app)/[emailAccountId]/compose/ComposeEmailForm.tsx
 msgid "Write a message…"
 msgstr "Escreva uma mensagem…"
+
+#: app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+msgid "Write a nudge draft when you haven't heard back."
+msgstr "Redige um rascunho de lembrete quando não responderam a você."
 
 #: app/(app)/[emailAccountId]/settings/api-key-messages.ts
 msgid "Write rules"
