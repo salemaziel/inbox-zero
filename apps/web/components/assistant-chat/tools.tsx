@@ -1088,6 +1088,7 @@ export function PendingTrashThreadsCard({
   >(null);
   const [, setLeaseCheck] = useState(0);
   const { threadIds } = output.pendingAction;
+  const isTrash = output.actionType === "trash_threads";
   const confirmedResult = localResult ?? output.confirmationResult ?? null;
   const processingAt =
     output.confirmationState === "processing"
@@ -1118,9 +1119,9 @@ export function PendingTrashThreadsCard({
   if (confirmedResult) {
     return (
       <ManageInboxResult
-        input={{ action: "trash_threads" }}
+        input={{ action: output.actionType }}
         output={{
-          action: "trash_threads",
+          action: output.actionType,
           requestedCount: threadIds.length,
           successCount: confirmedResult.successCount,
           failedCount: confirmedResult.failedThreadIds.length,
@@ -1142,9 +1143,28 @@ export function PendingTrashThreadsCard({
     })
     .filter(isDefined);
 
+  const confirmError = isTrash
+    ? t`Could not move these emails to trash.`
+    : t`Could not delete these drafts.`;
+  const progressText = isTrash ? (
+    <Trans>Moving to trash...</Trans>
+  ) : (
+    <Trans>Deleting drafts...</Trans>
+  );
+  const pendingText = isTrash ? (
+    <Trans>Pending confirmation. Nothing has moved yet.</Trans>
+  ) : (
+    <Trans>Pending confirmation. Only unsent drafts are deleted.</Trans>
+  );
+  const confirmText = isTrash ? (
+    <Trans>Move to trash</Trans>
+  ) : (
+    <Trans>Delete drafts</Trans>
+  );
+
   const handleConfirm = async () => {
     if (!chatId) {
-      toastError({ description: t`Could not move these emails to trash.` });
+      toastError({ description: confirmError });
       return;
     }
 
@@ -1158,14 +1178,13 @@ export function PendingTrashThreadsCard({
       const confirmationResult = result?.data?.confirmationResult;
       if (result?.serverError || !confirmationResult) {
         toastError({
-          description:
-            result?.serverError || t`Could not move these emails to trash.`,
+          description: result?.serverError || confirmError,
         });
         return;
       }
       setLocalResult(confirmationResult);
     } catch {
-      toastError({ description: t`Could not move these emails to trash.` });
+      toastError({ description: confirmError });
     } finally {
       setIsConfirming(false);
     }
@@ -1198,18 +1217,22 @@ export function PendingTrashThreadsCard({
         <TrashIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium">
-            <Plural
-              value={threadIds.length}
-              one="Move # email to trash"
-              other="Move # emails to trash"
-            />
+            {isTrash ? (
+              <Plural
+                value={threadIds.length}
+                one="Move # email to trash"
+                other="Move # emails to trash"
+              />
+            ) : (
+              <Plural
+                value={threadIds.length}
+                one="Delete drafts in # conversation"
+                other="Delete drafts in # conversations"
+              />
+            )}
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            {isConfirming || isProcessing ? (
-              <Trans>Moving to trash...</Trans>
-            ) : (
-              <Trans>Pending confirmation. Nothing has moved yet.</Trans>
-            )}
+            {isConfirming || isProcessing ? progressText : pendingText}
           </p>
         </div>
       </CardHeader>
@@ -1243,10 +1266,10 @@ export function PendingTrashThreadsCard({
           {isConfirming || isProcessing ? (
             <>
               <Loader2 className="size-4 animate-spin" />
-              <Trans>Moving to trash...</Trans>
+              {progressText}
             </>
           ) : (
-            <Trans>Move to trash</Trans>
+            confirmText
           )}
         </Button>
       </CardFooter>
@@ -2317,6 +2340,9 @@ export function getManageInboxActionLabel({
   }
   if (action === "trash_threads") {
     return inProgress ? msg`Trashing emails` : msg`Trashed emails`;
+  }
+  if (action === "delete_drafts") {
+    return inProgress ? msg`Deleting drafts` : msg`Deleted drafts`;
   }
   if (action === "label_threads") {
     return inProgress ? msg`Labeling emails` : msg`Labeled emails`;

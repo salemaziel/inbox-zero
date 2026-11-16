@@ -186,6 +186,11 @@ msgstr "{0, plural, one {Categorizing # sender...} other {Categorizing # senders
 msgid "{0, plural, one {Couldn't queue snoozing} other {Couldn't queue snoozing conversations}}"
 msgstr "{0, plural, one {Couldn't queue snoozing} other {Couldn't queue snoozing conversations}}"
 
+#. placeholder {0}: threadIds.length
+#: components/assistant-chat/tools.tsx
+msgid "{0, plural, one {Delete drafts in # conversation} other {Delete drafts in # conversations}}"
+msgstr "{0, plural, one {Delete drafts in # conversation} other {Delete drafts in # conversations}}"
+
 #. placeholder {0}: selectedToProcess.length
 #: components/BulkArchiveCards.tsx
 msgid "{0, plural, one {Delete emails from # sender? This action cannot be undone.} other {Delete emails from # senders? This action cannot be undone.}}"
@@ -1070,8 +1075,8 @@ msgid "a deleted rule"
 msgstr "a deleted rule"
 
 #: app/(app)/[emailAccountId]/onboarding/StepIntent.tsx
-msgid "A fast, free app for reading and sending your email."
-msgstr "A fast, free app for reading and sending your email."
+msgid "A fast app for reading and sending your email."
+msgstr "A fast app for reading and sending your email."
 
 #: app/(app)/[emailAccountId]/mail/NewSplitDialog.tsx
 msgid "a month"
@@ -3856,6 +3861,10 @@ msgid "Could not create this rule."
 msgstr "Could not create this rule."
 
 #: components/assistant-chat/tools.tsx
+msgid "Could not delete these drafts."
+msgstr "Could not delete these drafts."
+
+#: components/assistant-chat/tools.tsx
 msgid "Could not delete this rule."
 msgstr "Could not delete this rule."
 
@@ -4420,6 +4429,10 @@ msgstr "Delete chat?"
 msgid "Delete comment"
 msgstr "Delete comment"
 
+#: components/assistant-chat/tools.tsx
+msgid "Delete drafts"
+msgstr "Delete drafts"
+
 #: app/(app)/[emailAccountId]/assistant/knowledge/KnowledgeBase.tsx
 msgid "Delete Knowledge Base Entry"
 msgstr "Delete Knowledge Base Entry"
@@ -4472,6 +4485,10 @@ msgstr "Delete your Inbox Zero account?"
 msgid "Deleted"
 msgstr "Deleted"
 
+#: components/assistant-chat/tools.tsx
+msgid "Deleted drafts"
+msgstr "Deleted drafts"
+
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/hooks.ts
 msgid "Deleted emails from {displayNames}"
 msgstr "Deleted emails from {displayNames}"
@@ -4506,6 +4523,14 @@ msgstr "Deleting account..."
 msgid "Deleting all emails from {name}"
 msgstr "Deleting all emails from {name}"
 
+#: components/assistant-chat/tools.tsx
+msgid "Deleting drafts"
+msgstr "Deleting drafts"
+
+#: components/assistant-chat/tools.tsx
+msgid "Deleting drafts..."
+msgstr "Deleting drafts..."
+
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/hooks.ts
 msgid "Deleting emails from {displayNames}..."
 msgstr "Deleting emails from {displayNames}..."
@@ -4513,6 +4538,10 @@ msgstr "Deleting emails from {displayNames}..."
 #: app/(app)/[emailAccountId]/assistant/Rules.tsx
 msgid "Deleting rule..."
 msgstr "Deleting rule..."
+
+#: app/(app)/[emailAccountId]/settings/DeleteSection.tsx
+msgid "Deleting your account also cancels your subscription immediately."
+msgstr "Deleting your account also cancels your subscription immediately."
 
 #: app/(app)/[emailAccountId]/mail/MailboxItemContextMenu.tsx
 #: app/(app)/[emailAccountId]/meetings/MeetingDetail.tsx
@@ -5151,6 +5180,7 @@ msgid "Email and inbox connection"
 msgstr "Email and inbox connection"
 
 #: app/(app)/[emailAccountId]/onboarding/StepIntent.tsx
+#: app/(app)/[emailAccountId]/setup/SetupContent.tsx
 msgid "Email app"
 msgstr "Email app"
 
@@ -9842,6 +9872,7 @@ msgstr "Only senders without an unsubscribe link are left"
 msgid "Only the ones I turn on myself"
 msgstr "Only the ones I turn on myself"
 
+#: app/(app)/[emailAccountId]/setup/SetupContent.tsx
 #: app/(app)/settings/SettingsContent.tsx
 msgid "Open"
 msgstr "Open"
@@ -10110,6 +10141,10 @@ msgid "Pending confirmation. Nothing has moved yet."
 msgstr "Pending confirmation. Nothing has moved yet."
 
 #: components/assistant-chat/tools.tsx
+msgid "Pending confirmation. Only unsent drafts are deleted."
+msgstr "Pending confirmation. Only unsent drafts are deleted."
+
+#: components/assistant-chat/tools.tsx
 msgid "Pending deletion"
 msgstr "Pending deletion"
 
@@ -10303,6 +10338,10 @@ msgstr "Preparing forward..."
 #: components/assistant-chat/message-part.tsx
 msgid "Preparing reply..."
 msgstr "Preparing reply..."
+
+#: components/assistant-chat/message-part.tsx
+msgid "Preparing to delete drafts..."
+msgstr "Preparing to delete drafts..."
 
 #. placeholder {0}: part.input.ruleName
 #: components/assistant-chat/message-part.tsx
@@ -10547,6 +10586,10 @@ msgstr "Read aggregated inbox statistics for this inbox."
 #: app/(app)/[emailAccountId]/settings/McpSection.tsx
 msgid "Read and search mail"
 msgstr "Read and search mail"
+
+#: app/(app)/[emailAccountId]/setup/SetupContent.tsx
+msgid "Read and send email from every account in one fast inbox"
+msgstr "Read and send email from every account in one fast inbox"
 
 #: app/(app)/[emailAccountId]/onboarding/StepMailApp.tsx
 msgid "Read and send email on web, desktop, and iPhone. Add the AI assistant anytime."
@@ -13530,6 +13573,10 @@ msgstr "Try again, or select another folder or conversation. If the problem cont
 #: app/(app)/premium/Pricing.tsx
 msgid "Try for free, affordable paid plans"
 msgstr "Try for free, affordable paid plans"
+
+#: app/(app)/[emailAccountId]/setup/SetupContent.tsx
+msgid "Try the {BRAND_NAME} email app"
+msgstr "Try the {BRAND_NAME} email app"
 
 #: app/(app)/[emailAccountId]/calendars/availability-schedule.ts
 #: app/(app)/[emailAccountId]/settings/DigestSettingsForm.tsx
