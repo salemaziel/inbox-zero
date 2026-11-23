@@ -26,30 +26,22 @@ const conditionalOperatorSchema = z
     "The conditional operator to use. AND means all conditions must be true for the rule to match. OR means any condition can be true for the rule to match. This does not impact sub-conditions.",
   );
 
-const optionalAiInstructionsSchema = z
-  .string()
-  .nullish()
+const optionalAiInstructionsSchema = omittable(z.string())
   .transform((v) => (v?.trim() ? v : null))
   .describe(AI_INSTRUCTIONS_PROMPT_DESCRIPTION);
 
-const optionalStaticFromSchema = z
-  .string()
-  .nullish()
+const optionalStaticFromSchema = omittable(z.string())
   .transform((v) => v?.trim() || null)
   .refine((value) => !isInvalidStaticFromValue(value), {
     message: INVALID_STATIC_FROM_MESSAGE,
   })
   .describe(STATIC_FROM_CONDITION_DESCRIPTION);
 
-const optionalStaticToSchema = z
-  .string()
-  .nullish()
+const optionalStaticToSchema = omittable(z.string())
   .transform((v) => v?.trim() || null)
   .describe("The to email address to match");
 
-const optionalStaticSubjectSchema = z
-  .string()
-  .nullish()
+const optionalStaticSubjectSchema = omittable(z.string())
   .transform((v) => v?.trim() || null)
   .describe(
     "Subject-line text to match. Use this when the user explicitly asks to match the email subject. If the user describes email content, topic, meaning, or general keyword matching without naming the subject line, use aiInstructions instead.",
@@ -59,16 +51,15 @@ const conditionSchema = z
   .object({
     conditionalOperator: conditionalOperatorSchema,
     aiInstructions: optionalAiInstructionsSchema,
-    static: z
-      .object({
+    static: omittable(
+      z.object({
         from: optionalStaticFromSchema,
         to: optionalStaticToSchema,
         subject: optionalStaticSubjectSchema,
-      })
-      .nullish()
-      .describe(
-        "The static conditions to match. If multiple static conditions are specified, the rule will match if ALL of the conditions match (AND operation)",
-      ),
+      }),
+    ).describe(
+      "The static conditions to match. If multiple static conditions are specified, the rule will match if ALL of the conditions match (AND operation)",
+    ),
   })
   .refine(
     (condition) =>
@@ -149,11 +140,10 @@ export const createRuleActionSchema = (
         .enum(actionTypes)
         .describe(describeActionTypes(actionTypes, integrationToolSpecs)),
       ...createIntegrationToolShape(integrationToolSpecs),
-      fields: z
-        .object(createActionFieldShape(provider, integrationToolSpecs))
-        .nullish()
-        .describe("Set only the fields this action type uses."),
-      delayInMinutes: delayInMinutesLlmSchema,
+      fields: omittable(
+        z.object(createActionFieldShape(provider, integrationToolSpecs)),
+      ).describe("Set only the fields this action type uses."),
+      delayInMinutes: omittable(delayInMinutesLlmSchema),
     })
     .superRefine((action, ctx) => {
       if (action.type === ActionType.INTEGRATION) {
@@ -298,14 +288,12 @@ function createIntegrationToolShape(
     ...new Set(integrationToolSpecs.map((spec) => spec.tool)),
   ] as [string, ...string[]];
   return {
-    integrationName: z
-      .enum(integrationNames)
-      .nullish()
-      .describe("INTEGRATION only: the app of the chosen tool."),
-    integrationToolName: z
-      .enum(toolNames)
-      .nullish()
-      .describe("INTEGRATION only: the chosen tool."),
+    integrationName: omittable(z.enum(integrationNames)).describe(
+      "INTEGRATION only: the app of the chosen tool.",
+    ),
+    integrationToolName: omittable(z.enum(toolNames)).describe(
+      "INTEGRATION only: the chosen tool.",
+    ),
   };
 }
 
@@ -349,17 +337,26 @@ function createActionFieldShape(
 }
 
 function optionalStringField(description: string) {
-  return z
-    .string()
-    .nullish()
+  return omittable(z.string())
     .transform((value) => value ?? null)
     .describe(description);
 }
 
 function trimmedStringField(description: string) {
-  return z
-    .string()
-    .nullish()
+  return omittable(z.string())
     .transform((value) => value?.trim() || null)
     .describe(description);
+}
+
+// Anthropic's structured outputs reject schemas with more than 16 union-typed
+// parameters, and `.nullish()` makes each field a union. Advertise these as
+// plain optional fields, but still accept null from models that send it.
+function omittable<T extends z.ZodType>(schema: T) {
+  return z.preprocess(
+    (value) => value ?? undefined,
+    schema.optional(),
+  ) as unknown as z.ZodType<
+    z.output<T> | null | undefined,
+    z.input<T> | null | undefined
+  >;
 }

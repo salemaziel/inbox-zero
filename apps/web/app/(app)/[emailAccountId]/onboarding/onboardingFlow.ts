@@ -6,6 +6,7 @@ import {
 } from "@/generated/prisma/enums";
 
 export const STEP_KEYS = {
+  WELCOME: "welcome",
   CHAT: "chat",
   EMAILS_SORTED: "emailsSorted",
   DRAFT_REPLIES: "draftReplies",
@@ -17,43 +18,44 @@ export const STEP_KEYS = {
   LABELS: "labels",
   DRAFT: "draft",
   CUSTOM_RULES: "customRules",
-  INVITE_TEAM: "inviteTeam",
   INBOX_PROCESSED: "inboxProcessed",
   INTENT: "intent",
-  MAIL_APP: "mailApp",
+  EMAIL_APP: "emailApp",
   CONNECT_AI: "connectAi",
 } as const;
 
 export type StepKey = (typeof STEP_KEYS)[keyof typeof STEP_KEYS];
 
-// The survey comes first so every user answers it, then the intent question
-// picks which branch follows.
+// Everyone sees what the product does before any questions. The intent answer
+// then decides whether the AI setup steps follow the survey.
+const introStepOrder: readonly StepKey[] = [
+  STEP_KEYS.WELCOME,
+  STEP_KEYS.EMAILS_SORTED,
+  STEP_KEYS.CHAT,
+  STEP_KEYS.DRAFT_REPLIES,
+  STEP_KEYS.BULK_UNSUBSCRIBE,
+  STEP_KEYS.EMAIL_APP,
+];
+
 const surveyStepOrder: readonly StepKey[] = [
   STEP_KEYS.WHO,
   STEP_KEYS.COMPANY_SIZE,
   STEP_KEYS.HOW_YOU_HEARD,
 ];
 
-const aiAssistantStepOrder: readonly StepKey[] = [
+const aiAssistantSetupStepOrder: readonly StepKey[] = [
   // The assistant runs on the user's own AI account, so they connect it first.
   STEP_KEYS.CONNECT_AI,
-  STEP_KEYS.EMAILS_SORTED,
-  STEP_KEYS.CHAT,
-  STEP_KEYS.DRAFT_REPLIES,
-  STEP_KEYS.BULK_UNSUBSCRIBE,
-  // STEP_KEYS.FEATURES,
   STEP_KEYS.LABELS,
   STEP_KEYS.DRAFT,
   STEP_KEYS.CUSTOM_RULES,
-  STEP_KEYS.INVITE_TEAM,
   STEP_KEYS.INBOX_PROCESSED,
 ];
 
-const mailAppStepOrder: readonly StepKey[] = [STEP_KEYS.MAIL_APP];
-
 // Frozen pre-intent order so old numeric `?step=N` links keep resolving.
-const legacyNumericOnboardingStepOrder: readonly (StepKey | "welcome")[] = [
-  "welcome",
+// The removed team step maps to the step after it.
+const legacyNumericOnboardingStepOrder: readonly StepKey[] = [
+  STEP_KEYS.WELCOME,
   STEP_KEYS.EMAILS_SORTED,
   STEP_KEYS.CHAT,
   STEP_KEYS.DRAFT_REPLIES,
@@ -64,32 +66,28 @@ const legacyNumericOnboardingStepOrder: readonly (StepKey | "welcome")[] = [
   STEP_KEYS.LABELS,
   STEP_KEYS.DRAFT,
   STEP_KEYS.CUSTOM_RULES,
-  STEP_KEYS.INVITE_TEAM,
+  STEP_KEYS.INBOX_PROCESSED,
   STEP_KEYS.INBOX_PROCESSED,
 ];
 
 export function getVisibleOnboardingStepKeys({
-  canInviteTeam,
   autoDraftDisabled,
+  emailAppEnabled,
   isSelfHosted,
   aiModelSettingsDisabled,
   signupIntent,
 }: {
-  canInviteTeam: boolean;
   autoDraftDisabled: boolean;
+  emailAppEnabled: boolean;
   isSelfHosted?: boolean;
   aiModelSettingsDisabled?: boolean;
   signupIntent: SignupIntent | null;
 }) {
-  // Until the user picks, the AI branch stands in as the most common path.
-  const branchStepOrder =
-    signupIntent === "MAIL_CLIENT" ? mailAppStepOrder : aiAssistantStepOrder;
-  const stepOrder = [
-    // The sales survey is irrelevant for self-hosted deployments.
-    ...(isSelfHosted ? [] : surveyStepOrder),
-    STEP_KEYS.INTENT,
-    ...branchStepOrder,
-  ];
+  // The sales survey is irrelevant for self-hosted deployments.
+  const survey = isSelfHosted ? [] : surveyStepOrder;
+  // Until the user picks, the AI setup steps stand in as the most common path.
+  const setup = signupIntent === "MAIL_CLIENT" ? [] : aiAssistantSetupStepOrder;
+  const stepOrder = [...introStepOrder, STEP_KEYS.INTENT, ...survey, ...setup];
 
   return stepOrder.filter((stepKey) => {
     if (
@@ -99,9 +97,7 @@ export function getVisibleOnboardingStepKeys({
       return false;
     }
 
-    if (!canInviteTeam && stepKey === STEP_KEYS.INVITE_TEAM) {
-      return false;
-    }
+    if (!emailAppEnabled && stepKey === STEP_KEYS.EMAIL_APP) return false;
 
     // The step points users at the AI Model settings, which are hidden then.
     if (aiModelSettingsDisabled && stepKey === STEP_KEYS.CONNECT_AI) {
@@ -156,7 +152,7 @@ export function getOnboardingStepIndex(
   const numericStep = Number.parseInt(stepParam, 10);
   if (Number.isFinite(numericStep)) {
     const legacyStepKey = legacyNumericOnboardingStepOrder[numericStep - 1];
-    if (legacyStepKey && legacyStepKey !== "welcome") {
+    if (legacyStepKey) {
       const legacyStepIndex = visibleStepKeys.indexOf(legacyStepKey);
       if (legacyStepIndex !== -1) return legacyStepIndex;
     }
@@ -175,10 +171,6 @@ export function getOnboardingStepIndex(
 
   const stepIndex = visibleStepKeys.indexOf(stepParam as StepKey);
   return stepIndex === -1 ? 0 : stepIndex;
-}
-
-export function isOptionalOnboardingStep(stepKey: StepKey) {
-  return stepKey === STEP_KEYS.INVITE_TEAM || stepKey === STEP_KEYS.CONNECT_AI;
 }
 
 function clampStepIndex(stepIndex: number, totalSteps: number) {

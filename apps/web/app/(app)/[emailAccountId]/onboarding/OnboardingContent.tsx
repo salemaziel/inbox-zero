@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { StepWho } from "@/app/(app)/[emailAccountId]/onboarding/StepWho";
+import { StepWelcome } from "@/app/(app)/[emailAccountId]/onboarding/StepWelcome";
 import { StepChat } from "@/app/(app)/[emailAccountId]/onboarding/StepChat";
 import { StepEmailsSorted } from "@/app/(app)/[emailAccountId]/onboarding/StepEmailsSorted";
 import { StepDraftReplies } from "@/app/(app)/[emailAccountId]/onboarding/StepDraftReplies";
@@ -21,15 +22,12 @@ import { env } from "@/env";
 import { useCompleteOnboarding } from "@/app/(app)/[emailAccountId]/onboarding/useCompleteOnboarding";
 import { StepCompanySize } from "@/app/(app)/[emailAccountId]/onboarding/StepCompanySize";
 import { StepHowYouHeard } from "@/app/(app)/[emailAccountId]/onboarding/StepHowYouHeard";
-import { StepInviteTeam } from "@/app/(app)/[emailAccountId]/onboarding/StepInviteTeam";
-import { useOrganizationMembership } from "@/hooks/useOrganizationMembership";
 import { useRules } from "@/hooks/useRules";
 import {
   getOnboardingStepHref,
   getOnboardingStepIndex,
   getVisibleOnboardingStepKeys,
   isDraftRepliesDisabledByRuleState,
-  isOptionalOnboardingStep,
   STEP_KEYS,
   type StepKey,
 } from "@/app/(app)/[emailAccountId]/onboarding/onboardingFlow";
@@ -49,18 +47,12 @@ export function OnboardingContent({
   signupIntent,
 }: OnboardingContentProps) {
   const { emailAccountId, provider, isLoading } = useAccount();
-  const { data: membership, isLoading: isMembershipLoading } =
-    useOrganizationMembership();
   const { data: rules, isLoading: isRulesLoading } = useRules(emailAccountId);
 
   useSignUpEvent();
 
-  const canInviteTeam = Boolean(
-    (membership?.isOwner && membership?.organizationId) ||
-      (!membership?.organizationId && !membership?.hasPendingInvitationToOrg),
-  );
-
   const stepMap: Record<string, (() => React.ReactNode) | undefined> = {
+    [STEP_KEYS.WELCOME]: () => <StepWelcome onNext={onNext} />,
     [STEP_KEYS.CHAT]: () => <StepChat onNext={onNext} />,
     [STEP_KEYS.EMAILS_SORTED]: () => <StepEmailsSorted onNext={onNext} />,
     [STEP_KEYS.DRAFT_REPLIES]: () => <StepDraftReplies onNext={onNext} />,
@@ -75,7 +67,7 @@ export function OnboardingContent({
     [STEP_KEYS.COMPANY_SIZE]: () => <StepCompanySize onNext={onNext} />,
     [STEP_KEYS.HOW_YOU_HEARD]: () => <StepHowYouHeard onNext={onNext} />,
     [STEP_KEYS.INTENT]: () => <StepIntent onIntentSaved={onIntentSaved} />,
-    [STEP_KEYS.MAIL_APP]: () => <StepMailApp onNext={onNext} />,
+    [STEP_KEYS.EMAIL_APP]: () => <StepMailApp onNext={onNext} />,
     [STEP_KEYS.CONNECT_AI]: () => (
       <StepConnectAi onNext={onNext} onSkip={onSkip} />
     ),
@@ -96,26 +88,15 @@ export function OnboardingContent({
     [STEP_KEYS.CUSTOM_RULES]: () => (
       <StepCustomRules provider={provider} onNext={onNext} />
     ),
-    [STEP_KEYS.INVITE_TEAM]: canInviteTeam
-      ? () => (
-          <StepInviteTeam
-            emailAccountId={emailAccountId}
-            organizationId={membership?.organizationId ?? undefined}
-            userName={membership?.userName}
-            onNext={onNext}
-            onSkip={onSkip}
-          />
-        )
-      : undefined,
     [STEP_KEYS.INBOX_PROCESSED]: () => <StepInboxProcessed onNext={onNext} />,
   };
 
   const getVisibleStepKeys = (intent: SignupIntent | null) =>
     getVisibleOnboardingStepKeys({
-      canInviteTeam,
       autoDraftDisabled:
         Boolean(env.NEXT_PUBLIC_AUTO_DRAFT_DISABLED) ||
         isDraftRepliesDisabledByRuleState(rules),
+      emailAppEnabled: env.NEXT_PUBLIC_EMAIL_SEND_ENABLED,
       isSelfHosted: Boolean(env.NEXT_PUBLIC_BYPASS_PREMIUM_CHECKS),
       aiModelSettingsDisabled: Boolean(
         env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED,
@@ -146,7 +127,7 @@ export function OnboardingContent({
 
   useEffect(() => {
     // Wait for step inputs before firing — totalSteps can be wrong while loading.
-    if (isMembershipLoading || isRulesLoading || !currentStepKey) return;
+    if (isRulesLoading || !currentStepKey) return;
 
     if (clampedStep === 1 && !hasTrackedStart.current) {
       hasTrackedStart.current = true;
@@ -161,16 +142,8 @@ export function OnboardingContent({
       step: clampedStep,
       stepKey: currentStepKey,
       totalSteps,
-      isOptional: isOptionalOnboardingStep(currentStepKey),
     });
-  }, [
-    analytics,
-    clampedStep,
-    currentStepKey,
-    isMembershipLoading,
-    isRulesLoading,
-    totalSteps,
-  ]);
+  }, [analytics, clampedStep, currentStepKey, isRulesLoading, totalSteps]);
 
   const onNext = useCallback(async () => {
     if (!currentStepKey) return;
@@ -181,7 +154,6 @@ export function OnboardingContent({
       totalSteps,
       nextStep: clampedStep < steps.length ? clampedStep + 1 : undefined,
       nextStepKey,
-      isOptional: isOptionalOnboardingStep(currentStepKey),
     });
 
     if (clampedStep < steps.length) {
@@ -250,10 +222,10 @@ export function OnboardingContent({
       totalSteps: stepKeys.length,
       nextStep: intentStepIndex + 2,
       nextStepKey: nextKey,
-      isOptional: false,
     });
 
     if (nextKey) router.push(getOnboardingStepPath(nextKey));
+    else completeAndRedirect(intent);
   };
 
   useEffect(() => {
@@ -277,7 +249,7 @@ export function OnboardingContent({
   const renderStep = steps[currentStepIndex] || steps[0];
 
   // Wait for the inputs that determine which steps are visible before rendering.
-  if ((isLoading && !provider) || isMembershipLoading || isRulesLoading) {
+  if ((isLoading && !provider) || isRulesLoading) {
     return null;
   }
 

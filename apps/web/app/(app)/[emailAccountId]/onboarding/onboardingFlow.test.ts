@@ -9,27 +9,28 @@ import {
 import { ActionType, SystemType } from "@/generated/prisma/enums";
 
 describe("getVisibleOnboardingStepKeys", () => {
-  it("asks the survey and intent first, then the AI flow before an intent is chosen", () => {
+  it("introduces the product before asking anything, then sets up the AI", () => {
     expect(
       getVisibleOnboardingStepKeys({
-        canInviteTeam: true,
         autoDraftDisabled: false,
+        emailAppEnabled: true,
         signupIntent: null,
       }),
     ).toEqual([
-      STEP_KEYS.WHO,
-      STEP_KEYS.COMPANY_SIZE,
-      STEP_KEYS.HOW_YOU_HEARD,
-      STEP_KEYS.INTENT,
-      STEP_KEYS.CONNECT_AI,
+      STEP_KEYS.WELCOME,
       STEP_KEYS.EMAILS_SORTED,
       STEP_KEYS.CHAT,
       STEP_KEYS.DRAFT_REPLIES,
       STEP_KEYS.BULK_UNSUBSCRIBE,
+      STEP_KEYS.EMAIL_APP,
+      STEP_KEYS.INTENT,
+      STEP_KEYS.WHO,
+      STEP_KEYS.COMPANY_SIZE,
+      STEP_KEYS.HOW_YOU_HEARD,
+      STEP_KEYS.CONNECT_AI,
       STEP_KEYS.LABELS,
       STEP_KEYS.DRAFT,
       STEP_KEYS.CUSTOM_RULES,
-      STEP_KEYS.INVITE_TEAM,
       STEP_KEYS.INBOX_PROCESSED,
     ]);
   });
@@ -37,83 +38,101 @@ describe("getVisibleOnboardingStepKeys", () => {
   it.each([
     "AI_ASSISTANT",
     "BOTH",
-  ] as const)("continues into the AI flow for %s", (signupIntent) => {
+  ] as const)("continues into the AI setup for %s", (signupIntent) => {
     const stepKeys = getVisibleOnboardingStepKeys({
-      canInviteTeam: true,
       autoDraftDisabled: false,
+      emailAppEnabled: true,
       signupIntent,
+    });
+    expect(stepKeys.at(-1)).toBe(STEP_KEYS.INBOX_PROCESSED);
+  });
+
+  it("ends email-app users at the survey, without the AI setup", () => {
+    const stepKeys = getVisibleOnboardingStepKeys({
+      autoDraftDisabled: false,
+      emailAppEnabled: true,
+      signupIntent: "MAIL_CLIENT",
+    });
+    expect(stepKeys.slice(stepKeys.indexOf(STEP_KEYS.INTENT))).toEqual([
+      STEP_KEYS.INTENT,
+      STEP_KEYS.WHO,
+      STEP_KEYS.COMPANY_SIZE,
+      STEP_KEYS.HOW_YOU_HEARD,
+    ]);
+  });
+
+  it("hides draft steps when auto-drafting is off", () => {
+    const stepKeys = getVisibleOnboardingStepKeys({
+      autoDraftDisabled: true,
+      emailAppEnabled: true,
+      signupIntent: "AI_ASSISTANT",
+    });
+    expect(stepKeys).not.toContain(STEP_KEYS.DRAFT_REPLIES);
+    expect(stepKeys).not.toContain(STEP_KEYS.DRAFT);
+  });
+
+  it("hides the email app pitch when sending email is disabled", () => {
+    expect(
+      getVisibleOnboardingStepKeys({
+        autoDraftDisabled: false,
+        emailAppEnabled: false,
+        signupIntent: "BOTH",
+      }),
+    ).not.toContain(STEP_KEYS.EMAIL_APP);
+  });
+
+  it("asks for the user's AI account before the AI setup steps", () => {
+    const stepKeys = getVisibleOnboardingStepKeys({
+      autoDraftDisabled: false,
+      emailAppEnabled: true,
+      isSelfHosted: true,
+      signupIntent: "AI_ASSISTANT",
     });
     expect(stepKeys[stepKeys.indexOf(STEP_KEYS.INTENT) + 1]).toBe(
       STEP_KEYS.CONNECT_AI,
     );
-    expect(stepKeys).not.toContain(STEP_KEYS.MAIL_APP);
-  });
-
-  it("sends email-app users to the mail app step instead of AI setup", () => {
-    expect(
-      getVisibleOnboardingStepKeys({
-        canInviteTeam: true,
-        autoDraftDisabled: false,
-        signupIntent: "MAIL_CLIENT",
-      }),
-    ).toEqual([
-      STEP_KEYS.WHO,
-      STEP_KEYS.COMPANY_SIZE,
-      STEP_KEYS.HOW_YOU_HEARD,
-      STEP_KEYS.INTENT,
-      STEP_KEYS.MAIL_APP,
-    ]);
-  });
-
-  it("filters steps that are not available in the current context", () => {
-    expect(
-      getVisibleOnboardingStepKeys({
-        canInviteTeam: false,
-        autoDraftDisabled: true,
-        signupIntent: "AI_ASSISTANT",
-      }),
-    ).toEqual([
-      STEP_KEYS.WHO,
-      STEP_KEYS.COMPANY_SIZE,
-      STEP_KEYS.HOW_YOU_HEARD,
-      STEP_KEYS.INTENT,
-      STEP_KEYS.CONNECT_AI,
-      STEP_KEYS.EMAILS_SORTED,
-      STEP_KEYS.CHAT,
-      STEP_KEYS.BULK_UNSUBSCRIBE,
+    expect(stepKeys[stepKeys.indexOf(STEP_KEYS.CONNECT_AI) + 1]).toBe(
       STEP_KEYS.LABELS,
-      STEP_KEYS.CUSTOM_RULES,
-      STEP_KEYS.INBOX_PROCESSED,
-    ]);
+    );
   });
 
   it("hides the connect-AI step when AI model settings are disabled", () => {
     expect(
       getVisibleOnboardingStepKeys({
-        canInviteTeam: true,
         autoDraftDisabled: false,
+        emailAppEnabled: true,
         aiModelSettingsDisabled: true,
         signupIntent: "AI_ASSISTANT",
       }),
     ).not.toContain(STEP_KEYS.CONNECT_AI);
   });
 
-  it("starts self-hosted deployments at the intent step", () => {
+  it("leaves the connect-AI step out for email-app users", () => {
     expect(
       getVisibleOnboardingStepKeys({
-        canInviteTeam: true,
         autoDraftDisabled: false,
-        isSelfHosted: true,
-        signupIntent: null,
-      })[0],
-    ).toBe(STEP_KEYS.INTENT);
+        emailAppEnabled: true,
+        signupIntent: "MAIL_CLIENT",
+      }),
+    ).not.toContain(STEP_KEYS.CONNECT_AI);
+  });
+
+  it("skips the survey on self-hosted deployments", () => {
+    const stepKeys = getVisibleOnboardingStepKeys({
+      autoDraftDisabled: false,
+      emailAppEnabled: true,
+      isSelfHosted: true,
+      signupIntent: "MAIL_CLIENT",
+    });
+    expect(stepKeys.at(-1)).toBe(STEP_KEYS.INTENT);
+    expect(stepKeys).not.toContain(STEP_KEYS.WHO);
   });
 });
 
 describe("getOnboardingStepIndex", () => {
   const stepKeys = getVisibleOnboardingStepKeys({
-    canInviteTeam: false,
     autoDraftDisabled: false,
+    emailAppEnabled: true,
     signupIntent: null,
   });
 
@@ -135,10 +154,16 @@ describe("getOnboardingStepIndex", () => {
     );
   });
 
+  it("sends the removed team step's numeric link to the final step", () => {
+    expect(getOnboardingStepIndex("12", stepKeys)).toBe(
+      stepKeys.indexOf(STEP_KEYS.INBOX_PROCESSED),
+    );
+  });
+
   it("keeps unavailable legacy numeric steps falling back where they did before the connect-AI step", () => {
     const selfHostedNoDraftKeys = getVisibleOnboardingStepKeys({
-      canInviteTeam: true,
       autoDraftDisabled: true,
+      emailAppEnabled: true,
       isSelfHosted: true,
       signupIntent: "AI_ASSISTANT",
     });
@@ -156,7 +181,7 @@ describe("getOnboardingStepIndex", () => {
   });
 
   it("falls back to the first visible step for removed step keys", () => {
-    expect(getOnboardingStepIndex("welcome", stepKeys)).toBe(0);
+    expect(getOnboardingStepIndex("inviteTeam", stepKeys)).toBe(0);
   });
 });
 
