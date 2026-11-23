@@ -386,10 +386,7 @@ export async function confirmAssistantCreateRuleForAccount({
   const setupMessage = getIntegrationSetupMessage(rule.actions);
   const confirmed = await persistConfirmedRule(rule.id);
 
-  return {
-    ...confirmed,
-    ...(setupMessage && { message: setupMessage }),
-  };
+  return { ...confirmed, message: setupMessage ?? undefined };
 }
 
 export async function confirmAssistantSaveMemoryForAccount({
