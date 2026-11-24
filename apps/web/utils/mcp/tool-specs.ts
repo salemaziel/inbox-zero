@@ -176,6 +176,126 @@ const todoistAddTasksSpec: IntegrationToolSpec = {
   },
 };
 
+// TickTick's virtual inbox is the user's default, so choosing it omits the
+// project instead of sending an id.
+const TICKTICK_INBOX_PROJECT: IntegrationArgOption = {
+  value: "inbox",
+  label: "Inbox",
+};
+
+const TICKTICK_DUE_DATE_AI_VALUE = "ai";
+
+// Presets are day offsets; buildPayload turns them into a date at send time.
+const TICKTICK_DUE_PRESET_DAYS: Record<string, number> = {
+  today: 0,
+  tomorrow: 1,
+  "in-7-days": 7,
+};
+
+const TICKTICK_DUE_DATE_OPTIONS: readonly IntegrationArgOption[] = [
+  { value: TICKTICK_DUE_DATE_AI_VALUE, label: "AI decides from email" },
+  { value: "none", label: "No due date" },
+  { value: "today", label: "Today", payloadValue: "today" },
+  { value: "tomorrow", label: "Tomorrow", payloadValue: "tomorrow" },
+  { value: "in-7-days", label: "In a week", payloadValue: "in 7 days" },
+];
+
+const TICKTICK_PRIORITY_OPTIONS: readonly IntegrationArgOption[] = [
+  { value: "none", label: "None" },
+  { value: "low", label: "Low", payloadValue: "1" },
+  { value: "medium", label: "Medium", payloadValue: "3" },
+  { value: "high", label: "High", payloadValue: "5" },
+];
+
+// Models and imports write the same choice several ways.
+const TICKTICK_DUE_DATE_ALIASES: Record<string, string> = {
+  "in a week": "in-7-days",
+  "in 7 days": "in-7-days",
+};
+
+const ticktickCreateTaskSpec: IntegrationToolSpec = {
+  integration: "ticktick",
+  tool: "create_task",
+  actionLabel: "Add TickTick task",
+  displayArgKey: "content",
+  llmDescription:
+    "Add a task to the user's TickTick for the matching email. Only use this when the user explicitly asks to create TickTick tasks. Fails if TickTick isn't connected.",
+  args: [
+    {
+      key: "content",
+      label: "Task",
+      control: { type: "text" },
+      placeholder: "AI writes a short action item from the email",
+      aiPrompt:
+        "A short task title describing what the recipient needs to do about this email. Use a few words, not a sentence.",
+      required: true,
+      llmDescription:
+        "The TickTick task title. Leave empty unless the user asked for specific wording.",
+    },
+    {
+      key: "description",
+      label: "Description",
+      control: { type: "text" },
+      placeholder: "AI writes one line of context",
+      aiPrompt:
+        "One short line of context for the task. Return an empty string if the email adds no useful context.",
+      llmDescription:
+        "The TickTick task description. Leave empty unless the user asked for specific wording.",
+    },
+    {
+      key: "projectId",
+      label: "Project",
+      control: {
+        type: "remote-select",
+        optionsTool: "list_projects",
+        parseOptions: parseTickTickProjects,
+        fallbackOptions: [TICKTICK_INBOX_PROJECT],
+      },
+      defaultValue: TICKTICK_INBOX_PROJECT.value,
+      defaultDisplayValue: TICKTICK_INBOX_PROJECT.label,
+      displayValueKey: "projectName",
+    },
+    {
+      key: "dueString",
+      label: "Due date",
+      control: { type: "select", options: TICKTICK_DUE_DATE_OPTIONS },
+      defaultValue: TICKTICK_DUE_DATE_AI_VALUE,
+      aiValue: TICKTICK_DUE_DATE_AI_VALUE,
+      aiPrompt:
+        "The due date the email asks for, as a calendar date such as 2026-03-14 (YYYY-MM-DD). Return an empty string if the email doesn't mention one.",
+      llmDescription:
+        "The task due date, e.g. 'today', 'tomorrow' or 'in 7 days'. Leave empty unless the user asked for a specific due date.",
+    },
+    {
+      key: "priority",
+      label: "Priority",
+      control: { type: "select", options: TICKTICK_PRIORITY_OPTIONS },
+      defaultValue: "none",
+      llmDescription:
+        "The TickTick task priority: 'none', 'low', 'medium' or 'high'. Leave empty unless the user asked for one.",
+    },
+  ],
+  buildPayload: (resolved, { timeZone }) => {
+    const title = resolved.content?.trim() ?? "";
+    const content = resolved.description?.trim() ?? "";
+    const projectId = resolved.projectId?.trim() ?? "";
+    const dueDate = resolveTickTickDueDate(resolved.dueString, timeZone);
+    const priority = resolveTickTickPriority(resolved.priority);
+
+    return {
+      task: {
+        title,
+        ...(content && { content }),
+        ...(projectId &&
+          projectId !== TICKTICK_INBOX_PROJECT.value && { projectId }),
+        ...(dueDate && { dueDate, isAllDay: true, timeZone }),
+        ...(priority && { priority }),
+      },
+      client_timezone: timeZone,
+    };
+  },
+};
+
 const TRELLO_NO_LABEL: IntegrationArgOption = {
   value: "none",
   label: "No label",
@@ -384,6 +504,7 @@ const trelloMoveCardSpec: IntegrationToolSpec = {
 
 export const INTEGRATION_TOOL_SPECS: readonly IntegrationToolSpec[] = [
   todoistAddTasksSpec,
+  ticktickCreateTaskSpec,
   trelloCreateCardSpec,
   trelloAddCommentSpec,
   trelloMoveCardSpec,
@@ -685,6 +806,133 @@ function extractTodoistProjectArray(parsed: unknown): unknown[] {
   }
   return [];
 }
+
+/**
+ * Reads TickTick's `list_projects` response into selectable options. The tool
+ * result is a list of MCP content blocks whose text holds JSON, but a bare
+ * array or `{ projects }` object is accepted too.
+ */
+function parseTickTickProjects(content: unknown): IntegrationArgOption[] {
+  const options: IntegrationArgOption[] = [];
+
+  for (const candidate of collectTickTickProjectCandidates(content)) {
+    if (!candidate || typeof candidate !== "object") continue;
+    if (!("id" in candidate) || typeof candidate.id !== "string") continue;
+    if (!("name" in candidate) || typeof candidate.name !== "string") continue;
+
+    const id = candidate.id.trim();
+    const name = candidate.name.trim();
+    // The virtual inbox is already offered as the fallback option.
+    if (!id || !name || id.toLowerCase().startsWith("inbox")) continue;
+
+    options.push({ value: id, label: name });
+  }
+
+  return options;
+}
+
+function collectTickTickProjectCandidates(content: unknown): unknown[] {
+  if (Array.isArray(content)) {
+    return content.flatMap((item) => {
+      if (!isTextContentBlock(item)) return [item];
+      try {
+        return collectTickTickProjectCandidates(JSON.parse(item.text));
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  if (content && typeof content === "object") {
+    if ("projects" in content && Array.isArray(content.projects)) {
+      return content.projects;
+    }
+    if ("data" in content && Array.isArray(content.data)) return content.data;
+  }
+
+  return [];
+}
+
+function isTextContentBlock(
+  item: unknown,
+): item is { type: "text"; text: string } {
+  return (
+    !!item &&
+    typeof item === "object" &&
+    "type" in item &&
+    item.type === "text" &&
+    "text" in item &&
+    typeof item.text === "string"
+  );
+}
+
+// TickTick tasks are all-day, so a due date is midnight at the start of that
+// calendar day in the account's time zone. Returns "" for anything that is not
+// a real date, so a bad AI answer drops the due date instead of failing the task.
+function resolveTickTickDueDate(
+  value: string | null | undefined,
+  timeZone: string,
+): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+
+  const preset = findTickTickDuePreset(trimmed);
+  if (preset) {
+    const today = new TZDate(Date.now(), timeZone);
+    return toUtcIsoString(
+      new TZDate(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate() + TICKTICK_DUE_PRESET_DAYS[preset],
+        timeZone,
+      ),
+    );
+  }
+
+  const match = DATE_ONLY_PATTERN.exec(trimmed);
+  if (!match) return "";
+
+  const [, year, month, day] = match;
+  const date = new TZDate(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    timeZone,
+  );
+  // Rejects dates that roll over, such as 2026-02-31.
+  if (
+    date.getFullYear() !== Number(year) ||
+    date.getMonth() !== Number(month) - 1 ||
+    date.getDate() !== Number(day)
+  ) {
+    return "";
+  }
+  return toUtcIsoString(date);
+}
+
+function findTickTickDuePreset(value: string): string | undefined {
+  const lowered = value.toLowerCase();
+  const preset = Object.hasOwn(TICKTICK_DUE_DATE_ALIASES, lowered)
+    ? TICKTICK_DUE_DATE_ALIASES[lowered]
+    : lowered;
+  return Object.hasOwn(TICKTICK_DUE_PRESET_DAYS, preset) ? preset : undefined;
+}
+
+function resolveTickTickPriority(
+  value: string | null | undefined,
+): number | undefined {
+  const lowered = value?.trim().toLowerCase() ?? "";
+  const option = TICKTICK_PRIORITY_OPTIONS.find(
+    (candidate) =>
+      candidate.value === lowered ||
+      candidate.label.toLowerCase() === lowered ||
+      candidate.payloadValue === lowered,
+  );
+  const priority = Number(option?.payloadValue);
+  return priority > 0 ? priority : undefined;
+}
+
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function resolveSelectPayloadValue(
   options: readonly IntegrationArgOption[],

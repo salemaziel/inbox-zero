@@ -45,6 +45,39 @@ const INTEGRATION_TOOL_MESSAGES: Record<
       },
     },
   },
+  "ticktick:create_task": {
+    actionLabel: msg`Add TickTick task`,
+    args: {
+      content: {
+        label: msg`Task`,
+        placeholder: msg`AI writes a short action item from the email`,
+      },
+      description: {
+        label: msg`Description`,
+        placeholder: msg`AI writes one line of context`,
+      },
+      projectId: { label: msg`Project` },
+      dueString: {
+        label: msg`Due date`,
+        options: {
+          ai: msg`AI decides from email`,
+          none: msg`No due date`,
+          today: msg`Today`,
+          tomorrow: msg`Tomorrow`,
+          "in-7-days": msg`In a week`,
+        },
+      },
+      priority: {
+        label: msg`Priority`,
+        options: {
+          none: msg`None`,
+          low: msg`Low`,
+          medium: msg`Medium`,
+          high: msg`High`,
+        },
+      },
+    },
+  },
 };
 
 const GENERIC_INTEGRATION_ACTION_LABEL = msg`Add to integration`;

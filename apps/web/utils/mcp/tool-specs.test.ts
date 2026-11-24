@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MCP_INTEGRATIONS } from "@/utils/mcp/integrations";
 import {
+  buildIntegrationArgsFromFields,
   getIntegrationActionDisplayValue,
   getIntegrationActionLabel,
   getIntegrationRemoteSelectTools,
@@ -323,6 +324,223 @@ describe("Trello specs", () => {
           ? arg.control.fallbackOptions
           : undefined,
       ).toContainEqual({ value: "archive", label: "Archive the card" });
+    });
+  });
+});
+
+describe("TickTick create_task spec", () => {
+  const createTask = getIntegrationToolSpec("ticktick", "create_task")!;
+  const losAngeles = { timeZone: "America/Los_Angeles" };
+  const base = {
+    content: "  Pay invoice  ",
+    description: "",
+    projectId: "inbox",
+    dueString: "none",
+    priority: "none",
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // 20:00 on Oct 30 in Los Angeles, already Oct 31 in UTC.
+    vi.setSystemTime(new Date("2026-10-31T03:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends the trimmed title and the time zone, and nothing for empty choices", () => {
+    expect(createTask.buildPayload(base, losAngeles)).toEqual({
+      task: { title: "Pay invoice" },
+      client_timezone: "America/Los_Angeles",
+    });
+  });
+
+  it("sends the title from content and the context line from description", () => {
+    expect(
+      createTask.buildPayload(
+        { ...base, description: " Due Friday " },
+        losAngeles,
+      ).task,
+    ).toEqual({ title: "Pay invoice", content: "Due Friday" });
+  });
+
+  it("omits the project for the inbox and passes a real project id through", () => {
+    expect(createTask.buildPayload(base, losAngeles).task).not.toHaveProperty(
+      "projectId",
+    );
+    expect(
+      createTask.buildPayload({ ...base, projectId: "" }, losAngeles).task,
+    ).not.toHaveProperty("projectId");
+    expect(
+      createTask.buildPayload({ ...base, projectId: "proj-1" }, losAngeles)
+        .task,
+    ).toMatchObject({ projectId: "proj-1" });
+  });
+
+  it.each([
+    ["today", "2026-10-30T07:00:00.000Z"],
+    ["tomorrow", "2026-10-31T07:00:00.000Z"],
+    // Daylight saving ends on Nov 1, so the offset changes within the week.
+    ["in-7-days", "2026-11-06T08:00:00.000Z"],
+    ["2026-11-03", "2026-11-03T08:00:00.000Z"],
+    ["Today", "2026-10-30T07:00:00.000Z"],
+    ["in 7 days", "2026-11-06T08:00:00.000Z"],
+    ["In a week", "2026-11-06T08:00:00.000Z"],
+  ])("sends %s as midnight in the user's time zone", (dueString, expected) => {
+    expect(
+      createTask.buildPayload({ ...base, dueString }, losAngeles).task,
+    ).toMatchObject({
+      dueDate: expected,
+      isAllDay: true,
+      timeZone: "America/Los_Angeles",
+    });
+  });
+
+  it.each([
+    "none",
+    "ai",
+    "",
+    "next Friday",
+    "2026-02-31",
+    "2026-11-03T17:00:00Z",
+  ])("drops the due date for %j", (dueString) => {
+    const { task } = createTask.buildPayload(
+      { ...base, dueString },
+      losAngeles,
+    ) as { task: Record<string, unknown> };
+
+    expect(task).not.toHaveProperty("dueDate");
+    expect(task).not.toHaveProperty("isAllDay");
+    expect(task).not.toHaveProperty("timeZone");
+  });
+
+  it.each([
+    ["none", undefined],
+    ["low", 1],
+    ["medium", 3],
+    ["high", 5],
+    ["High", 5],
+    ["5", 5],
+    ["", undefined],
+    ["urgent", undefined],
+  ])("maps priority %j to %s", (priority, expected) => {
+    const { task } = createTask.buildPayload(
+      { ...base, priority },
+      losAngeles,
+    ) as { task: Record<string, unknown> };
+
+    expect(task.priority).toBe(expected);
+  });
+
+  it("counts a due date from the user's own midnight on a day with a DST change", () => {
+    // Santiago springs forward at midnight on Sep 6 2026: 00:00 does not
+    // exist, so the day starts at 01:00 local (04:00 UTC).
+    vi.setSystemTime(new Date("2026-09-05T20:00:00.000Z"));
+    const santiago = { timeZone: "America/Santiago" };
+
+    expect(
+      createTask.buildPayload({ ...base, dueString: "tomorrow" }, santiago)
+        .task,
+    ).toMatchObject({ dueDate: "2026-09-06T04:00:00.000Z" });
+  });
+
+  it("builds args from rule-writer fields and sends the TickTick wire fields", () => {
+    const integrationArgs = buildIntegrationArgsFromFields({
+      integrationName: "ticktick",
+      integrationToolName: "create_task",
+      fields: { priority: "High", dueString: "in 7 days" },
+    });
+
+    expect(integrationArgs).toMatchObject({
+      projectId: "inbox",
+      dueString: "in-7-days",
+    });
+    expect(
+      createTask.buildPayload(
+        { ...integrationArgs, content: "Reply", description: "Context" },
+        losAngeles,
+      ),
+    ).toEqual({
+      task: {
+        title: "Reply",
+        content: "Context",
+        dueDate: "2026-11-06T08:00:00.000Z",
+        isAllDay: true,
+        timeZone: "America/Los_Angeles",
+        priority: 5,
+      },
+      client_timezone: "America/Los_Angeles",
+    });
+  });
+
+  it("reads list_projects as its remote-select option source", () => {
+    expect(getIntegrationRemoteSelectTools("ticktick")).toEqual([
+      "list_projects",
+    ]);
+  });
+
+  describe("project options", () => {
+    const control = createTask.args.find(
+      (arg) => arg.key === "projectId",
+    )?.control;
+    const parse = (content: unknown) =>
+      control?.type === "remote-select" && control.source !== "native"
+        ? control.parseOptions(content)
+        : [];
+
+    const projects = [
+      { id: "inbox121", name: "Inbox" },
+      { id: "p1", name: "Work" },
+      { id: "p2", name: "Home" },
+    ];
+    const expected = [
+      { value: "p1", label: "Work" },
+      { value: "p2", label: "Home" },
+    ];
+
+    it("reads a JSON array in an MCP text block and skips the virtual inbox", () => {
+      expect(parse([{ type: "text", text: JSON.stringify(projects) }])).toEqual(
+        expected,
+      );
+    });
+
+    it("reads a { projects } object in an MCP text block", () => {
+      expect(
+        parse([{ type: "text", text: JSON.stringify({ projects }) }]),
+      ).toEqual(expected);
+    });
+
+    it("reads a bare array, { projects } or { data } object", () => {
+      expect(parse(projects)).toEqual(expected);
+      expect(parse({ projects })).toEqual(expected);
+      expect(parse({ data: projects })).toEqual(expected);
+      expect(
+        parse([{ type: "text", text: JSON.stringify({ data: projects }) }]),
+      ).toEqual(expected);
+    });
+
+    it("skips entries without a string id and name, and ignores junk", () => {
+      expect(
+        parse([
+          {
+            type: "text",
+            text: JSON.stringify([
+              { id: "p1", name: "Work" },
+              { id: 7, name: "Numeric id" },
+              { id: "p3" },
+              { name: "No id" },
+              null,
+              "text",
+            ]),
+          },
+        ]),
+      ).toEqual([{ value: "p1", label: "Work" }]);
+      expect(parse([{ type: "text", text: "not json" }])).toEqual([]);
+      expect(parse([{ type: "image", data: "abc" }])).toEqual([]);
+      expect(parse({ projects: "nope" })).toEqual([]);
+      expect(parse(null)).toEqual([]);
+      expect(parse("junk")).toEqual([]);
     });
   });
 });

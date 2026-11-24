@@ -1399,6 +1399,10 @@ msgstr "다음 규칙을 추가하세요:"
 msgid "Add this URL in ChatGPT, Claude, or Cursor. You'll be asked to allow access."
 msgstr "ChatGPT, Claude 또는 Cursor에 이 URL을 추가하세요. 접근을 허용하라는 안내가 나타나요."
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Add TickTick task"
+msgstr "TickTick 작업 추가"
+
 #: app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
 #: utils/action-display.tsx
 msgid "Add to digest"
@@ -6923,6 +6927,10 @@ msgstr "수신자 숨기기"
 msgid "Hide tools"
 msgstr "도구 숨기기"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "High"
+msgstr "높음"
+
 #: app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
 msgid "High confidence"
 msgstr "높은 신뢰도"
@@ -8410,6 +8418,10 @@ msgstr "Outlook에서 \"{FOLLOW_UP_LABEL}\" 카테고리를 찾아보세요."
 msgid "Looks good, start auto-filing"
 msgstr "좋아요, 자동 분류 시작하기"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Low"
+msgstr "낮음"
+
 #: app/(app)/early-access/page.tsx
 #: components/AppSidebarHeader.tsx
 msgid "Mail"
@@ -8689,6 +8701,10 @@ msgstr "중앙값 응답"
 #: app/(app)/[emailAccountId]/stats/ResponseTimeAnalytics.tsx
 msgid "Median Response Time"
 msgstr "중앙값 응답 시간"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Medium"
+msgstr "보통"
 
 #: app/(app)/[emailAccountId]/meetings/MeetingDetail.tsx
 msgid "Meeting"
@@ -9655,6 +9671,7 @@ msgid "No, thanks"
 msgstr "괜찮아요"
 
 #: app/(app)/[emailAccountId]/integrations/AddCustomMcpServerDialog.tsx
+#: utils/mcp/tool-specs-messages.ts
 msgid "None"
 msgstr "없음"
 
@@ -10473,6 +10490,10 @@ msgstr "기본"
 #: app/(app)/[emailAccountId]/mail/ThreadActionsMenu.tsx
 msgid "Print"
 msgstr "인쇄"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Priority"
+msgstr "우선순위"
 
 #: app/(app)/[emailAccountId]/quick-bulk-archive/BulkArchiveTab.tsx
 msgid "Probably Safe"

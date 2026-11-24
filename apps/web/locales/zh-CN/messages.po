@@ -1399,6 +1399,10 @@ msgstr "添加以下规则："
 msgid "Add this URL in ChatGPT, Claude, or Cursor. You'll be asked to allow access."
 msgstr "在 ChatGPT、Claude 或 Cursor 中添加此 URL，系统会请你授权访问。"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Add TickTick task"
+msgstr "添加 TickTick 任务"
+
 #: app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
 #: utils/action-display.tsx
 msgid "Add to digest"
@@ -6923,6 +6927,10 @@ msgstr "隐藏收件人"
 msgid "Hide tools"
 msgstr "隐藏工具"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "High"
+msgstr "高"
+
 #: app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
 msgid "High confidence"
 msgstr "高置信度"
@@ -8410,6 +8418,10 @@ msgstr "在 Outlook 中查找“{FOLLOW_UP_LABEL}”类别。"
 msgid "Looks good, start auto-filing"
 msgstr "看起来不错，开始自动归档"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Low"
+msgstr "低"
+
 #: app/(app)/early-access/page.tsx
 #: components/AppSidebarHeader.tsx
 msgid "Mail"
@@ -8689,6 +8701,10 @@ msgstr "响应时间中位数"
 #: app/(app)/[emailAccountId]/stats/ResponseTimeAnalytics.tsx
 msgid "Median Response Time"
 msgstr "响应时间中位数"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Medium"
+msgstr "中"
 
 #: app/(app)/[emailAccountId]/meetings/MeetingDetail.tsx
 msgid "Meeting"
@@ -9655,6 +9671,7 @@ msgid "No, thanks"
 msgstr "不用了，谢谢"
 
 #: app/(app)/[emailAccountId]/integrations/AddCustomMcpServerDialog.tsx
+#: utils/mcp/tool-specs-messages.ts
 msgid "None"
 msgstr "无"
 
@@ -10473,6 +10490,10 @@ msgstr "主要"
 #: app/(app)/[emailAccountId]/mail/ThreadActionsMenu.tsx
 msgid "Print"
 msgstr "打印"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Priority"
+msgstr "优先级"
 
 #: app/(app)/[emailAccountId]/quick-bulk-archive/BulkArchiveTab.tsx
 msgid "Probably Safe"

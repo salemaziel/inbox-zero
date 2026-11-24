@@ -1399,6 +1399,10 @@ msgstr "次のルールを追加："
 msgid "Add this URL in ChatGPT, Claude, or Cursor. You'll be asked to allow access."
 msgstr "この URL を ChatGPT、Claude、Cursor に追加してください。アクセスの許可を求められます。"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Add TickTick task"
+msgstr "TickTick タスクを追加"
+
 #: app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
 #: utils/action-display.tsx
 msgid "Add to digest"
@@ -6923,6 +6927,10 @@ msgstr "宛先を非表示"
 msgid "Hide tools"
 msgstr "ツールを非表示"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "High"
+msgstr "高"
+
 #: app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
 msgid "High confidence"
 msgstr "確信度が高い"
@@ -8410,6 +8418,10 @@ msgstr "Outlookで「{FOLLOW_UP_LABEL}」カテゴリを探してください。
 msgid "Looks good, start auto-filing"
 msgstr "問題なければ、自動整理を開始"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Low"
+msgstr "低"
+
 #: app/(app)/early-access/page.tsx
 #: components/AppSidebarHeader.tsx
 msgid "Mail"
@@ -8689,6 +8701,10 @@ msgstr "返信時間の中央値"
 #: app/(app)/[emailAccountId]/stats/ResponseTimeAnalytics.tsx
 msgid "Median Response Time"
 msgstr "返信時間の中央値"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Medium"
+msgstr "中"
 
 #: app/(app)/[emailAccountId]/meetings/MeetingDetail.tsx
 msgid "Meeting"
@@ -9655,6 +9671,7 @@ msgid "No, thanks"
 msgstr "いいえ、結構です"
 
 #: app/(app)/[emailAccountId]/integrations/AddCustomMcpServerDialog.tsx
+#: utils/mcp/tool-specs-messages.ts
 msgid "None"
 msgstr "なし"
 
@@ -10473,6 +10490,10 @@ msgstr "メイン"
 #: app/(app)/[emailAccountId]/mail/ThreadActionsMenu.tsx
 msgid "Print"
 msgstr "印刷"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Priority"
+msgstr "優先度"
 
 #: app/(app)/[emailAccountId]/quick-bulk-archive/BulkArchiveTab.tsx
 msgid "Probably Safe"

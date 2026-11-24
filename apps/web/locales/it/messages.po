@@ -1399,6 +1399,10 @@ msgstr "Aggiungi le seguenti regole:"
 msgid "Add this URL in ChatGPT, Claude, or Cursor. You'll be asked to allow access."
 msgstr "Aggiungi questo URL in ChatGPT, Claude o Cursor. Ti verrà chiesto di consentire l'accesso."
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Add TickTick task"
+msgstr "Aggiungi attività TickTick"
+
 #: app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
 #: utils/action-display.tsx
 msgid "Add to digest"
@@ -6923,6 +6927,10 @@ msgstr "Nascondi destinatari"
 msgid "Hide tools"
 msgstr "Nascondi strumenti"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "High"
+msgstr "Alta"
+
 #: app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
 msgid "High confidence"
 msgstr "Affidabilità alta"
@@ -8410,6 +8418,10 @@ msgstr "Cerca la categoria \"{FOLLOW_UP_LABEL}\" in Outlook."
 msgid "Looks good, start auto-filing"
 msgstr "Va bene, avvia l'archiviazione automatica"
 
+#: utils/mcp/tool-specs-messages.ts
+msgid "Low"
+msgstr "Bassa"
+
 #: app/(app)/early-access/page.tsx
 #: components/AppSidebarHeader.tsx
 msgid "Mail"
@@ -8689,6 +8701,10 @@ msgstr "Risposta mediana"
 #: app/(app)/[emailAccountId]/stats/ResponseTimeAnalytics.tsx
 msgid "Median Response Time"
 msgstr "Tempo di risposta mediano"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Medium"
+msgstr "Media"
 
 #: app/(app)/[emailAccountId]/meetings/MeetingDetail.tsx
 msgid "Meeting"
@@ -9655,6 +9671,7 @@ msgid "No, thanks"
 msgstr "No, grazie"
 
 #: app/(app)/[emailAccountId]/integrations/AddCustomMcpServerDialog.tsx
+#: utils/mcp/tool-specs-messages.ts
 msgid "None"
 msgstr "Nessuno"
 
@@ -10473,6 +10490,10 @@ msgstr "Principale"
 #: app/(app)/[emailAccountId]/mail/ThreadActionsMenu.tsx
 msgid "Print"
 msgstr "Stampa"
+
+#: utils/mcp/tool-specs-messages.ts
+msgid "Priority"
+msgstr "Priorità"
 
 #: app/(app)/[emailAccountId]/quick-bulk-archive/BulkArchiveTab.tsx
 msgid "Probably Safe"

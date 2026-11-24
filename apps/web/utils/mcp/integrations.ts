@@ -175,6 +175,23 @@ export const MCP_INTEGRATIONS: Record<
     allowedTools: [],
     ruleActionWriteTools: ["add-tasks"],
   },
+  ticktick: {
+    name: "ticktick",
+    displayName: "TickTick",
+    url: "ticktick.com",
+    serverUrl: "https://mcp.ticktick.com",
+    authType: "oauth",
+    scopes: [],
+    allowedTools: [
+      "list_projects",
+      "filter_tasks",
+      "get_task_by_id",
+      "get_project_with_undone_tasks",
+      "list_undone_tasks_by_date",
+    ],
+    ruleActionWriteTools: ["create_task"],
+    // OAuth endpoints auto-discovered via RFC 8414
+  },
   trello: {
     name: "trello",
     displayName: "Trello",
