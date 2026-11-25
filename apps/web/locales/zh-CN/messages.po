@@ -2603,6 +2603,7 @@ msgstr "我们能把周四的电话改期吗？"
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/ResubscribeDialog.tsx
 #: app/(app)/[emailAccountId]/calendars/ConfigureBookingLinkDialog.tsx
 #: app/(app)/[emailAccountId]/calendars/CreateBookingLinkDialog.tsx
+#: app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
 #: app/(app)/[emailAccountId]/drive/DriveSetup.tsx
 #: app/(app)/[emailAccountId]/drive/FilingActivity.tsx
 #: app/(app)/[emailAccountId]/mail/AllAccountsSelectionDialog.tsx
@@ -6590,6 +6591,10 @@ msgstr "完全访问权限"
 msgid "Full setup guide"
 msgstr "完整设置指南"
 
+#: app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
+msgid "Future emails from {confirmSender} will be excluded from your Cold Email rule."
+msgstr "今后，来自 {confirmSender} 的邮件将不受陌生推销邮件规则的限制。"
+
 #: app/(app)/[emailAccountId]/mail/use-unsubscribe-sender.ts
 msgid "Future emails from {senderName} will be archived"
 msgstr "今后来自 {senderName} 的邮件将被归档"
@@ -6824,6 +6829,10 @@ msgstr "按天分组"
 #: app/(app)/[emailAccountId]/stats/Stats.tsx
 msgid "Group by month"
 msgstr "按月分组"
+
+#: app/(app)/[emailAccountId]/mail/ListToolbar.tsx
+msgid "Group by sender"
+msgstr "按发件人分组"
 
 #: app/(app)/[emailAccountId]/stats/Stats.tsx
 msgid "Group by week"

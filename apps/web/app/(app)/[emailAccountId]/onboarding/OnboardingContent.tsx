@@ -101,6 +101,7 @@ export function OnboardingContent({
       aiModelSettingsDisabled: Boolean(
         env.NEXT_PUBLIC_AI_MODEL_SETTINGS_DISABLED,
       ),
+      mailAppEnabled: env.NEXT_PUBLIC_MAIL_APP_ENABLED,
       signupIntent: intent,
     }).filter((key) => isDefined(stepMap[key]));
   const visibleStepKeys = getVisibleStepKeys(signupIntent);

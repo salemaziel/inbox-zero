@@ -14,6 +14,7 @@ describe("getVisibleOnboardingStepKeys", () => {
       getVisibleOnboardingStepKeys({
         autoDraftDisabled: false,
         emailAppEnabled: true,
+        mailAppEnabled: true,
         signupIntent: null,
       }),
     ).toEqual([
@@ -42,6 +43,7 @@ describe("getVisibleOnboardingStepKeys", () => {
     const stepKeys = getVisibleOnboardingStepKeys({
       autoDraftDisabled: false,
       emailAppEnabled: true,
+      mailAppEnabled: true,
       signupIntent,
     });
     expect(stepKeys.at(-1)).toBe(STEP_KEYS.INBOX_PROCESSED);
@@ -51,6 +53,7 @@ describe("getVisibleOnboardingStepKeys", () => {
     const stepKeys = getVisibleOnboardingStepKeys({
       autoDraftDisabled: false,
       emailAppEnabled: true,
+      mailAppEnabled: true,
       signupIntent: "MAIL_CLIENT",
     });
     expect(stepKeys.slice(stepKeys.indexOf(STEP_KEYS.INTENT))).toEqual([
@@ -65,6 +68,7 @@ describe("getVisibleOnboardingStepKeys", () => {
     const stepKeys = getVisibleOnboardingStepKeys({
       autoDraftDisabled: true,
       emailAppEnabled: true,
+      mailAppEnabled: true,
       signupIntent: "AI_ASSISTANT",
     });
     expect(stepKeys).not.toContain(STEP_KEYS.DRAFT_REPLIES);
@@ -76,6 +80,7 @@ describe("getVisibleOnboardingStepKeys", () => {
       getVisibleOnboardingStepKeys({
         autoDraftDisabled: false,
         emailAppEnabled: false,
+        mailAppEnabled: true,
         signupIntent: "BOTH",
       }),
     ).not.toContain(STEP_KEYS.EMAIL_APP);
@@ -85,6 +90,7 @@ describe("getVisibleOnboardingStepKeys", () => {
     const stepKeys = getVisibleOnboardingStepKeys({
       autoDraftDisabled: false,
       emailAppEnabled: true,
+      mailAppEnabled: true,
       isSelfHosted: true,
       signupIntent: "AI_ASSISTANT",
     });
@@ -101,6 +107,7 @@ describe("getVisibleOnboardingStepKeys", () => {
       getVisibleOnboardingStepKeys({
         autoDraftDisabled: false,
         emailAppEnabled: true,
+        mailAppEnabled: true,
         aiModelSettingsDisabled: true,
         signupIntent: "AI_ASSISTANT",
       }),
@@ -112,15 +119,29 @@ describe("getVisibleOnboardingStepKeys", () => {
       getVisibleOnboardingStepKeys({
         autoDraftDisabled: false,
         emailAppEnabled: true,
+        mailAppEnabled: true,
         signupIntent: "MAIL_CLIENT",
       }),
     ).not.toContain(STEP_KEYS.CONNECT_AI);
+  });
+
+  it("skips the email app and the intent question when the email app is off", () => {
+    const stepKeys = getVisibleOnboardingStepKeys({
+      autoDraftDisabled: false,
+      emailAppEnabled: true,
+      mailAppEnabled: false,
+      signupIntent: "MAIL_CLIENT",
+    });
+    expect(stepKeys).not.toContain(STEP_KEYS.EMAIL_APP);
+    expect(stepKeys).not.toContain(STEP_KEYS.INTENT);
+    expect(stepKeys.at(-1)).toBe(STEP_KEYS.INBOX_PROCESSED);
   });
 
   it("skips the survey on self-hosted deployments", () => {
     const stepKeys = getVisibleOnboardingStepKeys({
       autoDraftDisabled: false,
       emailAppEnabled: true,
+      mailAppEnabled: true,
       isSelfHosted: true,
       signupIntent: "MAIL_CLIENT",
     });
@@ -133,6 +154,7 @@ describe("getOnboardingStepIndex", () => {
   const stepKeys = getVisibleOnboardingStepKeys({
     autoDraftDisabled: false,
     emailAppEnabled: true,
+    mailAppEnabled: true,
     signupIntent: null,
   });
 

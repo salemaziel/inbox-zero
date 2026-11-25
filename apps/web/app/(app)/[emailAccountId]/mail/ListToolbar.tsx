@@ -87,6 +87,9 @@ export type ListToolbarProps = {
   bundleInbox: boolean;
   /** Omitted outside the single-account inbox, where bundling never applies. */
   onToggleBundleInbox?: () => void;
+  groupBySender: boolean;
+  /** Omitted outside the single-account inbox, where grouping never applies. */
+  onToggleGroupBySender?: () => void;
   onToggleAssistant: () => void;
   onOpenAllSettings?: () => void;
   /** Omitted where the setup card can't apply, or while it's open. */
@@ -130,6 +133,8 @@ export const ListToolbar = memo(function ListToolbar({
   onTogglePreview,
   bundleInbox,
   onToggleBundleInbox,
+  groupBySender,
+  onToggleGroupBySender,
   onToggleAssistant,
   onOpenAllSettings,
   onOpenSetup,
@@ -156,10 +161,8 @@ export const ListToolbar = memo(function ListToolbar({
   return (
     <MailListToolbarSurface
       className={cn(
-        // The collapsed rail is narrower than the mac traffic lights, so the
-        // toolbar starts after them and the controls lifted beside them.
-        isSidebarCollapsed &&
-          "lg:pl-[max(0.75rem,calc(var(--desktop-traffic-lights-width,0px)+var(--desktop-titlebar-controls-width,0px)-2.75rem))]",
+        "mail-list-toolbar",
+        isSidebarCollapsed && "sidebar-collapsed",
       )}
     >
       <button
@@ -327,6 +330,8 @@ export const ListToolbar = memo(function ListToolbar({
           onTogglePreview={onTogglePreview}
           bundleInbox={bundleInbox}
           onToggleBundleInbox={onToggleBundleInbox}
+          groupBySender={groupBySender}
+          onToggleGroupBySender={onToggleGroupBySender}
           onOpenAllSettings={onOpenAllSettings}
           onOpenSetup={onOpenSetup}
           isSetupSuggested={isSetupSuggested}
@@ -609,6 +614,8 @@ function ViewOptionsMenu({
   onTogglePreview,
   bundleInbox,
   onToggleBundleInbox,
+  groupBySender,
+  onToggleGroupBySender,
   onOpenAllSettings,
   onOpenSetup,
   isSetupSuggested,
@@ -620,6 +627,8 @@ function ViewOptionsMenu({
   | "onTogglePreview"
   | "bundleInbox"
   | "onToggleBundleInbox"
+  | "groupBySender"
+  | "onToggleGroupBySender"
   | "onOpenAllSettings"
   | "onOpenSetup"
   | "isSetupSuggested"
@@ -651,6 +660,14 @@ function ViewOptionsMenu({
             onCheckedChange={onToggleBundleInbox}
           >
             <Trans>Bundle low-priority emails</Trans>
+          </DropdownMenuCheckboxItem>
+        ) : null}
+        {onToggleGroupBySender ? (
+          <DropdownMenuCheckboxItem
+            checked={groupBySender}
+            onCheckedChange={onToggleGroupBySender}
+          >
+            <Trans>Group by sender</Trans>
           </DropdownMenuCheckboxItem>
         ) : null}
         <DropdownMenuCheckboxItem

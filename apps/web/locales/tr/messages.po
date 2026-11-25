@@ -2603,6 +2603,7 @@ msgstr "Perşembe günkü görüşmeyi kaydırabilir miyiz?"
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/ResubscribeDialog.tsx
 #: app/(app)/[emailAccountId]/calendars/ConfigureBookingLinkDialog.tsx
 #: app/(app)/[emailAccountId]/calendars/CreateBookingLinkDialog.tsx
+#: app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
 #: app/(app)/[emailAccountId]/drive/DriveSetup.tsx
 #: app/(app)/[emailAccountId]/drive/FilingActivity.tsx
 #: app/(app)/[emailAccountId]/mail/AllAccountsSelectionDialog.tsx
@@ -6590,6 +6591,10 @@ msgstr "Tam erişim"
 msgid "Full setup guide"
 msgstr "Tam kurulum kılavuzu"
 
+#: app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
+msgid "Future emails from {confirmSender} will be excluded from your Cold Email rule."
+msgstr "{confirmSender} adresinden gelecek e-postalar Soğuk E-posta kuralınızdan hariç tutulacak."
+
 #: app/(app)/[emailAccountId]/mail/use-unsubscribe-sender.ts
 msgid "Future emails from {senderName} will be archived"
 msgstr "Gelecekte {senderName} tarafından gönderilecek e-postalar arşivlenecek"
@@ -6824,6 +6829,10 @@ msgstr "Güne göre grupla"
 #: app/(app)/[emailAccountId]/stats/Stats.tsx
 msgid "Group by month"
 msgstr "Aya göre grupla"
+
+#: app/(app)/[emailAccountId]/mail/ListToolbar.tsx
+msgid "Group by sender"
+msgstr "Gönderene göre grupla"
 
 #: app/(app)/[emailAccountId]/stats/Stats.tsx
 msgid "Group by week"

@@ -2603,6 +2603,7 @@ msgstr "Können wir den Call am Donnerstag verschieben?"
 #: app/(app)/[emailAccountId]/bulk-unsubscribe/ResubscribeDialog.tsx
 #: app/(app)/[emailAccountId]/calendars/ConfigureBookingLinkDialog.tsx
 #: app/(app)/[emailAccountId]/calendars/CreateBookingLinkDialog.tsx
+#: app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
 #: app/(app)/[emailAccountId]/drive/DriveSetup.tsx
 #: app/(app)/[emailAccountId]/drive/FilingActivity.tsx
 #: app/(app)/[emailAccountId]/mail/AllAccountsSelectionDialog.tsx
@@ -6590,6 +6591,10 @@ msgstr "Vollzugriff"
 msgid "Full setup guide"
 msgstr "Vollständige Einrichtungsanleitung"
 
+#: app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
+msgid "Future emails from {confirmSender} will be excluded from your Cold Email rule."
+msgstr "Künftige E-Mails von {confirmSender} werden von deiner Cold-Email-Regel ausgenommen."
+
 #: app/(app)/[emailAccountId]/mail/use-unsubscribe-sender.ts
 msgid "Future emails from {senderName} will be archived"
 msgstr "Zukünftige E-Mails von {senderName} werden archiviert"
@@ -6824,6 +6829,10 @@ msgstr "Nach Tag gruppieren"
 #: app/(app)/[emailAccountId]/stats/Stats.tsx
 msgid "Group by month"
 msgstr "Nach Monat gruppieren"
+
+#: app/(app)/[emailAccountId]/mail/ListToolbar.tsx
+msgid "Group by sender"
+msgstr "Nach Absender gruppieren"
 
 #: app/(app)/[emailAccountId]/stats/Stats.tsx
 msgid "Group by week"
